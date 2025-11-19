@@ -20,18 +20,19 @@ logging.basicConfig(
 
 TOKEN = os.getenv("TOKEN")
 
-# --- CONFIGURACIÓN PERSONALIZABLE ---
+# --- CONFIGURACIÓN ---
 UPDATE_INTERVAL = 120 # 2 Minutos
 TIMEZONE = pytz.timezone('America/Caracas') 
 
-# 🔴 PONE AQUÍ TUS ENLACES REALES 🔴
-LINK_CANAL = "https://t.me/tasabinance"   # Tu canal de noticias
-LINK_SOPORTE = "https://t.me/SoporteTasaBinance"      # Tu usuario o bot de soporte
+# 🔴 TUS ENLACES (Configúralos aquí) 🔴
+LINK_CANAL = "https://t.me/tucanaloficial"
+LINK_SOPORTE = "https://t.me/tuusuario"
 
-# --- MEMORIA (CACHÉ) ---
+# --- MEMORIA (CACHÉ + HISTORIAL PARA IA) ---
 MARKET_DATA = {
     "price": None,
-    "last_updated": "Esperando actualización..."
+    "last_updated": "Esperando...",
+    "history": [] 
 }
 
 # --- BACKEND BINANCE ---
@@ -61,11 +62,17 @@ async def update_price_task(context: ContextTypes.DEFAULT_TYPE):
         MARKET_DATA["price"] = new_price
         now = datetime.now(TIMEZONE)
         MARKET_DATA["last_updated"] = now.strftime("%I:%M %p")
-        logging.info(f"🔄 Precio actualizado: {new_price}")
+        
+        # IA: Guardar historial
+        MARKET_DATA["history"].append(new_price)
+        if len(MARKET_DATA["history"]) > 30:
+            MARKET_DATA["history"].pop(0)
+            
+        logging.info(f"🔄 Precio: {new_price} | Datos IA: {len(MARKET_DATA['history'])}")
     else:
         logging.warning("⚠️ Fallo al actualizar precio.")
 
-# --- COMANDO /start (CON BOTONES DE SOPORTE) ---
+# --- COMANDO /start ---
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     mensaje = (
         "👋 <b>¡Bienvenido al Monitor P2P Inteligente!</b>\n\n"
@@ -74,17 +81,16 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
         
         "⚡ <b>Características:</b>\n"
         "• <b>Precisión:</b> Promedio real de ofertas.\n"
-        "• <b>Velocidad:</b> Actualizado cada 2 minutos.\n"
-        "• <b>24/7:</b> Siempre activo.\n\n"
+        "• <b>Velocidad:</b> Actualizado cada 2 minutos.\n\n"
         
         "🛠 <b>HERRAMIENTAS:</b>\n\n"
-        "📊 <b>/precio</b> → Ver tasa actual.\n\n"
+        "📊 <b>/precio</b> → Ver tasa actual.\n"
+        "🧠 <b>/ia</b> → <b>¡NUEVO!</b> Predicción de tendencia.\n\n"
         "🧮 <b>CALCULADORA:</b>\n"
         "• <code>/usdt 50</code> → Convierte 50$ a Bs.\n"
         "• <code>/bs 2000</code> → Convierte 2000 Bs a $."
     )
     
-    # Creamos los botones de Enlace (URL)
     keyboard = [
         [
             InlineKeyboardButton("📢 Canal Oficial", url=LINK_CANAL),
@@ -95,7 +101,7 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     await update.message.reply_text(mensaje, parse_mode=ParseMode.HTML, reply_markup=reply_markup)
 
-# --- COMANDO /precio (CON BOTÓN REFRESH) ---
+# --- COMANDO /precio ---
 async def precio(update: Update, context: ContextTypes.DEFAULT_TYPE):
     rate = MARKET_DATA["price"]
     time_str = MARKET_DATA["last_updated"]
@@ -112,7 +118,7 @@ async def precio(update: Update, context: ContextTypes.DEFAULT_TYPE):
     else:
         await update.message.reply_text("🔄 Iniciando sistema... intenta en unos segundos.")
 
-# --- MANEJADOR DEL BOTÓN REFRESH ---
+# --- MANEJADOR BOTÓN REFRESH ---
 async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
     await query.answer()
@@ -133,17 +139,59 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
             except Exception:
                 pass
 
-# --- COMANDO /usdt ---
+# --- COMANDO /ia (REDACCIÓN MEJORADA) ---
+async def prediccion(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    history = MARKET_DATA["history"]
+    
+    if len(history) < 5:
+        await update.message.reply_text("🧠 <b>Calibrando IA...</b>\nRecopilando datos del mercado para generar la predicción. Intenta en unos minutos.", parse_mode=ParseMode.HTML)
+        return
+
+    start_price = history[0]
+    end_price = history[-1]
+    diff = end_price - start_price
+    percent = (diff / start_price) * 100
+
+    if percent > 0.5:
+        emoji = "🚀"
+        status = "ALCISTA FUERTE"
+        msg = "El precio sube con fuerza. Alta presión de compra."
+    elif percent > 0:
+        emoji = "📈"
+        status = "LIGERAMENTE ALCISTA"
+        msg = "El mercado muestra una recuperación gradual."
+    elif percent < -0.5:
+        emoji = "🩸"
+        status = "BAJISTA FUERTE"
+        msg = "El precio cae rápidamente. Alta presión de venta."
+    elif percent < 0:
+        emoji = "📉"
+        status = "LIGERAMENTE BAJISTA"
+        msg = "El mercado está corrigiendo a la baja."
+    else:
+        emoji = "⚖️"
+        status = "LATERAL / ESTABLE"
+        msg = "El precio se mantiene estable sin volatilidad."
+
+    text = (
+        f"🧠 <b>ANÁLISIS DE MERCADO (IA)</b>\n"
+        f"<i>Nuestra Inteligencia Artificial procesa el historial de precios en tiempo real para proyectar la dirección del mercado.</i>\n\n"
+        f"{emoji} <b>Estado:</b> {status}\n"
+        f"📊 <b>Variación (1h):</b> {percent:.2f}%\n\n"
+        f"💡 <b>Conclusión:</b>\n<i>{msg}</i>\n\n"
+        f"⚠️ <i>Análisis estadístico, no consejo financiero.</i>"
+    )
+    await update.message.reply_text(text, parse_mode=ParseMode.HTML)
+
+# --- COMANDOS CALCULADORA ---
 async def usdt_to_bs(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not context.args:
         await update.message.reply_text("⚠️ Ej: <code>/usdt 50</code>", parse_mode=ParseMode.HTML)
         return
-
     rate = MARKET_DATA["price"]
     if not rate:
         await update.message.reply_text("⏳ Actualizando tasas...")
         return
-
     try:
         amount = float(context.args[0].replace(',', '.'))
         total = amount * rate
@@ -156,17 +204,14 @@ async def usdt_to_bs(update: Update, context: ContextTypes.DEFAULT_TYPE):
     except ValueError:
         await update.message.reply_text("🔢 Número inválido.")
 
-# --- COMANDO /bs ---
 async def bs_to_usdt(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not context.args:
         await update.message.reply_text("⚠️ Ej: <code>/bs 1000</code>", parse_mode=ParseMode.HTML)
         return
-
     rate = MARKET_DATA["price"]
     if not rate:
         await update.message.reply_text("⏳ Actualizando tasas...")
         return
-
     try:
         amount = float(context.args[0].replace(',', '.'))
         total = amount / rate
@@ -189,13 +234,13 @@ if __name__ == "__main__":
 
     app.add_handler(CommandHandler("start", start))
     app.add_handler(CommandHandler("precio", precio))
+    app.add_handler(CommandHandler("ia", prediccion))
     app.add_handler(CommandHandler("usdt", usdt_to_bs))
     app.add_handler(CommandHandler("bs", bs_to_usdt))
-    
     app.add_handler(CallbackQueryHandler(button_handler))
 
     if app.job_queue:
         app.job_queue.run_repeating(update_price_task, interval=UPDATE_INTERVAL, first=1)
 
-    print("Bot FULL CARACTERÍSTICAS iniciando...")
+    print("Bot FINAL LISTO iniciando...")
     app.run_polling()
