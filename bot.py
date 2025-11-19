@@ -8,7 +8,7 @@ from telegram.constants import ParseMode
 from telegram.ext import (
     ApplicationBuilder, 
     CommandHandler, 
-    CallbackQueryHandler, # Necesario para los botones
+    CallbackQueryHandler, 
     ContextTypes
 )
 
@@ -20,9 +20,13 @@ logging.basicConfig(
 
 TOKEN = os.getenv("TOKEN")
 
-# --- CONFIGURACIÓN ---
+# --- CONFIGURACIÓN PERSONALIZABLE ---
 UPDATE_INTERVAL = 120 # 2 Minutos
 TIMEZONE = pytz.timezone('America/Caracas') 
+
+# 🔴 PONE AQUÍ TUS ENLACES REALES 🔴
+LINK_CANAL = "https://t.me/tasabinance"   # Tu canal de noticias
+LINK_SOPORTE = "https://t.me/SoporteTasaBinance"      # Tu usuario o bot de soporte
 
 # --- MEMORIA (CACHÉ) ---
 MARKET_DATA = {
@@ -61,7 +65,7 @@ async def update_price_task(context: ContextTypes.DEFAULT_TYPE):
     else:
         logging.warning("⚠️ Fallo al actualizar precio.")
 
-# --- COMANDO /start ---
+# --- COMANDO /start (CON BOTONES DE SOPORTE) ---
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     mensaje = (
         "👋 <b>¡Bienvenido al Monitor P2P Inteligente!</b>\n\n"
@@ -73,15 +77,25 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
         "• <b>Velocidad:</b> Actualizado cada 2 minutos.\n"
         "• <b>24/7:</b> Siempre activo.\n\n"
         
-        "🛠 <b>GUÍA RÁPIDA:</b>\n\n"
-        "📊 <b>/precio</b> → Ver tasa actual con botón de actualización.\n\n"
+        "🛠 <b>HERRAMIENTAS:</b>\n\n"
+        "📊 <b>/precio</b> → Ver tasa actual.\n\n"
         "🧮 <b>CALCULADORA:</b>\n"
         "• <code>/usdt 50</code> → Convierte 50$ a Bs.\n"
         "• <code>/bs 2000</code> → Convierte 2000 Bs a $."
     )
-    await update.message.reply_text(mensaje, parse_mode=ParseMode.HTML)
+    
+    # Creamos los botones de Enlace (URL)
+    keyboard = [
+        [
+            InlineKeyboardButton("📢 Canal Oficial", url=LINK_CANAL),
+            InlineKeyboardButton("🆘 Soporte", url=LINK_SOPORTE)
+        ]
+    ]
+    reply_markup = InlineKeyboardMarkup(keyboard)
 
-# --- COMANDO /precio (CON BOTÓN) ---
+    await update.message.reply_text(mensaje, parse_mode=ParseMode.HTML, reply_markup=reply_markup)
+
+# --- COMANDO /precio (CON BOTÓN REFRESH) ---
 async def precio(update: Update, context: ContextTypes.DEFAULT_TYPE):
     rate = MARKET_DATA["price"]
     time_str = MARKET_DATA["last_updated"]
@@ -91,7 +105,6 @@ async def precio(update: Update, context: ContextTypes.DEFAULT_TYPE):
             f"📊 <b>Tasa Binance P2P:</b> {rate:,.2f} Bs/USDT\n"
             f"🕒 <i>Actualizado: {time_str}</i>"
         )
-        # Creamos el botón
         keyboard = [[InlineKeyboardButton("🔄 Actualizar Precio", callback_data='refresh_price')]]
         reply_markup = InlineKeyboardMarkup(keyboard)
         
@@ -99,10 +112,10 @@ async def precio(update: Update, context: ContextTypes.DEFAULT_TYPE):
     else:
         await update.message.reply_text("🔄 Iniciando sistema... intenta en unos segundos.")
 
-# --- MANEJADOR DEL BOTÓN (CALLBACK) ---
+# --- MANEJADOR DEL BOTÓN REFRESH ---
 async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
-    await query.answer() # Avisamos a Telegram que recibimos el clic (quita el relojito)
+    await query.answer()
 
     if query.data == 'refresh_price':
         rate = MARKET_DATA["price"]
@@ -113,14 +126,11 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 f"📊 <b>Tasa Binance P2P:</b> {rate:,.2f} Bs/USDT\n"
                 f"🕒 <i>Actualizado: {time_str}</i>"
             )
-            
-            # Intentamos editar el mensaje solo si el texto es diferente (evita errores de Telegram)
             try:
                 keyboard = [[InlineKeyboardButton("🔄 Actualizar Precio", callback_data='refresh_price')]]
                 reply_markup = InlineKeyboardMarkup(keyboard)
                 await query.edit_message_text(text=new_text, parse_mode=ParseMode.HTML, reply_markup=reply_markup)
             except Exception:
-                # Si el precio es idéntico, Telegram da error al editar. No hacemos nada.
                 pass
 
 # --- COMANDO /usdt ---
@@ -177,17 +187,15 @@ if __name__ == "__main__":
 
     app = ApplicationBuilder().token(TOKEN).build()
 
-    # Comandos
     app.add_handler(CommandHandler("start", start))
     app.add_handler(CommandHandler("precio", precio))
     app.add_handler(CommandHandler("usdt", usdt_to_bs))
     app.add_handler(CommandHandler("bs", bs_to_usdt))
     
-    # Manejador de Botones (NUEVO)
     app.add_handler(CallbackQueryHandler(button_handler))
 
     if app.job_queue:
         app.job_queue.run_repeating(update_price_task, interval=UPDATE_INTERVAL, first=1)
 
-    print("Bot con Botones iniciando...")
+    print("Bot FULL CARACTERÍSTICAS iniciando...")
     app.run_polling()
