@@ -30,12 +30,11 @@ def get_binance_price():
         response = requests.post(url, json=payload, headers=headers, timeout=10)
         data = response.json()
         prices = [float(item["adv"]["price"]) for item in data["data"]]
-        # Retornamos el promedio
         return sum(prices) / len(prices) if prices else None
     except Exception:
         return None
 
-# --- COMANDO /precio (Solo ve la tasa) ---
+# --- COMANDO /precio ---
 async def precio(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text("🔎 Consultando tasa actual...")
     rate = get_binance_price()
@@ -48,11 +47,12 @@ async def precio(update: Update, context: ContextTypes.DEFAULT_TYPE):
     else:
         await update.message.reply_text("⚠️ Error consultando Binance.")
 
-# --- COMANDO /ves (Convierte Dólares A Bolívares) ---
-async def calcular_ves(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    # Usuario escribe: /ves 50
+# --- COMANDO /usdt (TENGO Dólares -> QUIERO Bolívares) ---
+async def usdt_to_bs(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    # Lógica: Usuario tiene USDT, quiere saber cuántos Bs son.
+    # Ejemplo: /usdt 50
     if not context.args:
-        await update.message.reply_text("⚠️ Escribe los USDT. Ej: `/ves 50`", parse_mode='Markdown')
+        await update.message.reply_text("⚠️ Escribe la cantidad de USDT que tienes. Ej: `/usdt 50`", parse_mode='Markdown')
         return
 
     try:
@@ -60,8 +60,7 @@ async def calcular_ves(update: Update, context: ContextTypes.DEFAULT_TYPE):
         rate = get_binance_price()
         
         if rate:
-            # MULTIPLICAMOS
-            total_ves = amount_usdt * rate
+            total_ves = amount_usdt * rate  # Multiplicamos
             await update.message.reply_text(
                 f"🇺🇸 {amount_usdt:,.2f} USDT son:\n"
                 f"🇻🇪 **{total_ves:,.2f} Bolívares**\n"
@@ -74,11 +73,12 @@ async def calcular_ves(update: Update, context: ContextTypes.DEFAULT_TYPE):
     except ValueError:
         await update.message.reply_text("🔢 Ingresa un número válido.")
 
-# --- COMANDO /usdt (Convierte Bolívares A Dólares) ---
-async def calcular_usdt(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    # Usuario escribe: /usdt 2000
+# --- COMANDO /bs (TENGO Bolívares -> QUIERO Dólares) ---
+async def bs_to_usdt(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    # Lógica: Usuario tiene Bolívares, quiere saber cuántos USDT son.
+    # Ejemplo: /bs 5000
     if not context.args:
-        await update.message.reply_text("⚠️ Escribe los Bolívares. Ej: `/usdt 2000`", parse_mode='Markdown')
+        await update.message.reply_text("⚠️ Escribe la cantidad de Bolívares que tienes. Ej: `/bs 2000`", parse_mode='Markdown')
         return
 
     try:
@@ -86,8 +86,7 @@ async def calcular_usdt(update: Update, context: ContextTypes.DEFAULT_TYPE):
         rate = get_binance_price()
         
         if rate:
-            # DIVIDIMOS
-            total_usdt = amount_ves / rate
+            total_usdt = amount_ves / rate  # Dividimos
             await update.message.reply_text(
                 f"🇻🇪 {amount_ves:,.2f} Bs son:\n"
                 f"🇺🇸 **{total_usdt:,.2f} USDT**\n"
@@ -103,14 +102,14 @@ async def calcular_usdt(update: Update, context: ContextTypes.DEFAULT_TYPE):
 # --- COMANDO /start ---
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text(
-        "🤖 **Calculadora Binance P2P**\n\n"
+        "🤖 **Calculadora P2P**\n\n"
         "1️⃣ **/precio** - Ver tasa del día\n"
-        "2️⃣ **/ves 50** - Convertir 50$ a Bolívares\n"
-        "3️⃣ **/usdt 5000** - Convertir 5000 Bs a Dólares",
+        "2️⃣ **/usdt 50** - Tienes 50$ 👉 Te dice cuántos Bs son\n"
+        "3️⃣ **/bs 1000** - Tienes 1000 Bs 👉 Te dice cuántos $ son",
         parse_mode='Markdown'
     )
 
-# --- BLOQUE PRINCIPAL ---
+# --- MAIN ---
 if __name__ == "__main__":
     if not TOKEN:
         print("Error: TOKEN no encontrado.")
@@ -121,9 +120,9 @@ if __name__ == "__main__":
     app.add_handler(CommandHandler("start", start))
     app.add_handler(CommandHandler("precio", precio))
     
-    # Aquí están los dos conversores:
-    app.add_handler(CommandHandler("ves", calcular_ves))   # Dólar -> Bs
-    app.add_handler(CommandHandler("usdt", calcular_usdt)) # Bs -> Dólar
+    # Nuevos comandos intuitivos
+    app.add_handler(CommandHandler("usdt", usdt_to_bs)) 
+    app.add_handler(CommandHandler("bs", bs_to_usdt))
 
-    print("Bot Calculadora iniciando...")
+    print("Bot iniciando...")
     app.run_polling()
