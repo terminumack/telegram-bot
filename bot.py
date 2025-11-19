@@ -14,70 +14,103 @@ logging.basicConfig(
     level=logging.INFO
 )
 
-# 2. Obtener TOKEN (El mismo nombre que tienes en Railway)
 TOKEN = os.getenv("TOKEN")
 
-async def precio(update: Update, context: ContextTypes.DEFAULT_TYPE):
+# --- Función auxiliar para consultar Binance ---
+def get_binance_price():
     url = "https://p2p.binance.com/bapi/c2c/v2/friendly/c2c/adv/search"
-    
-    # HEADERS CRÍTICOS: Disfrazamos al bot como un navegador Chrome
-    # Sin esto, Binance bloqueará la conexión desde Railway.
     headers = {
         "Content-Type": "application/json",
         "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/115.0.0.0 Safari/537.36"
     }
-    
     payload = {
-        "page": 1,
-        "rows": 10,            # Promedio de las primeras 10 ofertas
-        "payTypes": [],
-        "asset": "USDT",
-        "fiat": "VES",
-        "tradeType": "BUY"     # "BUY" es a cuánto lo venden los anunciantes
+        "page": 1, "rows": 10, "payTypes": [], "asset": "USDT", "fiat": "VES", "tradeType": "BUY"
     }
-
-    await update.message.reply_text("🔎 Consultando Binance P2P...")
-
     try:
-        # Hacemos la petición
         response = requests.post(url, json=payload, headers=headers, timeout=10)
         data = response.json()
-
-        if not data.get("data"):
-            await update.message.reply_text("⚠️ Binance no devolvió datos. Intenta más tarde.")
-            return
-
-        # Extraemos precios
         prices = [float(item["adv"]["price"]) for item in data["data"]]
-        
-        if not prices:
-            await update.message.reply_text("⚠️ No hay ofertas disponibles ahora.")
-            return
+        # Retornamos el promedio
+        return sum(prices) / len(prices) if prices else None
+    except Exception:
+        return None
 
-        # Cálculo del promedio
-        average_price = sum(prices) / len(prices)
-        min_price = min(prices)
-        max_price = max(prices)
-
-        # Formateamos el mensaje de respuesta
-        mensaje = (
-            f"🇻🇪 **Tasa Binance P2P (USDT > VES)**\n\n"
-            f"💵 **Promedio:** {average_price:,.2f} Bs\n"
-            f"📉 **Mínimo:** {min_price:,.2f} Bs\n"
-            f"📈 **Máximo:** {max_price:,.2f} Bs\n\n"
-            f"_(Basado en las primeras {len(prices)} ofertas)_"
+# --- COMANDO /precio (Solo ve la tasa) ---
+async def precio(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    await update.message.reply_text("🔎 Consultando tasa actual...")
+    rate = get_binance_price()
+    
+    if rate:
+        await update.message.reply_text(
+            f"📊 **Tasa Binance:** {rate:,.2f} Bs/USDT", 
+            parse_mode='Markdown'
         )
+    else:
+        await update.message.reply_text("⚠️ Error consultando Binance.")
 
-        # parse_mode='Markdown' permite usar negritas con **texto**
-        await update.message.reply_text(mensaje, parse_mode='Markdown')
+# --- COMANDO /ves (Convierte Dólares A Bolívares) ---
+async def calcular_ves(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    # Usuario escribe: /ves 50
+    if not context.args:
+        await update.message.reply_text("⚠️ Escribe los USDT. Ej: `/ves 50`", parse_mode='Markdown')
+        return
 
-    except Exception as e:
-        logging.error(f"Error consultando Binance: {e}")
-        await update.message.reply_text(f"❌ Ocurrió un error al conectar con Binance.")
+    try:
+        amount_usdt = float(context.args[0].replace(',', '.'))
+        rate = get_binance_price()
+        
+        if rate:
+            # MULTIPLICAMOS
+            total_ves = amount_usdt * rate
+            await update.message.reply_text(
+                f"🇺🇸 {amount_usdt:,.2f} USDT son:\n"
+                f"🇻🇪 **{total_ves:,.2f} Bolívares**\n"
+                f"_(Tasa: {rate:,.2f})_",
+                parse_mode='Markdown'
+            )
+        else:
+            await update.message.reply_text("❌ Error de conexión.")
+            
+    except ValueError:
+        await update.message.reply_text("🔢 Ingresa un número válido.")
 
+# --- COMANDO /usdt (Convierte Bolívares A Dólares) ---
+async def calcular_usdt(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    # Usuario escribe: /usdt 2000
+    if not context.args:
+        await update.message.reply_text("⚠️ Escribe los Bolívares. Ej: `/usdt 2000`", parse_mode='Markdown')
+        return
+
+    try:
+        amount_ves = float(context.args[0].replace(',', '.'))
+        rate = get_binance_price()
+        
+        if rate:
+            # DIVIDIMOS
+            total_usdt = amount_ves / rate
+            await update.message.reply_text(
+                f"🇻🇪 {amount_ves:,.2f} Bs son:\n"
+                f"🇺🇸 **{total_usdt:,.2f} USDT**\n"
+                f"_(Tasa: {rate:,.2f})_",
+                parse_mode='Markdown'
+            )
+        else:
+            await update.message.reply_text("❌ Error de conexión.")
+            
+    except ValueError:
+        await update.message.reply_text("🔢 Ingresa un número válido.")
+
+# --- COMANDO /start ---
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    await update.message.reply_text("¡Hola! Soy tu Monitor de Cambios 🤖.\n\nUsa /precio para ver la tasa actual del USDT en Binance.")
+    await update.message.reply_text(
+        "🤖 **Calculadora Binance P2P**\n\n"
+        "1️⃣ **/precio** - Ver tasa del día\n"
+        "2️⃣ **/ves 50** - Convertir 50$ a Bolívares\n"
+        "3️⃣ **/usdt 5000** - Convertir 5000 Bs a Dólares",
+        parse_mode='Markdown'
+    )
 
+# --- BLOQUE PRINCIPAL ---
 if __name__ == "__main__":
     if not TOKEN:
         print("Error: TOKEN no encontrado.")
@@ -87,10 +120,10 @@ if __name__ == "__main__":
 
     app.add_handler(CommandHandler("start", start))
     app.add_handler(CommandHandler("precio", precio))
+    
+    # Aquí están los dos conversores:
+    app.add_handler(CommandHandler("ves", calcular_ves))   # Dólar -> Bs
+    app.add_handler(CommandHandler("usdt", calcular_usdt)) # Bs -> Dólar
 
-    print("Bot de Precios iniciando...")
-    app.run_polling()
-    # 6. EJECUCIÓN ROBUSTA
-    # run_polling() se encarga de todo: bucle async, señales de stop y reconexión.
-    # No necesitas asyncio.run() ni app.idle() aquí.
+    print("Bot Calculadora iniciando...")
     app.run_polling()
