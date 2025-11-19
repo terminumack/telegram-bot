@@ -3,11 +3,12 @@ import logging
 import requests
 from datetime import datetime
 import pytz 
-from telegram import Update
-from telegram.constants import ParseMode # Importamos esto para usar HTML
+from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
+from telegram.constants import ParseMode
 from telegram.ext import (
     ApplicationBuilder, 
     CommandHandler, 
+    CallbackQueryHandler, # Necesario para los botones
     ContextTypes
 )
 
@@ -60,50 +61,72 @@ async def update_price_task(context: ContextTypes.DEFAULT_TYPE):
     else:
         logging.warning("⚠️ Fallo al actualizar precio.")
 
-# --- COMANDO /start (TEXTO CORREGIDO CON HTML) ---
+# --- COMANDO /start ---
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     mensaje = (
         "👋 <b>¡Bienvenido al Monitor P2P Inteligente!</b>\n\n"
         "Soy tu asistente financiero conectado a <b>Binance P2P</b>. "
         "Te doy la tasa <b>USDT/VES</b> más precisa y rápida del mercado.\n\n"
         
-        "⚡ <b>¿Por qué usar este bot?</b>\n"
-        "• <b>Alta Precisión:</b> Promedio real de ofertas.\n"
+        "⚡ <b>Características:</b>\n"
+        "• <b>Precisión:</b> Promedio real de ofertas.\n"
         "• <b>Velocidad:</b> Actualizado cada 2 minutos.\n"
         "• <b>24/7:</b> Siempre activo.\n\n"
         
         "🛠 <b>GUÍA RÁPIDA:</b>\n\n"
-        "📊 <b>/precio</b>\n"
-        "Consulta la tasa actual.\n\n"
-        
-        "🧮 <b>CALCULADORA</b>\n\n"
-        "💵 <b>¿Tienes Dólares y quieres Bolívares?</b>\n"
-        "Escribe: <code>/usdt 50</code>  <i>(Ejemplo para 50$)</i>\n\n"
-        
-        "🇻🇪 <b>¿Tienes Bolívares y quieres Dólares?</b>\n"
-        "Escribe: <code>/bs 2000</code>  <i>(Ejemplo para 2000 Bs)</i>"
+        "📊 <b>/precio</b> → Ver tasa actual con botón de actualización.\n\n"
+        "🧮 <b>CALCULADORA:</b>\n"
+        "• <code>/usdt 50</code> → Convierte 50$ a Bs.\n"
+        "• <code>/bs 2000</code> → Convierte 2000 Bs a $."
     )
-    # Usamos ParseMode.HTML para asegurar negritas reales
     await update.message.reply_text(mensaje, parse_mode=ParseMode.HTML)
 
-# --- COMANDO /precio ---
+# --- COMANDO /precio (CON BOTÓN) ---
 async def precio(update: Update, context: ContextTypes.DEFAULT_TYPE):
     rate = MARKET_DATA["price"]
     time_str = MARKET_DATA["last_updated"]
     
     if rate:
-        await update.message.reply_text(
-            f"📊 <b>Tasa Binance:</b> {rate:,.2f} Bs/USDT\n"
-            f"🕒 <i>Actualizado: {time_str}</i>", 
-            parse_mode=ParseMode.HTML
+        text = (
+            f"📊 <b>Tasa Binance P2P:</b> {rate:,.2f} Bs/USDT\n"
+            f"🕒 <i>Actualizado: {time_str}</i>"
         )
+        # Creamos el botón
+        keyboard = [[InlineKeyboardButton("🔄 Actualizar Precio", callback_data='refresh_price')]]
+        reply_markup = InlineKeyboardMarkup(keyboard)
+        
+        await update.message.reply_text(text, parse_mode=ParseMode.HTML, reply_markup=reply_markup)
     else:
         await update.message.reply_text("🔄 Iniciando sistema... intenta en unos segundos.")
+
+# --- MANEJADOR DEL BOTÓN (CALLBACK) ---
+async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    query = update.callback_query
+    await query.answer() # Avisamos a Telegram que recibimos el clic (quita el relojito)
+
+    if query.data == 'refresh_price':
+        rate = MARKET_DATA["price"]
+        time_str = MARKET_DATA["last_updated"]
+        
+        if rate:
+            new_text = (
+                f"📊 <b>Tasa Binance P2P:</b> {rate:,.2f} Bs/USDT\n"
+                f"🕒 <i>Actualizado: {time_str}</i>"
+            )
+            
+            # Intentamos editar el mensaje solo si el texto es diferente (evita errores de Telegram)
+            try:
+                keyboard = [[InlineKeyboardButton("🔄 Actualizar Precio", callback_data='refresh_price')]]
+                reply_markup = InlineKeyboardMarkup(keyboard)
+                await query.edit_message_text(text=new_text, parse_mode=ParseMode.HTML, reply_markup=reply_markup)
+            except Exception:
+                # Si el precio es idéntico, Telegram da error al editar. No hacemos nada.
+                pass
 
 # --- COMANDO /usdt ---
 async def usdt_to_bs(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not context.args:
-        await update.message.reply_text("⚠️ Escribe el monto. Ej: <code>/usdt 50</code>", parse_mode=ParseMode.HTML)
+        await update.message.reply_text("⚠️ Ej: <code>/usdt 50</code>", parse_mode=ParseMode.HTML)
         return
 
     rate = MARKET_DATA["price"]
@@ -126,7 +149,7 @@ async def usdt_to_bs(update: Update, context: ContextTypes.DEFAULT_TYPE):
 # --- COMANDO /bs ---
 async def bs_to_usdt(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not context.args:
-        await update.message.reply_text("⚠️ Escribe el monto. Ej: <code>/bs 1000</code>", parse_mode=ParseMode.HTML)
+        await update.message.reply_text("⚠️ Ej: <code>/bs 1000</code>", parse_mode=ParseMode.HTML)
         return
 
     rate = MARKET_DATA["price"]
@@ -154,13 +177,17 @@ if __name__ == "__main__":
 
     app = ApplicationBuilder().token(TOKEN).build()
 
+    # Comandos
     app.add_handler(CommandHandler("start", start))
     app.add_handler(CommandHandler("precio", precio))
     app.add_handler(CommandHandler("usdt", usdt_to_bs))
     app.add_handler(CommandHandler("bs", bs_to_usdt))
+    
+    # Manejador de Botones (NUEVO)
+    app.add_handler(CallbackQueryHandler(button_handler))
 
     if app.job_queue:
         app.job_queue.run_repeating(update_price_task, interval=UPDATE_INTERVAL, first=1)
 
-    print("Bot HTML iniciando...")
+    print("Bot con Botones iniciando...")
     app.run_polling()
