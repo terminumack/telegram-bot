@@ -120,23 +120,30 @@ async def bs_to_usdt(update: Update, context: ContextTypes.DEFAULT_TYPE):
     except ValueError:
         await update.message.reply_text("🔢 Número inválido.")
 
-# --- START ---
+# --- START ACTUALIZADO Y PROFESIONAL ---
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    await update.message.reply_text(
-        "🤖 **Calculadora P2P (Alta Velocidad)**\n\n"
-        "1️⃣ **/precio** - Ver tasa actual\n"
-        "2️⃣ **/usdt 50** - De Dólares a Bs\n"
-        "3️⃣ **/bs 1000** - De Bs a Dólares",
-        parse_mode='Markdown'
+    mensaje = (
+        "👋 **¡Bienvenido al Monitor P2P Inteligente!**\n\n"
+        "Soy tu asistente financiero conectado en tiempo real al mercado **Binance P2P**. "
+        "Mi misión es darte la tasa de cambio **USDT/VES** más precisa y rápida del mercado.\n\n"
+        
+        "⚡ **¿Por qué usar este bot?**\n"
+        "• **Alta Precisión:** Calculo el promedio de las mejores ofertas reales.\n"
+        "• **Velocidad Extrema:** Datos actualizados automáticamente cada 2 minutos.\n"
+        "• **Disponibilidad 24/7:** Siempre listo para sacar tus cuentas.\n\n"
+        
+        "🛠 **GUÍA DE USO RÁPIDO:**\n\n"
+        "📊 **/precio**\n"
+        "Consulta la tasa de cambio actual al instante.\n\n"
+        
+        "🇺🇸 **Tengo Dólares** (Quiero saber cuántos Bs son)\n"
+        "Escribe: `/usdt 50`  _(Ejemplo para 50 USDT)_\n\n"
+        
+        "🇻🇪 **Tengo Bolívares** (Quiero saber cuántos $ son)\n"
+        "Escribe: `/bs 2000`  _(Ejemplo para 2000 Bs)_"
     )
-
-# --- MAIN ---
-if __name__ == "__main__":
-    if not TOKEN:
-        print("Error: TOKEN no encontrado.")
-        exit(1)
-
-    app = ApplicationBuilder().token(TOKEN).build()
+    
+    await update.message.reply_text(mensaje, parse_mode='Markdown')
 
     # Comandos
     app.add_handler(CommandHandler("start", start))
