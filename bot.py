@@ -1,6 +1,8 @@
 import os
 import logging
 import requests
+from datetime import datetime
+import pytz # Para la hora correcta
 from telegram import Update
 from telegram.ext import (
     ApplicationBuilder, 
@@ -16,8 +18,18 @@ logging.basicConfig(
 
 TOKEN = os.getenv("TOKEN")
 
-# --- Función auxiliar para consultar Binance ---
-def get_binance_price():
+# --- MEMORIA GLOBAL (CACHÉ) ---
+# Aquí guardaremos el precio para no molestar a Binance todo el tiempo
+MARKET_DATA = {
+    "price": None,
+    "last_updated": None
+}
+
+# --- CONFIGURACIÓN ---
+UPDATE_INTERVAL = 120  # 120 segundos = 2 Minutos
+
+# --- Función que consulta a Binance (Backend) ---
+def fetch_binance_price():
     url = "https://p2p.binance.com/bapi/c2c/v2/friendly/c2c/adv/search"
     headers = {
         "Content-Type": "application/json",
@@ -31,81 +43,90 @@ def get_binance_price():
         data = response.json()
         prices = [float(item["adv"]["price"]) for item in data["data"]]
         return sum(prices) / len(prices) if prices else None
-    except Exception:
+    except Exception as e:
+        logging.error(f"Error conectando con Binance: {e}")
         return None
+
+# --- TAREA AUTOMÁTICA (Se ejecuta sola cada 20 min) ---
+async def update_price_task(context: ContextTypes.DEFAULT_TYPE):
+    new_price = fetch_binance_price()
+    
+    if new_price:
+        # Guardamos en memoria
+        MARKET_DATA["price"] = new_price
+        # Guardamos la hora actual (Ajusta 'America/Caracas' si quieres hora Vzla)
+        now = datetime.now(pytz.timezone('America/Caracas'))
+        MARKET_DATA["last_updated"] = now.strftime("%I:%M %p") # Ej: 02:30 PM
+        
+        logging.info(f"🔄 Precio actualizado en caché: {new_price}")
+    else:
+        logging.warning("⚠️ No se pudo actualizar el precio. Se mantiene el anterior.")
 
 # --- COMANDO /precio ---
 async def precio(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    await update.message.reply_text("🔎 Consultando tasa actual...")
-    rate = get_binance_price()
+    rate = MARKET_DATA["price"]
+    time_str = MARKET_DATA["last_updated"]
     
     if rate:
         await update.message.reply_text(
-            f"📊 **Tasa Binance:** {rate:,.2f} Bs/USDT", 
+            f"📊 **Tasa Binance:** {rate:,.2f} Bs/USDT\n"
+            f"🕒 _Actualizado: {time_str}_", 
             parse_mode='Markdown'
         )
     else:
-        await update.message.reply_text("⚠️ Error consultando Binance.")
+        await update.message.reply_text("🔄 Iniciando sistema... intenta en 1 minuto.")
 
-# --- COMANDO /usdt (TENGO Dólares -> QUIERO Bolívares) ---
+# --- COMANDO /usdt (Dólar -> Bs) ---
 async def usdt_to_bs(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    # Lógica: Usuario tiene USDT, quiere saber cuántos Bs son.
-    # Ejemplo: /usdt 50
     if not context.args:
-        await update.message.reply_text("⚠️ Escribe la cantidad de USDT que tienes. Ej: `/usdt 50`", parse_mode='Markdown')
+        await update.message.reply_text("⚠️ Ej: `/usdt 50`", parse_mode='Markdown')
+        return
+
+    rate = MARKET_DATA["price"]
+    if not rate:
+        await update.message.reply_text("⏳ El bot está actualizando tasas, espera un momento.")
         return
 
     try:
         amount_usdt = float(context.args[0].replace(',', '.'))
-        rate = get_binance_price()
-        
-        if rate:
-            total_ves = amount_usdt * rate  # Multiplicamos
-            await update.message.reply_text(
-                f"🇺🇸 {amount_usdt:,.2f} USDT son:\n"
-                f"🇻🇪 **{total_ves:,.2f} Bolívares**\n"
-                f"_(Tasa: {rate:,.2f})_",
-                parse_mode='Markdown'
-            )
-        else:
-            await update.message.reply_text("❌ Error de conexión.")
-            
+        total_ves = amount_usdt * rate
+        await update.message.reply_text(
+            f"🇺🇸 {amount_usdt:,.2f} USDT son:\n"
+            f"🇻🇪 **{total_ves:,.2f} Bolívares**",
+            parse_mode='Markdown'
+        )
     except ValueError:
-        await update.message.reply_text("🔢 Ingresa un número válido.")
+        await update.message.reply_text("🔢 Número inválido.")
 
-# --- COMANDO /bs (TENGO Bolívares -> QUIERO Dólares) ---
+# --- COMANDO /bs (Bs -> Dólar) ---
 async def bs_to_usdt(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    # Lógica: Usuario tiene Bolívares, quiere saber cuántos USDT son.
-    # Ejemplo: /bs 5000
     if not context.args:
-        await update.message.reply_text("⚠️ Escribe la cantidad de Bolívares que tienes. Ej: `/bs 2000`", parse_mode='Markdown')
+        await update.message.reply_text("⚠️ Ej: `/bs 2000`", parse_mode='Markdown')
+        return
+
+    rate = MARKET_DATA["price"]
+    if not rate:
+        await update.message.reply_text("⏳ El bot está actualizando tasas, espera un momento.")
         return
 
     try:
         amount_ves = float(context.args[0].replace(',', '.'))
-        rate = get_binance_price()
-        
-        if rate:
-            total_usdt = amount_ves / rate  # Dividimos
-            await update.message.reply_text(
-                f"🇻🇪 {amount_ves:,.2f} Bs son:\n"
-                f"🇺🇸 **{total_usdt:,.2f} USDT**\n"
-                f"_(Tasa: {rate:,.2f})_",
-                parse_mode='Markdown'
-            )
-        else:
-            await update.message.reply_text("❌ Error de conexión.")
-            
+        total_usdt = amount_ves / rate
+        await update.message.reply_text(
+            f"🇻🇪 {amount_ves:,.2f} Bs son:\n"
+            f"🇺🇸 **{total_usdt:,.2f} USDT**",
+            parse_mode='Markdown'
+        )
     except ValueError:
-        await update.message.reply_text("🔢 Ingresa un número válido.")
+        await update.message.reply_text("🔢 Número inválido.")
 
-# --- COMANDO /start ---
+# --- START ---
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text(
-        "🤖 **Calculadora P2P**\n\n"
-        "1️⃣ **/precio** - Ver tasa del día\n"
-        "2️⃣ **/usdt 50** - Tienes 50$ 👉 Te dice cuántos Bs son\n"
-        "3️⃣ **/bs 1000** - Tienes 1000 Bs 👉 Te dice cuántos $ son",
+        "🤖 **Calculadora P2P (Alta Velocidad)**\n\n"
+        "1️⃣ **/precio** - Ver tasa actual\n"
+        "2️⃣ **/usdt 50** - De Dólares a Bs\n"
+        "3️⃣ **/bs 1000** - De Bs a Dólares",
         parse_mode='Markdown'
     )
 
@@ -117,12 +138,17 @@ if __name__ == "__main__":
 
     app = ApplicationBuilder().token(TOKEN).build()
 
+    # Comandos
     app.add_handler(CommandHandler("start", start))
     app.add_handler(CommandHandler("precio", precio))
-    
-    # Nuevos comandos intuitivos
-    app.add_handler(CommandHandler("usdt", usdt_to_bs)) 
+    app.add_handler(CommandHandler("usdt", usdt_to_bs))
     app.add_handler(CommandHandler("bs", bs_to_usdt))
 
-    print("Bot iniciando...")
+    # --- AQUÍ ESTÁ LA MAGIA ---
+    # Programamos la actualización automática cada 1200 segundos (20 min)
+    # 'first=1' significa que la primera vez corre al segundo 1 de encenderse.
+    if app.job_queue:
+        app.job_queue.run_repeating(update_price_task, interval=UPDATE_INTERVAL, first=1)
+
+    print("Bot Escalable iniciando...")
     app.run_polling()
