@@ -59,9 +59,9 @@ async def update_price_task(context: ContextTypes.DEFAULT_TYPE):
         MARKET_DATA["last_updated"] = now.strftime("%I:%M %p")
         logging.info(f"🔄 Precio actualizado: {new_price}")
     else:
-        logging.warning("⚠️ Fallo al actualizar precio. Manteniendo anterior.")
+        logging.warning("⚠️ Fallo al actualizar precio.")
 
-# --- COMANDO: /start ---
+# --- COMANDO: /start (VERSIÓN HÍBRIDA PERFECTA) ---
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     mensaje = (
         "👋 **¡Bienvenido al Monitor P2P Inteligente!**\n\n"
@@ -77,11 +77,12 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
         "📊 **/precio**\n"
         "Consulta la tasa de cambio actual al instante.\n\n"
         
-        "🇺🇸 **Tengo Dólares** (Quiero Bolívares)\n"
-        "Escribe: `/usdt 50`  _(Ejemplo para 50 USDT)_\n\n"
+        "🧮 **CALCULADORA**\n\n"
+        "💵 **¿Tienes Dólares y quieres Bolívares?**\n"
+        "Escribe: `/usdt 50`  _(Te diré cuántos Bs son)_\n\n"
         
-        "🇻🇪 **Tengo Bolívares** (Quiero Dólares)\n"
-        "Escribe: `/bs 2000`  _(Ejemplo para 2000 Bs)_"
+        "🇻🇪 **¿Tienes Bolívares y quieres Dólares?**\n"
+        "Escribe: `/bs 2000`  _(Te diré cuántos $ son)_"
     )
     await update.message.reply_text(mensaje, parse_mode='Markdown')
 
@@ -153,15 +154,12 @@ if __name__ == "__main__":
 
     app = ApplicationBuilder().token(TOKEN).build()
 
-    # Añadir manejadores
     app.add_handler(CommandHandler("start", start))
     app.add_handler(CommandHandler("precio", precio))
     app.add_handler(CommandHandler("usdt", usdt_to_bs))
     app.add_handler(CommandHandler("bs", bs_to_usdt))
 
-    # Iniciar tarea en segundo plano (JobQueue)
     if app.job_queue:
-        # first=1 significa que corre 1 segundo después de prenderse
         app.job_queue.run_repeating(update_price_task, interval=UPDATE_INTERVAL, first=1)
 
     print("Bot Escalable iniciando...")
