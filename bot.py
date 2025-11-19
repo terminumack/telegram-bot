@@ -79,10 +79,10 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
         
         "🧮 **CALCULADORA**\n\n"
         "💵 **¿Tienes Dólares y quieres Bolívares?**\n"
-        "Escribe: `/usdt 50`  _(Te diré cuántos Bs son)_\n\n"
+        "Escribe: `/usdt `  _(Te diré cuántos Bs son)_\n\n"
         
         "🇻🇪 **¿Tienes Bolívares y quieres Dólares?**\n"
-        "Escribe: `/bs 2000`  _(Te diré cuántos $ son)_"
+        "Escribe: `/bs `  _(Te diré cuántos $ son)_"
     )
     await update.message.reply_text(mensaje, parse_mode='Markdown')
 
