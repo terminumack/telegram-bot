@@ -1,8 +1,25 @@
+¡No te preocupes! A veces, al copiar y pegar partes sueltas, se rompe la "sangría" (los espacios) de Python y el bot deja de arrancar.
+
+Aquí tienes el Código Maestro. Incluye todo: la memoria caché, la calculadora rápida, la actualización cada 2 minutos y el mensaje de bienvenida profesional.
+
+Paso 1: El archivo requirements.txt (CRUCIAL)
+Para que funcione la hora y la caché, necesitas estas librerías. Asegúrate de que tu archivo en GitHub tenga esto:
+
+Plaintext
+
+python-telegram-bot[job-queue]==20.8
+requests
+pytz
+Paso 2: El archivo bot.py (Completo)
+Borra todo lo que hay en bot.py y pega esto tal cual. No tienes que editar nada más.
+
+Python
+
 import os
 import logging
 import requests
 from datetime import datetime
-import pytz # Para la hora correcta
+import pytz 
 from telegram import Update
 from telegram.ext import (
     ApplicationBuilder, 
@@ -18,17 +35,18 @@ logging.basicConfig(
 
 TOKEN = os.getenv("TOKEN")
 
-# --- MEMORIA GLOBAL (CACHÉ) ---
-# Aquí guardaremos el precio para no molestar a Binance todo el tiempo
+# --- CONFIGURACIÓN ---
+# Actualizar cada 120 segundos (2 minutos)
+UPDATE_INTERVAL = 120 
+TIMEZONE = pytz.timezone('America/Caracas') # Hora de Venezuela
+
+# --- MEMORIA (CACHÉ) ---
 MARKET_DATA = {
     "price": None,
-    "last_updated": None
+    "last_updated": "Esperando actualización..."
 }
 
-# --- CONFIGURACIÓN ---
-UPDATE_INTERVAL = 120  # 120 segundos = 2 Minutos
-
-# --- Función que consulta a Binance (Backend) ---
+# --- FUNCIÓN: Consultar Binance (Backend) ---
 def fetch_binance_price():
     url = "https://p2p.binance.com/bapi/c2c/v2/friendly/c2c/adv/search"
     headers = {
@@ -42,27 +60,49 @@ def fetch_binance_price():
         response = requests.post(url, json=payload, headers=headers, timeout=10)
         data = response.json()
         prices = [float(item["adv"]["price"]) for item in data["data"]]
+        # Retornar promedio
         return sum(prices) / len(prices) if prices else None
     except Exception as e:
         logging.error(f"Error conectando con Binance: {e}")
         return None
 
-# --- TAREA AUTOMÁTICA (Se ejecuta sola cada 20 min) ---
+# --- TAREA AUTOMÁTICA: Actualizar Caché ---
 async def update_price_task(context: ContextTypes.DEFAULT_TYPE):
     new_price = fetch_binance_price()
     
     if new_price:
-        # Guardamos en memoria
         MARKET_DATA["price"] = new_price
-        # Guardamos la hora actual (Ajusta 'America/Caracas' si quieres hora Vzla)
-        now = datetime.now(pytz.timezone('America/Caracas'))
-        MARKET_DATA["last_updated"] = now.strftime("%I:%M %p") # Ej: 02:30 PM
-        
-        logging.info(f"🔄 Precio actualizado en caché: {new_price}")
+        now = datetime.now(TIMEZONE)
+        MARKET_DATA["last_updated"] = now.strftime("%I:%M %p")
+        logging.info(f"🔄 Precio actualizado: {new_price}")
     else:
-        logging.warning("⚠️ No se pudo actualizar el precio. Se mantiene el anterior.")
+        logging.warning("⚠️ Fallo al actualizar precio. Manteniendo anterior.")
 
-# --- COMANDO /precio ---
+# --- COMANDO: /start ---
+async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    mensaje = (
+        "👋 **¡Bienvenido al Monitor P2P Inteligente!**\n\n"
+        "Soy tu asistente financiero conectado en tiempo real al mercado **Binance P2P**. "
+        "Mi misión es darte la tasa de cambio **USDT/VES** más precisa y rápida del mercado.\n\n"
+        
+        "⚡ **¿Por qué usar este bot?**\n"
+        "• **Alta Precisión:** Calculo el promedio de las mejores ofertas reales.\n"
+        "• **Velocidad Extrema:** Datos actualizados cada 2 minutos.\n"
+        "• **Disponibilidad 24/7:** Siempre listo para sacar tus cuentas.\n\n"
+        
+        "🛠 **GUÍA DE USO RÁPIDO:**\n\n"
+        "📊 **/precio**\n"
+        "Consulta la tasa de cambio actual al instante.\n\n"
+        
+        "🇺🇸 **Tengo Dólares** (Quiero Bolívares)\n"
+        "Escribe: `/usdt 50`  _(Ejemplo para 50 USDT)_\n\n"
+        
+        "🇻🇪 **Tengo Bolívares** (Quiero Dólares)\n"
+        "Escribe: `/bs 2000`  _(Ejemplo para 2000 Bs)_"
+    )
+    await update.message.reply_text(mensaje, parse_mode='Markdown')
+
+# --- COMANDO: /precio ---
 async def precio(update: Update, context: ContextTypes.DEFAULT_TYPE):
     rate = MARKET_DATA["price"]
     time_str = MARKET_DATA["last_updated"]
@@ -74,87 +114,71 @@ async def precio(update: Update, context: ContextTypes.DEFAULT_TYPE):
             parse_mode='Markdown'
         )
     else:
-        await update.message.reply_text("🔄 Iniciando sistema... intenta en 1 minuto.")
+        await update.message.reply_text("🔄 Iniciando sistema... intenta en unos segundos.")
 
-# --- COMANDO /usdt (Dólar -> Bs) ---
+# --- COMANDO: /usdt (Dólar -> Bs) ---
 async def usdt_to_bs(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not context.args:
-        await update.message.reply_text("⚠️ Ej: `/usdt 50`", parse_mode='Markdown')
+        await update.message.reply_text("⚠️ Escribe el monto. Ej: `/usdt 50`", parse_mode='Markdown')
         return
 
     rate = MARKET_DATA["price"]
     if not rate:
-        await update.message.reply_text("⏳ El bot está actualizando tasas, espera un momento.")
+        await update.message.reply_text("⏳ Actualizando tasas, espera un momento.")
         return
 
     try:
-        amount_usdt = float(context.args[0].replace(',', '.'))
-        total_ves = amount_usdt * rate
+        amount = float(context.args[0].replace(',', '.'))
+        total = amount * rate
         await update.message.reply_text(
-            f"🇺🇸 {amount_usdt:,.2f} USDT son:\n"
-            f"🇻🇪 **{total_ves:,.2f} Bolívares**",
+            f"🇺🇸 {amount:,.2f} USDT son:\n"
+            f"🇻🇪 **{total:,.2f} Bolívares**\n"
+            f"_(Tasa: {rate:,.2f})_",
             parse_mode='Markdown'
         )
     except ValueError:
         await update.message.reply_text("🔢 Número inválido.")
 
-# --- COMANDO /bs (Bs -> Dólar) ---
+# --- COMANDO: /bs (Bs -> Dólar) ---
 async def bs_to_usdt(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not context.args:
-        await update.message.reply_text("⚠️ Ej: `/bs 2000`", parse_mode='Markdown')
+        await update.message.reply_text("⚠️ Escribe el monto. Ej: `/bs 1000`", parse_mode='Markdown')
         return
 
     rate = MARKET_DATA["price"]
     if not rate:
-        await update.message.reply_text("⏳ El bot está actualizando tasas, espera un momento.")
+        await update.message.reply_text("⏳ Actualizando tasas, espera un momento.")
         return
 
     try:
-        amount_ves = float(context.args[0].replace(',', '.'))
-        total_usdt = amount_ves / rate
+        amount = float(context.args[0].replace(',', '.'))
+        total = amount / rate
         await update.message.reply_text(
-            f"🇻🇪 {amount_ves:,.2f} Bs son:\n"
-            f"🇺🇸 **{total_usdt:,.2f} USDT**",
+            f"🇻🇪 {amount:,.2f} Bs son:\n"
+            f"🇺🇸 **{total:,.2f} USDT**\n"
+            f"_(Tasa: {rate:,.2f})_",
             parse_mode='Markdown'
         )
     except ValueError:
         await update.message.reply_text("🔢 Número inválido.")
 
-# --- START ACTUALIZADO Y PROFESIONAL ---
-async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    mensaje = (
-        "👋 **¡Bienvenido al Monitor P2P Inteligente!**\n\n"
-        "Soy tu asistente financiero conectado en tiempo real al mercado **Binance P2P**. "
-        "Mi misión es darte la tasa de cambio **USDT/VES** más precisa y rápida del mercado.\n\n"
-        
-        "⚡ **¿Por qué usar este bot?**\n"
-        "• **Alta Precisión:** Calculo el promedio de las mejores ofertas reales.\n"
-        "• **Velocidad Extrema:** Datos actualizados automáticamente cada 2 minutos.\n"
-        "• **Disponibilidad 24/7:** Siempre listo para sacar tus cuentas.\n\n"
-        
-        "🛠 **GUÍA DE USO RÁPIDO:**\n\n"
-        "📊 **/precio**\n"
-        "Consulta la tasa de cambio actual al instante.\n\n"
-        
-        "🇺🇸 **Tengo Dólares** (Quiero saber cuántos Bs son)\n"
-        "Escribe: `/usdt 50`  _(Ejemplo para 50 USDT)_\n\n"
-        
-        "🇻🇪 **Tengo Bolívares** (Quiero saber cuántos $ son)\n"
-        "Escribe: `/bs 2000`  _(Ejemplo para 2000 Bs)_"
-    )
-    
-    await update.message.reply_text(mensaje, parse_mode='Markdown')
+# --- MAIN ---
+if __name__ == "__main__":
+    if not TOKEN:
+        print("Error: TOKEN no encontrado.")
+        exit(1)
 
-    # Comandos
+    app = ApplicationBuilder().token(TOKEN).build()
+
+    # Añadir manejadores
     app.add_handler(CommandHandler("start", start))
     app.add_handler(CommandHandler("precio", precio))
     app.add_handler(CommandHandler("usdt", usdt_to_bs))
     app.add_handler(CommandHandler("bs", bs_to_usdt))
 
-    # --- AQUÍ ESTÁ LA MAGIA ---
-    # Programamos la actualización automática cada 1200 segundos (20 min)
-    # 'first=1' significa que la primera vez corre al segundo 1 de encenderse.
+    # Iniciar tarea en segundo plano (JobQueue)
     if app.job_queue:
+        # first=1 significa que corre 1 segundo después de prenderse
         app.job_queue.run_repeating(update_price_task, interval=UPDATE_INTERVAL, first=1)
 
     print("Bot Escalable iniciando...")
