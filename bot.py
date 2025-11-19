@@ -1,20 +1,3 @@
-¡No te preocupes! A veces, al copiar y pegar partes sueltas, se rompe la "sangría" (los espacios) de Python y el bot deja de arrancar.
-
-Aquí tienes el Código Maestro. Incluye todo: la memoria caché, la calculadora rápida, la actualización cada 2 minutos y el mensaje de bienvenida profesional.
-
-Paso 1: El archivo requirements.txt (CRUCIAL)
-Para que funcione la hora y la caché, necesitas estas librerías. Asegúrate de que tu archivo en GitHub tenga esto:
-
-Plaintext
-
-python-telegram-bot[job-queue]==20.8
-requests
-pytz
-Paso 2: El archivo bot.py (Completo)
-Borra todo lo que hay en bot.py y pega esto tal cual. No tienes que editar nada más.
-
-Python
-
 import os
 import logging
 import requests
