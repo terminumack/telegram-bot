@@ -23,7 +23,7 @@ TOKEN = os.getenv("TOKEN")
 DATABASE_URL = os.getenv("DATABASE_URL")
 
 # 🔴 PEGA TU ID DE ADMIN AQUÍ (Para usar /stats y /global)
-ADMIN_ID = 123456789 
+ADMIN_ID = 533888411 
 
 # --- CONFIGURACIÓN ---
 UPDATE_INTERVAL = 120 # 2 Minutos
