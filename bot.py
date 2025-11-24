@@ -186,7 +186,7 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     keyboard = [[InlineKeyboardButton("📢 Canal Oficial", url=LINK_CANAL), InlineKeyboardButton("🆘 Soporte", url=LINK_SOPORTE)]]
     await update.message.reply_text(mensaje, parse_mode=ParseMode.HTML, reply_markup=InlineKeyboardMarkup(keyboard))
 
-# --- COMANDO PRECIO (MODIFICADO) ---
+# --- COMANDO PRECIO ---
 async def precio(update: Update, context: ContextTypes.DEFAULT_TYPE):
     track_user(update.effective_user.id)
     
@@ -199,13 +199,12 @@ async def precio(update: Update, context: ContextTypes.DEFAULT_TYPE):
         if bcv:
             diff = ((binance - bcv) / bcv) * 100
             emoji_brecha = "🔴" if diff > 5 else "🟢"
-            # CAMBIO APLICADO AQUÍ:
-            brecha_txt = f"\n📊 <b>Brecha:</b> {diff:.2f}% {emoji_brecha}"
+            # CAMBIO APLICADO: Icono 📈 para la brecha
+            brecha_txt = f"\n📈 <b>Brecha:</b> {diff:.2f}% {emoji_brecha}"
             bcv_txt = f"{bcv:,.2f} Bs"
         else:
             bcv_txt = "⏳ Buscando..."
 
-        # CAMBIO APLICADO AQUÍ (Nombre):
         text = (
             f"📊 <b>MONITOR DE TASAS</b>\n\n"
             f"🔶 <b>Tasa Binance:</b> <b>{binance:,.2f} Bs</b>\n"
@@ -235,13 +234,12 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
             if bcv:
                 diff = ((binance - bcv) / bcv) * 100
                 emoji_brecha = "🔴" if diff > 5 else "🟢"
-                # CAMBIO APLICADO AQUÍ:
-                brecha_txt = f"\n📊 <b>Brecha:</b> {diff:.2f}% {emoji_brecha}"
+                # CAMBIO APLICADO AQUÍ TAMBIÉN
+                brecha_txt = f"\n📈 <b>Brecha:</b> {diff:.2f}% {emoji_brecha}"
                 bcv_txt = f"{bcv:,.2f} Bs"
             else:
                 bcv_txt = "⏳ Buscando..."
 
-            # CAMBIO APLICADO AQUÍ (Nombre):
             new_text = (
                 f"📊 <b>MONITOR DE TASAS</b>\n\n"
                 f"🔶 <b>Tasa Binance:</b> <b>{binance:,.2f} Bs</b>\n"
@@ -338,5 +336,5 @@ if __name__ == "__main__":
     if app.job_queue:
         app.job_queue.run_repeating(update_price_task, interval=UPDATE_INTERVAL, first=1)
     
-    print("🚀 BOT FINAL LISTO PARA DESPEGUE...")
+    print("🚀 BOT OFICIAL LISTO PARA LANZAMIENTO...")
     app.run_polling()
