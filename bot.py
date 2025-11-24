@@ -27,7 +27,7 @@ logging.basicConfig(
 
 TOKEN = os.getenv("TOKEN")
 DATABASE_URL = os.getenv("DATABASE_URL")
-ADMIN_ID = 123456789 # 🔴 PON TU ID REAL AQUÍ
+ADMIN_ID = 533888411 # 🔴 PON TU ID REAL AQUÍ
 
 # --- CONFIGURACIÓN ---
 UPDATE_INTERVAL = 120 # 2 Minutos
