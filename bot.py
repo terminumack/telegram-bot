@@ -9,9 +9,9 @@ from telegram.ext import (
     ApplicationBuilder, 
     CommandHandler, 
     CallbackQueryHandler, 
-    MessageHandler,     # <--- Nuevo
-    filters,            # <--- Nuevo
-    ConversationHandler,# <--- Nuevo (Para la charla interactiva)
+    MessageHandler,     
+    filters,            
+    ConversationHandler,
     ContextTypes
 )
 
@@ -22,15 +22,16 @@ logging.basicConfig(
 )
 
 TOKEN = os.getenv("TOKEN")
-ADMIN_ID = 123456789  # <--- TU ID REAL AQUÍ
+ADMIN_ID = 123456789  # <--- ⚠️ PON TU ID DE TELEGRAM AQUÍ
 
 # --- CONFIGURACIÓN ---
 UPDATE_INTERVAL = 120 
 TIMEZONE = pytz.timezone('America/Caracas') 
 
-# 🔴 TUS ENLACES 🔴
-LINK_CANAL = "https://t.me/tucanaloficial"
-LINK_SOPORTE = "https://t.me/tuusuario"
+# 🔴 TUS ENLACES (Configúralos aquí) 🔴
+LINK_CANAL = "https://t.me/tasabinance"
+LINK_GRUPO = "https://t.me/tasabinancegrupo"  # <--- NUEVO: LINK DEL GRUPO
+LINK_SOPORTE = "https://t.me/tasabinancesoporte"
 
 # --- ESTADOS DE LA CONVERSACIÓN ---
 ESPERANDO_INPUT_USDT, ESPERANDO_INPUT_BS = range(2)
@@ -81,7 +82,7 @@ async def update_price_task(context: ContextTypes.DEFAULT_TYPE):
     else:
         logging.warning("⚠️ Fallo al actualizar precio.")
 
-# --- COMANDO /start ---
+# --- COMANDO /start (CON NUEVO BOTÓN DE GRUPO) ---
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     track_user(update.effective_user.id)
     mensaje = (
@@ -100,8 +101,19 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
         "• <b>/usdt</b> → Convertir Dólares a Bs.\n"
         "• <b>/bs</b> → Convertir Bs a Dólares."
     )
-    keyboard = [[InlineKeyboardButton("📢 Canal Oficial", url=LINK_CANAL), InlineKeyboardButton("🆘 Soporte", url=LINK_SOPORTE)]]
+    
+    # --- DISEÑO DE BOTONES ---
+    keyboard = [
+        [
+            InlineKeyboardButton("📢 Canal", url=LINK_CANAL),
+            InlineKeyboardButton("💬 Grupo", url=LINK_GRUPO) # <--- Botón Grupo
+        ],
+        [
+            InlineKeyboardButton("🆘 Soporte", url=LINK_SOPORTE)
+        ]
+    ]
     reply_markup = InlineKeyboardMarkup(keyboard)
+    
     await update.message.reply_text(mensaje, parse_mode=ParseMode.HTML, reply_markup=reply_markup)
 
 # --- COMANDO /precio ---
@@ -159,32 +171,21 @@ async def stats(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await update.message.reply_text(f"📊 <b>ESTADÍSTICAS</b>\n👥 Usuarios Únicos: {len(USERS_DB)}", parse_mode=ParseMode.HTML)
 
 # ==============================================================================
-#  LÓGICA HÍBRIDA (COMANDO + CONVERSACIÓN) PARA /usdt y /bs
+#  LÓGICA INTERACTIVA /usdt y /bs
 # ==============================================================================
 
-# 1. INICIO FLUJO USDT
 async def start_usdt_calc(update: Update, context: ContextTypes.DEFAULT_TYPE):
     track_user(update.effective_user.id)
-    # Caso A: Usuario escribió "/usdt 50" (Directo)
-    if context.args:
-        return await calculate_conversion(update, context.args[0], "USDT")
-    
-    # Caso B: Usuario escribió solo "/usdt" (Interactivo)
+    if context.args: return await calculate_conversion(update, context.args[0], "USDT")
     await update.message.reply_text("🇺🇸 <b>Calculadora USDT:</b>\n\n¿Qué cantidad de Dólares quieres convertir a Bs?\n\n<i>Escribe el número abajo:</i>", parse_mode=ParseMode.HTML)
     return ESPERANDO_INPUT_USDT
 
-# 2. INICIO FLUJO BS
 async def start_bs_calc(update: Update, context: ContextTypes.DEFAULT_TYPE):
     track_user(update.effective_user.id)
-    # Caso A: Usuario escribió "/bs 1000" (Directo)
-    if context.args:
-        return await calculate_conversion(update, context.args[0], "BS")
-    
-    # Caso B: Usuario escribió solo "/bs" (Interactivo)
+    if context.args: return await calculate_conversion(update, context.args[0], "BS")
     await update.message.reply_text("🇻🇪 <b>Calculadora Bolívares:</b>\n\n¿Qué cantidad de Bs quieres convertir a Dólares?\n\n<i>Escribe el número abajo:</i>", parse_mode=ParseMode.HTML)
     return ESPERANDO_INPUT_BS
 
-# 3. PROCESAR INPUT (Cuando el usuario responde el número)
 async def process_usdt_input(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await calculate_conversion(update, update.message.text, "USDT")
     return ConversationHandler.END
@@ -193,7 +194,6 @@ async def process_bs_input(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await calculate_conversion(update, update.message.text, "BS")
     return ConversationHandler.END
 
-# 4. LÓGICA MATEMÁTICA COMÚN
 async def calculate_conversion(update: Update, text_amount, currency_type):
     rate = MARKET_DATA["price"]
     if not rate:
@@ -201,7 +201,6 @@ async def calculate_conversion(update: Update, text_amount, currency_type):
         return ConversationHandler.END
 
     try:
-        # Limpiamos el texto (por si ponen "50$" o "50 usdt")
         clean_text = ''.join(c for c in text_amount if c.isdigit() or c in '.,')
         amount = float(clean_text.replace(',', '.'))
         
@@ -234,7 +233,6 @@ if __name__ == "__main__":
 
     app = ApplicationBuilder().token(TOKEN).build()
 
-    # MANEJADORES DE CONVERSACIÓN (Para /usdt y /bs interactivos)
     conv_handler_usdt = ConversationHandler(
         entry_points=[CommandHandler("usdt", start_usdt_calc)],
         states={ESPERANDO_INPUT_USDT: [MessageHandler(filters.TEXT & ~filters.COMMAND, process_usdt_input)]},
@@ -250,7 +248,6 @@ if __name__ == "__main__":
     app.add_handler(conv_handler_usdt)
     app.add_handler(conv_handler_bs)
 
-    # RESTO DE COMANDOS
     app.add_handler(CommandHandler("start", start))
     app.add_handler(CommandHandler("precio", precio))
     app.add_handler(CommandHandler("ia", prediccion))
@@ -260,5 +257,5 @@ if __name__ == "__main__":
     if app.job_queue:
         app.job_queue.run_repeating(update_price_task, interval=UPDATE_INTERVAL, first=1)
 
-    print("Bot INTERACTIVO iniciando...")
+    print("Bot PRO (Con Grupo) iniciando...")
     app.run_polling()
