@@ -1,6 +1,7 @@
 import os
 import logging
 import requests
+import psycopg2  # <--- IMPORTANTE: Librería para la Base de Datos
 from datetime import datetime
 import pytz 
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
@@ -22,32 +23,92 @@ logging.basicConfig(
 )
 
 TOKEN = os.getenv("TOKEN")
-ADMIN_ID = 123456789  # <--- ⚠️ PON TU ID DE TELEGRAM AQUÍ
+# Intenta obtener la URL de la base de datos, si falla, avisa en logs
+DATABASE_URL = os.getenv("DATABASE_URL")
+
+# ⚠️ PON TU ID DE TELEGRAM AQUÍ
+ADMIN_ID = 123456789 
 
 # --- CONFIGURACIÓN ---
 UPDATE_INTERVAL = 120 
 TIMEZONE = pytz.timezone('America/Caracas') 
 
-# 🔴 TUS ENLACES (Configúralos aquí) 🔴
+# 🔴 TUS ENLACES 🔴
 LINK_CANAL = "https://t.me/tasabinance"
-LINK_GRUPO = "https://t.me/tasabinancegrupo"  # <--- NUEVO: LINK DEL GRUPO
+LINK_GRUPO = "https://t.me/tasabinancegrupo"
 LINK_SOPORTE = "https://t.me/tasabinancesoporte"
 
 # --- ESTADOS DE LA CONVERSACIÓN ---
 ESPERANDO_INPUT_USDT, ESPERANDO_INPUT_BS = range(2)
 
-# --- MEMORIA ---
+# --- MEMORIA (Solo Caché de Precios) ---
 MARKET_DATA = {
     "price": None,
     "last_updated": "Esperando...",
     "history": [] 
 }
-USERS_DB = set()
 
-# --- FUNCIÓN: Rastrear Usuario ---
+# ==============================================================================
+#  GESTIÓN DE BASE DE DATOS (POSTGRESQL) - ¡ESTO ES LO NUEVO!
+# ==============================================================================
+
+def init_db():
+    """Crea la tabla de usuarios si no existe al iniciar."""
+    if not DATABASE_URL:
+        logging.warning("⚠️ No se detectó DATABASE_URL. El bot usará memoria RAM (volátil).")
+        return
+
+    try:
+        conn = psycopg2.connect(DATABASE_URL)
+        cur = conn.cursor()
+        cur.execute("""
+            CREATE TABLE IF NOT EXISTS users (
+                user_id BIGINT PRIMARY KEY,
+                joined_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+            )
+        """)
+        conn.commit()
+        cur.close()
+        conn.close()
+        logging.info("✅ Base de Datos conectada y tabla verificada.")
+    except Exception as e:
+        logging.error(f"❌ Error conectando a BD: {e}")
+
 def track_user(user_id):
-    if user_id not in USERS_DB:
-        USERS_DB.add(user_id)
+    """Guarda al usuario en PostgreSQL de forma segura."""
+    if not DATABASE_URL: return 
+
+    try:
+        conn = psycopg2.connect(DATABASE_URL)
+        cur = conn.cursor()
+        # Intentamos insertar. Si ya existe (ON CONFLICT), no hace nada.
+        cur.execute("""
+            INSERT INTO users (user_id) VALUES (%s)
+            ON CONFLICT (user_id) DO NOTHING
+        """, (user_id,))
+        conn.commit()
+        cur.close()
+        conn.close()
+    except Exception as e:
+        logging.error(f"Error guardando usuario: {e}")
+
+def get_total_users():
+    """Cuenta cuántos usuarios hay en la base de datos."""
+    if not DATABASE_URL: return 0
+    try:
+        conn = psycopg2.connect(DATABASE_URL)
+        cur = conn.cursor()
+        cur.execute("SELECT COUNT(*) FROM users")
+        count = cur.fetchone()[0]
+        cur.close()
+        conn.close()
+        return count
+    except Exception:
+        return 0
+
+# ==============================================================================
+#  FIN LÓGICA DB
+# ==============================================================================
 
 # --- BACKEND BINANCE ---
 def fetch_binance_price():
@@ -78,13 +139,13 @@ async def update_price_task(context: ContextTypes.DEFAULT_TYPE):
         MARKET_DATA["history"].append(new_price)
         if len(MARKET_DATA["history"]) > 30:
             MARKET_DATA["history"].pop(0)
-        logging.info(f"🔄 Precio: {new_price} | Usuarios: {len(USERS_DB)}")
+        logging.info(f"🔄 Precio: {new_price}")
     else:
         logging.warning("⚠️ Fallo al actualizar precio.")
 
-# --- COMANDO /start (CON NUEVO BOTÓN DE GRUPO) ---
+# --- COMANDO /start ---
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    track_user(update.effective_user.id)
+    track_user(update.effective_user.id) # <--- Guarda en BD Real
     mensaje = (
         "👋 <b>¡Bienvenido al Monitor P2P Inteligente!</b>\n\n"
         "Soy tu asistente financiero conectado a <b>Binance P2P</b>. "
@@ -102,11 +163,10 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
         "• <b>/bs</b> → Convertir Bs a Dólares."
     )
     
-    # --- DISEÑO DE BOTONES ---
     keyboard = [
         [
             InlineKeyboardButton("📢 Canal", url=LINK_CANAL),
-            InlineKeyboardButton("💬 Grupo", url=LINK_GRUPO) # <--- Botón Grupo
+            InlineKeyboardButton("💬 Grupo", url=LINK_GRUPO)
         ],
         [
             InlineKeyboardButton("🆘 Soporte", url=LINK_SOPORTE)
@@ -165,15 +225,13 @@ async def prediccion(update: Update, context: ContextTypes.DEFAULT_TYPE):
             f"💡 <b>Conclusión:</b>\n<i>{msg}</i>\n\n⚠️ <i>No es consejo financiero.</i>")
     await update.message.reply_text(text, parse_mode=ParseMode.HTML)
 
-# --- ESTADÍSTICAS ---
+# --- ESTADÍSTICAS (LEEN LA DB) ---
 async def stats(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if update.effective_user.id == ADMIN_ID:
-        await update.message.reply_text(f"📊 <b>ESTADÍSTICAS</b>\n👥 Usuarios Únicos: {len(USERS_DB)}", parse_mode=ParseMode.HTML)
+        count = get_total_users() # <--- Lee de la Base de Datos
+        await update.message.reply_text(f"📊 <b>ESTADÍSTICAS REALES</b>\n👥 Usuarios Registrados (DB): {count}", parse_mode=ParseMode.HTML)
 
-# ==============================================================================
-#  LÓGICA INTERACTIVA /usdt y /bs
-# ==============================================================================
-
+# --- CALCULADORA ---
 async def start_usdt_calc(update: Update, context: ContextTypes.DEFAULT_TYPE):
     track_user(update.effective_user.id)
     if context.args: return await calculate_conversion(update, context.args[0], "USDT")
@@ -227,6 +285,9 @@ async def cancel(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 # --- MAIN ---
 if __name__ == "__main__":
+    # INICIALIZAR LA DB (Esto crea la tabla si no existe)
+    init_db()
+
     if not TOKEN:
         print("Error: TOKEN no encontrado.")
         exit(1)
@@ -257,5 +318,5 @@ if __name__ == "__main__":
     if app.job_queue:
         app.job_queue.run_repeating(update_price_task, interval=UPDATE_INTERVAL, first=1)
 
-    print("Bot PRO (Con Grupo) iniciando...")
+    print("Bot PRO (Con Base de Datos REAL) iniciando...")
     app.run_polling()
