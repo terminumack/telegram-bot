@@ -2,6 +2,8 @@ import os
 import logging
 import requests
 import psycopg2 
+from bs4 import BeautifulSoup  # <--- Necesario para leer el BCV
+import urllib3 # Para silenciar advertencias de seguridad del sitio del BCV
 from datetime import datetime
 import pytz 
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
@@ -15,6 +17,9 @@ from telegram.ext import (
     ConversationHandler,
     ContextTypes
 )
+
+# Silenciar advertencias de certificado SSL (común en webs del gobierno)
+urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
 
 # 1. Configurar Logging
 logging.basicConfig(
@@ -40,7 +45,8 @@ ESPERANDO_INPUT_USDT, ESPERANDO_INPUT_BS = range(2)
 
 # --- MEMORIA (Caché) ---
 MARKET_DATA = {
-    "price": None,
+    "price": None, # Binance
+    "bcv": None,   # BCV Oficial
     "last_updated": "Esperando...",
     "history": [] 
 }
@@ -97,75 +103,95 @@ def get_total_users():
         return 0
 
 # ==============================================================================
-#  BACKEND BINANCE (OPTIMIZADO PARA USUARIO COMÚN)
+#  BACKEND: BINANCE + BCV
 # ==============================================================================
+
 def fetch_binance_price():
     url = "https://p2p.binance.com/bapi/c2c/v2/friendly/c2c/adv/search"
     headers = {
         "Content-Type": "application/json",
         "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/115.0.0.0 Safari/537.36"
     }
-    
-    # 🔥 AQUÍ ESTÁ EL CAMBIO CLAVE 🔥
+    # Filtro Anti-Ballenas (Pago Móvil + Monto bajo)
     payload = {
-        "page": 1, 
-        "rows": 10, 
-        # Filtramos por PagoMovil específico para Venezuela
+        "page": 1, "rows": 10, 
         "payTypes": ["PagoMovil"], 
-        # Filtro de monto: 3600 VES (~10 USD) para evitar ballenas y dar precio real
         "transAmount": "3600", 
-        "asset": "USDT", 
-        "fiat": "VES", 
-        "tradeType": "BUY"
+        "asset": "USDT", "fiat": "VES", "tradeType": "BUY"
     }
-    
     try:
         response = requests.post(url, json=payload, headers=headers, timeout=10)
         data = response.json()
-        
-        # Filtramos resultados vacíos o errores (Fallback si falla PagoMovil)
         if not data.get("data"):
-            payload["payTypes"] = [] # Intentar sin filtro de pago
+            payload["payTypes"] = [] 
             response = requests.post(url, json=payload, headers=headers, timeout=10)
             data = response.json()
-
         prices = [float(item["adv"]["price"]) for item in data["data"]]
-        
-        # Promedio simple de los primeros resultados (ya filtrados por monto humano)
         return sum(prices) / len(prices) if prices else None
-
     except Exception as e:
         logging.error(f"Error Binance: {e}")
         return None
 
+def fetch_bcv_price():
+    """Obtiene la tasa oficial del sitio del BCV"""
+    url = "http://www.bcv.org.ve/"
+    headers = {
+        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36"
+    }
+    try:
+        # verify=False porque el certificado del BCV suele fallar
+        response = requests.get(url, headers=headers, timeout=15, verify=False)
+        if response.status_code == 200:
+            soup = BeautifulSoup(response.content, 'html.parser')
+            # Buscamos el div con id 'dolar'
+            dolar_div = soup.find('div', id='dolar')
+            if dolar_div:
+                rate_text = dolar_div.find('strong').text.strip()
+                # Convertimos formato europeo (36,12) a python (36.12)
+                return float(rate_text.replace(',', '.'))
+    except Exception as e:
+        logging.error(f"Error BCV: {e}")
+    return None
+
 # --- TAREA AUTOMÁTICA ---
 async def update_price_task(context: ContextTypes.DEFAULT_TYPE):
-    new_price = fetch_binance_price()
-    if new_price:
-        MARKET_DATA["price"] = new_price
-        now = datetime.now(TIMEZONE)
-        MARKET_DATA["last_updated"] = now.strftime("%I:%M %p")
-        MARKET_DATA["history"].append(new_price)
+    new_binance = fetch_binance_price()
+    new_bcv = fetch_bcv_price()
+
+    # Actualizar Binance
+    if new_binance:
+        MARKET_DATA["price"] = new_binance
+        MARKET_DATA["history"].append(new_binance)
         if len(MARKET_DATA["history"]) > 30:
             MARKET_DATA["history"].pop(0)
-        logging.info(f"🔄 Precio: {new_price}")
-    else:
-        logging.warning("⚠️ Fallo actualización precio.")
 
-# --- COMANDO /start ---
+    # Actualizar BCV
+    if new_bcv:
+        MARKET_DATA["bcv"] = new_bcv
+
+    # Si hubo alguna actualización, guardamos la hora
+    if new_binance or new_bcv:
+        now = datetime.now(TIMEZONE)
+        MARKET_DATA["last_updated"] = now.strftime("%I:%M %p")
+        logging.info(f"🔄 Actualizado - Binance: {new_binance} | BCV: {new_bcv}")
+    else:
+        logging.warning("⚠️ Fallo actualización de precios.")
+
+# ==============================================================================
+#  COMANDOS
+# ==============================================================================
+
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     track_user(update.effective_user.id)
     mensaje = (
         "👋 <b>¡Bienvenido al Monitor P2P Inteligente!</b>\n\n"
-        "Soy tu asistente financiero conectado a <b>Binance P2P</b>. "
-        "Te doy la tasa <b>USDT/VES</b> más precisa (Pago Móvil) del mercado.\n\n"
-        
+        "Soy tu asistente financiero conectado a <b>Binance P2P</b> y al <b>BCV</b>.\n\n"
         "⚡ <b>Características:</b>\n"
         "• <b>Realidad:</b> Filtramos precios mayoristas falsos.\n"
+        "• <b>Completo:</b> Tasa Paralela, Oficial y Brecha.\n"
         "• <b>Velocidad:</b> Actualizado cada 2 minutos.\n\n"
-        
         "🛠 <b>HERRAMIENTAS:</b>\n\n"
-        "📊 <b>/precio</b> → Ver tasa actual.\n"
+        "📊 <b>/precio</b> → Ver tabla de tasas.\n"
         "🧠 <b>/ia</b> → Predicción de tendencia.\n\n"
         "🧮 <b>CALCULADORA (Toca abajo):</b>\n"
         "• <b>/usdt</b> → Convertir Dólares a Bs.\n"
@@ -177,32 +203,68 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     ]
     await update.message.reply_text(mensaje, parse_mode=ParseMode.HTML, reply_markup=InlineKeyboardMarkup(keyboard))
 
-# --- COMANDO /precio ---
 async def precio(update: Update, context: ContextTypes.DEFAULT_TYPE):
     track_user(update.effective_user.id)
-    rate = MARKET_DATA["price"]
+    binance = MARKET_DATA["price"]
+    bcv = MARKET_DATA["bcv"]
     time_str = MARKET_DATA["last_updated"]
     
-    if rate:
-        text = (f"📊 <b>Tasa Binance (Pago Móvil):</b> {rate:,.2f} Bs/USDT\n" f"🕒 <i>Actualizado: {time_str}</i>")
+    if binance:
+        # Construcción del Mensaje
+        text = "📊 <b>MONITOR DE TASAS</b>\n\n"
+        text += f"🔶 <b>Tasa Binance:</b> {binance:,.2f} Bs\n"
+        
+        if bcv:
+            text += f"🏛️ <b>BCV (Oficial):</b> {bcv:,.2f} Bs\n\n"
+            
+            # Cálculo de Brecha
+            brecha = ((binance - bcv) / bcv) * 100
+            
+            # Color de la alerta
+            if brecha >= 20: emoji = "🔴"
+            elif brecha >= 10: emoji = "🟠"
+            else: emoji = "🟢"
+            
+            text += f"📈 <b>Brecha:</b> {brecha:.2f}% {emoji}\n\n"
+        else:
+            text += "🏛️ <b>BCV:</b> <i>No disponible</i>\n\n"
+            
+        text += f"🕒 <i>Actualizado: {time_str}</i>"
+
         keyboard = [[InlineKeyboardButton("🔄 Actualizar Precio", callback_data='refresh_price')]]
         await update.message.reply_text(text, parse_mode=ParseMode.HTML, reply_markup=InlineKeyboardMarkup(keyboard))
     else:
         await update.message.reply_text("🔄 Iniciando sistema... intenta en unos segundos.")
 
-# --- BOTÓN REFRESH ---
 async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     track_user(update.effective_user.id)
     query = update.callback_query
     await query.answer()
+    
     if query.data == 'refresh_price':
-        rate = MARKET_DATA["price"]
+        binance = MARKET_DATA["price"]
+        bcv = MARKET_DATA["bcv"]
         time_str = MARKET_DATA["last_updated"]
-        if rate:
-            new_text = (f"📊 <b>Tasa Binance (Pago Móvil):</b> {rate:,.2f} Bs/USDT\n" f"🕒 <i>Actualizado: {time_str}</i>")
+        
+        if binance:
+            text = "📊 <b>MONITOR DE TASAS</b>\n\n"
+            text += f"🔶 <b>Tasa Binance:</b> {binance:,.2f} Bs\n"
+            
+            if bcv:
+                text += f"🏛️ <b>BCV (Oficial):</b> {bcv:,.2f} Bs\n\n"
+                brecha = ((binance - bcv) / bcv) * 100
+                if brecha >= 20: emoji = "🔴"
+                elif brecha >= 10: emoji = "🟠"
+                else: emoji = "🟢"
+                text += f"📈 <b>Brecha:</b> {brecha:.2f}% {emoji}\n\n"
+            else:
+                text += "🏛️ <b>BCV:</b> <i>No disponible</i>\n\n"
+                
+            text += f"🕒 <i>Actualizado: {time_str}</i>"
+
             try:
                 keyboard = [[InlineKeyboardButton("🔄 Actualizar Precio", callback_data='refresh_price')]]
-                await query.edit_message_text(text=new_text, parse_mode=ParseMode.HTML, reply_markup=InlineKeyboardMarkup(keyboard))
+                await query.edit_message_text(text=text, parse_mode=ParseMode.HTML, reply_markup=InlineKeyboardMarkup(keyboard))
             except Exception: pass
 
 # --- IA PREDICCIÓN ---
@@ -232,7 +294,7 @@ async def stats(update: Update, context: ContextTypes.DEFAULT_TYPE):
         count = get_total_users()
         await update.message.reply_text(f"📊 <b>ESTADÍSTICAS (DB)</b>\n👥 Usuarios: {count}", parse_mode=ParseMode.HTML)
 
-# --- CALCULADORA (Lógica Común) ---
+# --- CALCULADORA ---
 async def calculate_conversion(update: Update, text_amount, currency_type):
     rate = MARKET_DATA["price"]
     if not rate:
@@ -244,18 +306,10 @@ async def calculate_conversion(update: Update, text_amount, currency_type):
         
         if currency_type == "USDT":
             total = amount * rate
-            # Muestra la tasa usada
-            await update.message.reply_text(
-                f"🇺🇸 {amount:,.2f} USDT son:\n🇻🇪 <b>{total:,.2f} Bolívares</b>\n<i>(Tasa: {rate:,.2f})</i>",
-                parse_mode=ParseMode.HTML
-            )
+            await update.message.reply_text(f"🇺🇸 {amount:,.2f} USDT son:\n🇻🇪 <b>{total:,.2f} Bolívares</b>\n<i>(Tasa: {rate:,.2f})</i>", parse_mode=ParseMode.HTML)
         else: 
             total = amount / rate
-            # Muestra la tasa usada
-            await update.message.reply_text(
-                f"🇻🇪 {amount:,.2f} Bs son:\n🇺🇸 <b>{total:,.2f} USDT</b>\n<i>(Tasa: {rate:,.2f})</i>",
-                parse_mode=ParseMode.HTML
-            )
+            await update.message.reply_text(f"🇻🇪 {amount:,.2f} Bs son:\n🇺🇸 <b>{total:,.2f} USDT</b>\n<i>(Tasa: {rate:,.2f})</i>", parse_mode=ParseMode.HTML)
     except ValueError:
         await update.message.reply_text("🔢 Número inválido.")
     return ConversationHandler.END
@@ -314,5 +368,5 @@ if __name__ == "__main__":
     if app.job_queue:
         app.job_queue.run_repeating(update_price_task, interval=UPDATE_INTERVAL, first=1)
 
-    print("Bot REALISTA (Pago Movil + Anti-Ballenas) iniciando...")
+    print("Bot MONITOR (Binance + BCV) iniciando...")
     app.run_polling()
