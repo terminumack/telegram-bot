@@ -2,8 +2,8 @@ import os
 import logging
 import requests
 import psycopg2 
-from bs4 import BeautifulSoup  # <--- Necesario para leer el BCV
-import urllib3 # Para silenciar advertencias de seguridad del sitio del BCV
+from bs4 import BeautifulSoup 
+import urllib3
 from datetime import datetime
 import pytz 
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
@@ -18,7 +18,7 @@ from telegram.ext import (
     ContextTypes
 )
 
-# Silenciar advertencias de certificado SSL (común en webs del gobierno)
+# Silenciar advertencias SSL del BCV
 urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
 
 # 1. Configurar Logging
@@ -29,7 +29,9 @@ logging.basicConfig(
 
 TOKEN = os.getenv("TOKEN")
 DATABASE_URL = os.getenv("DATABASE_URL")
-ADMIN_ID = 123456789  # <--- ⚠️ PON TU ID REAL AQUÍ
+
+# ⚠️ PON TU ID REAL AQUÍ PARA QUE /stats Y /global FUNCIONEN
+ADMIN_ID = 123456789  
 
 # --- CONFIGURACIÓN ---
 UPDATE_INTERVAL = 120 
@@ -40,21 +42,20 @@ LINK_CANAL = "https://t.me/tasabinance"
 LINK_GRUPO = "https://t.me/tasabinancegrupo"
 LINK_SOPORTE = "https://t.me/tasabinancesoporte"
 
-# --- ESTADOS DE LA CONVERSACIÓN ---
+# --- ESTADOS CONVERSACIÓN ---
 ESPERANDO_INPUT_USDT, ESPERANDO_INPUT_BS = range(2)
 
 # --- MEMORIA (Caché) ---
 MARKET_DATA = {
     "price": None, # Binance
-    "bcv": None,   # BCV Oficial
+    "bcv": None,   # BCV
     "last_updated": "Esperando...",
     "history": [] 
 }
 
 # ==============================================================================
-#  GESTIÓN DE BASE DE DATOS
+#  BASE DE DATOS (POSTGRESQL)
 # ==============================================================================
-
 def init_db():
     if not DATABASE_URL:
         logging.warning("⚠️ Sin DATABASE_URL. Usando RAM.")
@@ -102,17 +103,30 @@ def get_total_users():
     except Exception:
         return 0
 
-# ==============================================================================
-#  BACKEND: BINANCE + BCV
-# ==============================================================================
+def get_all_users_ids():
+    """Obtiene la lista de TODOS los IDs para el broadcast"""
+    if not DATABASE_URL: return []
+    try:
+        conn = psycopg2.connect(DATABASE_URL)
+        cur = conn.cursor()
+        cur.execute("SELECT user_id FROM users")
+        ids = [row[0] for row in cur.fetchall()]
+        cur.close()
+        conn.close()
+        return ids
+    except Exception:
+        return []
 
+# ==============================================================================
+#  BACKEND DE PRECIOS
+# ==============================================================================
 def fetch_binance_price():
     url = "https://p2p.binance.com/bapi/c2c/v2/friendly/c2c/adv/search"
     headers = {
         "Content-Type": "application/json",
-        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/115.0.0.0 Safari/537.36"
+        "User-Agent": "Mozilla/5.0"
     }
-    # Filtro Anti-Ballenas (Pago Móvil + Monto bajo)
+    # Filtro Anti-Ballenas + Pago Móvil
     payload = {
         "page": 1, "rows": 10, 
         "payTypes": ["PagoMovil"], 
@@ -133,24 +147,18 @@ def fetch_binance_price():
         return None
 
 def fetch_bcv_price():
-    """Obtiene la tasa oficial del sitio del BCV"""
     url = "http://www.bcv.org.ve/"
-    headers = {
-        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36"
-    }
+    headers = {"User-Agent": "Mozilla/5.0"}
     try:
-        # verify=False porque el certificado del BCV suele fallar
         response = requests.get(url, headers=headers, timeout=15, verify=False)
         if response.status_code == 200:
             soup = BeautifulSoup(response.content, 'html.parser')
-            # Buscamos el div con id 'dolar'
             dolar_div = soup.find('div', id='dolar')
             if dolar_div:
                 rate_text = dolar_div.find('strong').text.strip()
-                # Convertimos formato europeo (36,12) a python (36.12)
                 return float(rate_text.replace(',', '.'))
-    except Exception as e:
-        logging.error(f"Error BCV: {e}")
+    except Exception:
+        return None
     return None
 
 # --- TAREA AUTOMÁTICA ---
@@ -158,24 +166,18 @@ async def update_price_task(context: ContextTypes.DEFAULT_TYPE):
     new_binance = fetch_binance_price()
     new_bcv = fetch_bcv_price()
 
-    # Actualizar Binance
     if new_binance:
         MARKET_DATA["price"] = new_binance
         MARKET_DATA["history"].append(new_binance)
-        if len(MARKET_DATA["history"]) > 30:
-            MARKET_DATA["history"].pop(0)
+        if len(MARKET_DATA["history"]) > 30: MARKET_DATA["history"].pop(0)
 
-    # Actualizar BCV
     if new_bcv:
         MARKET_DATA["bcv"] = new_bcv
 
-    # Si hubo alguna actualización, guardamos la hora
     if new_binance or new_bcv:
         now = datetime.now(TIMEZONE)
         MARKET_DATA["last_updated"] = now.strftime("%I:%M %p")
-        logging.info(f"🔄 Actualizado - Binance: {new_binance} | BCV: {new_bcv}")
-    else:
-        logging.warning("⚠️ Fallo actualización de precios.")
+        logging.info(f"🔄 Actualizado - Bin: {new_binance} | BCV: {new_bcv}")
 
 # ==============================================================================
 #  COMANDOS
@@ -187,15 +189,15 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
         "👋 <b>¡Bienvenido al Monitor P2P Inteligente!</b>\n\n"
         "Soy tu asistente financiero conectado a <b>Binance P2P</b> y al <b>BCV</b>.\n\n"
         "⚡ <b>Características:</b>\n"
-        "• <b>Realidad:</b> Filtramos precios mayoristas falsos.\n"
+        "• <b>Realidad:</b> Filtro Anti-Ballenas (Precio de Calle).\n"
         "• <b>Completo:</b> Tasa Paralela, Oficial y Brecha.\n"
-        "• <b>Velocidad:</b> Actualizado cada 2 minutos.\n\n"
+        "• <b>Velocidad:</b> Actualizado cada 2 min.\n\n"
         "🛠 <b>HERRAMIENTAS:</b>\n\n"
         "📊 <b>/precio</b> → Ver tabla de tasas.\n"
-        "🧠 <b>/ia</b> → Predicción de tendencia.\n\n"
+        "🧠 <b>/ia</b> → Predicción de Tendencia.\n\n"
         "🧮 <b>CALCULADORA (Toca abajo):</b>\n"
-        "• <b>/usdt</b> → Convertir Dólares a Bs.\n"
-        "• <b>/bs</b> → Convertir Bs a Dólares."
+        "• <b>/usdt</b> → Dólares a Bs.\n"
+        "• <b>/bs</b> → Bs a Dólares."
     )
     keyboard = [
         [InlineKeyboardButton("📢 Canal", url=LINK_CANAL), InlineKeyboardButton("💬 Grupo", url=LINK_GRUPO)],
@@ -210,21 +212,15 @@ async def precio(update: Update, context: ContextTypes.DEFAULT_TYPE):
     time_str = MARKET_DATA["last_updated"]
     
     if binance:
-        # Construcción del Mensaje
         text = "📊 <b>MONITOR DE TASAS</b>\n\n"
         text += f"🔶 <b>Tasa Binance:</b> {binance:,.2f} Bs\n"
         
         if bcv:
             text += f"🏛️ <b>BCV (Oficial):</b> {bcv:,.2f} Bs\n\n"
-            
-            # Cálculo de Brecha
             brecha = ((binance - bcv) / bcv) * 100
-            
-            # Color de la alerta
             if brecha >= 20: emoji = "🔴"
             elif brecha >= 10: emoji = "🟠"
             else: emoji = "🟢"
-            
             text += f"📈 <b>Brecha:</b> {brecha:.2f}% {emoji}\n\n"
         else:
             text += "🏛️ <b>BCV:</b> <i>No disponible</i>\n\n"
@@ -249,7 +245,6 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         if binance:
             text = "📊 <b>MONITOR DE TASAS</b>\n\n"
             text += f"🔶 <b>Tasa Binance:</b> {binance:,.2f} Bs\n"
-            
             if bcv:
                 text += f"🏛️ <b>BCV (Oficial):</b> {bcv:,.2f} Bs\n\n"
                 brecha = ((binance - bcv) / bcv) * 100
@@ -259,7 +254,6 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 text += f"📈 <b>Brecha:</b> {brecha:.2f}% {emoji}\n\n"
             else:
                 text += "🏛️ <b>BCV:</b> <i>No disponible</i>\n\n"
-                
             text += f"🕒 <i>Actualizado: {time_str}</i>"
 
             try:
@@ -267,7 +261,6 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 await query.edit_message_text(text=text, parse_mode=ParseMode.HTML, reply_markup=InlineKeyboardMarkup(keyboard))
             except Exception: pass
 
-# --- IA PREDICCIÓN ---
 async def prediccion(update: Update, context: ContextTypes.DEFAULT_TYPE):
     track_user(update.effective_user.id)
     history = MARKET_DATA["history"]
@@ -288,11 +281,43 @@ async def prediccion(update: Update, context: ContextTypes.DEFAULT_TYPE):
             f"💡 <b>Conclusión:</b>\n<i>{msg}</i>\n\n⚠️ <i>No es consejo financiero.</i>")
     await update.message.reply_text(text, parse_mode=ParseMode.HTML)
 
-# --- ESTADÍSTICAS ---
 async def stats(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    # Solo el admin puede ver las stats
     if update.effective_user.id == ADMIN_ID:
         count = get_total_users()
         await update.message.reply_text(f"📊 <b>ESTADÍSTICAS (DB)</b>\n👥 Usuarios: {count}", parse_mode=ParseMode.HTML)
+
+# --- COMANDO GLOBAL (BROADCAST MASIVO) ---
+async def global_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    # 1. Seguridad: Solo el Admin puede usarlo
+    if update.effective_user.id != ADMIN_ID:
+        return
+
+    if not context.args:
+        await update.message.reply_text("⚠️ Escribe el mensaje. Ej: <code>/global Hola a todos</code>", parse_mode=ParseMode.HTML)
+        return
+
+    mensaje = " ".join(context.args)
+    
+    # Obtenemos TODOS los usuarios de la base de datos
+    users = get_all_users_ids()
+    if not users:
+        await update.message.reply_text("⚠️ No hay usuarios en la base de datos.")
+        return
+
+    await update.message.reply_text(f"🚀 Iniciando difusión a {len(users)} usuarios...")
+
+    enviados = 0
+    fallidos = 0
+    # Enviamos el mensaje a cada ID registrado
+    for user_id in users:
+        try:
+            await context.bot.send_message(chat_id=user_id, text=mensaje)
+            enviados += 1
+        except Exception:
+            fallidos += 1
+
+    await update.message.reply_text(f"✅ <b>Difusión Terminada</b>\n\n📨 Enviados: {enviados}\n❌ Fallidos (Bloquearon el bot): {fallidos}", parse_mode=ParseMode.HTML)
 
 # --- CALCULADORA ---
 async def calculate_conversion(update: Update, text_amount, currency_type):
@@ -363,10 +388,12 @@ if __name__ == "__main__":
     app.add_handler(CommandHandler("precio", precio))
     app.add_handler(CommandHandler("ia", prediccion))
     app.add_handler(CommandHandler("stats", stats))
+    # Aquí está el comando GLOBAL restaurado:
+    app.add_handler(CommandHandler("global", global_message))
     app.add_handler(CallbackQueryHandler(button_handler))
 
     if app.job_queue:
         app.job_queue.run_repeating(update_price_task, interval=UPDATE_INTERVAL, first=1)
 
-    print("Bot MONITOR (Binance + BCV) iniciando...")
+    print("Bot MONITOR (Binance + BCV + Broadcast) iniciando...")
     app.run_polling()
