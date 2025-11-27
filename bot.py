@@ -30,8 +30,8 @@ logging.basicConfig(
 TOKEN = os.getenv("TOKEN")
 DATABASE_URL = os.getenv("DATABASE_URL")
 
-# ⚠️ TU ID DE ADMIN (Ya configurado)
-ADMIN_ID = 533888411
+# ⚠️ TU ID DE ADMIN (Configurado)
+ADMIN_ID = 533888411  
 
 # --- CONFIGURACIÓN ---
 UPDATE_INTERVAL = 120 # 2 Minutos
@@ -117,7 +117,7 @@ def get_all_users_ids():
         return []
 
 # ==============================================================================
-#  BACKEND DE PRECIOS (BINANCE MERCHANT + BCV)
+#  BACKEND DE PRECIOS (BINANCE TOP 5 + BCV)
 # ==============================================================================
 def fetch_binance_price():
     url = "https://p2p.binance.com/bapi/c2c/v2/friendly/c2c/adv/search"
@@ -126,13 +126,13 @@ def fetch_binance_price():
         "User-Agent": "Mozilla/5.0"
     }
     
-    # 🔥 CONFIGURACIÓN FILTRADA (SEGURIDAD TOTAL) 🔥
+    # 🔥 CONFIGURACIÓN DE PRECISIÓN MÁXIMA 🔥
     payload = {
         "page": 1, 
-        "rows": 10, 
-        "payTypes": ["PagoMovil"],  # Solo Pago Móvil
-        "publisherType": "merchant", # <--- SOLO VERIFICADOS (Insignia Amarilla)
-        "transAmount": "3600",      # Monto realista (~10$)
+        "rows": 5,  # <--- CAMBIO: Solo los primeros 5 (Top Screen)
+        "payTypes": ["PagoMovil"], 
+        "publisherType": "merchant", # Solo Verificados
+        "transAmount": "3600",       # Monto realista (~10$)
         "asset": "USDT", 
         "fiat": "VES", 
         "tradeType": "BUY"
@@ -142,7 +142,7 @@ def fetch_binance_price():
         response = requests.post(url, json=payload, headers=headers, timeout=10)
         data = response.json()
         
-        # Si no hay Merchants (raro), intentamos sin el filtro merchant como fallback
+        # Fallback: Si no hay merchants con esos filtros (raro), buscar generales
         if not data.get("data"):
             del payload["publisherType"]
             response = requests.post(url, json=payload, headers=headers, timeout=10)
@@ -185,7 +185,7 @@ async def update_price_task(context: ContextTypes.DEFAULT_TYPE):
     if new_binance or new_bcv:
         now = datetime.now(TIMEZONE)
         MARKET_DATA["last_updated"] = now.strftime("%I:%M %p")
-        logging.info(f"🔄 Actualizado - Bin (VIP): {new_binance} | BCV: {new_bcv}")
+        logging.info(f"🔄 Actualizado - Bin (Top 5): {new_binance} | BCV: {new_bcv}")
 
 # ==============================================================================
 #  COMANDOS
@@ -390,5 +390,5 @@ if __name__ == "__main__":
     if app.job_queue:
         app.job_queue.run_repeating(update_price_task, interval=UPDATE_INTERVAL, first=1)
 
-    print("Bot MONITOR (Binance Merchants + BCV + Broadcast) iniciando...")
+    print("Bot FINAL (Top 5 Verificados + BD + BCV) iniciando...")
     app.run_polling()
