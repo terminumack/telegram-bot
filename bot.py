@@ -30,11 +30,11 @@ logging.basicConfig(
 TOKEN = os.getenv("TOKEN")
 DATABASE_URL = os.getenv("DATABASE_URL")
 
-# ⚠️ PON TU ID REAL AQUÍ PARA QUE /stats Y /global FUNCIONEN
-ADMIN_ID = 533888411  
+# ⚠️ TU ID DE ADMIN (Ya configurado)
+ADMIN_ID = 533888411
 
 # --- CONFIGURACIÓN ---
-UPDATE_INTERVAL = 120 
+UPDATE_INTERVAL = 120 # 2 Minutos
 TIMEZONE = pytz.timezone('America/Caracas') 
 
 # 🔴 TUS ENLACES 🔴
@@ -58,7 +58,7 @@ MARKET_DATA = {
 # ==============================================================================
 def init_db():
     if not DATABASE_URL:
-        logging.warning("⚠️ Sin DATABASE_URL. Usando RAM.")
+        logging.warning("⚠️ Sin DATABASE_URL. Usando RAM temporal.")
         return
     try:
         conn = psycopg2.connect(DATABASE_URL)
@@ -104,7 +104,6 @@ def get_total_users():
         return 0
 
 def get_all_users_ids():
-    """Obtiene la lista de TODOS los IDs para el broadcast"""
     if not DATABASE_URL: return []
     try:
         conn = psycopg2.connect(DATABASE_URL)
@@ -118,7 +117,7 @@ def get_all_users_ids():
         return []
 
 # ==============================================================================
-#  BACKEND DE PRECIOS
+#  BACKEND DE PRECIOS (BINANCE MERCHANT + BCV)
 # ==============================================================================
 def fetch_binance_price():
     url = "https://p2p.binance.com/bapi/c2c/v2/friendly/c2c/adv/search"
@@ -126,20 +125,29 @@ def fetch_binance_price():
         "Content-Type": "application/json",
         "User-Agent": "Mozilla/5.0"
     }
-    # Filtro Anti-Ballenas + Pago Móvil
+    
+    # 🔥 CONFIGURACIÓN FILTRADA (SEGURIDAD TOTAL) 🔥
     payload = {
-        "page": 1, "rows": 10, 
-        "payTypes": ["PagoMovil"], 
-        "transAmount": "3600", 
-        "asset": "USDT", "fiat": "VES", "tradeType": "BUY"
+        "page": 1, 
+        "rows": 10, 
+        "payTypes": ["PagoMovil"],  # Solo Pago Móvil
+        "publisherType": "merchant", # <--- SOLO VERIFICADOS (Insignia Amarilla)
+        "transAmount": "3600",      # Monto realista (~10$)
+        "asset": "USDT", 
+        "fiat": "VES", 
+        "tradeType": "BUY"
     }
+    
     try:
         response = requests.post(url, json=payload, headers=headers, timeout=10)
         data = response.json()
+        
+        # Si no hay Merchants (raro), intentamos sin el filtro merchant como fallback
         if not data.get("data"):
-            payload["payTypes"] = [] 
+            del payload["publisherType"]
             response = requests.post(url, json=payload, headers=headers, timeout=10)
             data = response.json()
+
         prices = [float(item["adv"]["price"]) for item in data["data"]]
         return sum(prices) / len(prices) if prices else None
     except Exception as e:
@@ -177,7 +185,7 @@ async def update_price_task(context: ContextTypes.DEFAULT_TYPE):
     if new_binance or new_bcv:
         now = datetime.now(TIMEZONE)
         MARKET_DATA["last_updated"] = now.strftime("%I:%M %p")
-        logging.info(f"🔄 Actualizado - Bin: {new_binance} | BCV: {new_bcv}")
+        logging.info(f"🔄 Actualizado - Bin (VIP): {new_binance} | BCV: {new_bcv}")
 
 # ==============================================================================
 #  COMANDOS
@@ -189,7 +197,7 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
         "👋 <b>¡Bienvenido al Monitor P2P Inteligente!</b>\n\n"
         "Soy tu asistente financiero conectado a <b>Binance P2P</b> y al <b>BCV</b>.\n\n"
         "⚡ <b>Características:</b>\n"
-        "• <b>Realidad:</b> Filtro Anti-Ballenas (Precio de Calle).\n"
+        "• <b>Confianza:</b> Solo monitoreamos comerciantes verificados.\n"
         "• <b>Completo:</b> Tasa Paralela, Oficial y Brecha.\n"
         "• <b>Velocidad:</b> Actualizado cada 2 min.\n\n"
         "🛠 <b>HERRAMIENTAS:</b>\n\n"
@@ -282,42 +290,31 @@ async def prediccion(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text(text, parse_mode=ParseMode.HTML)
 
 async def stats(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    # Solo el admin puede ver las stats
     if update.effective_user.id == ADMIN_ID:
         count = get_total_users()
         await update.message.reply_text(f"📊 <b>ESTADÍSTICAS (DB)</b>\n👥 Usuarios: {count}", parse_mode=ParseMode.HTML)
 
-# --- COMANDO GLOBAL (BROADCAST MASIVO) ---
+# --- COMANDO GLOBAL (BROADCAST) ---
 async def global_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    # 1. Seguridad: Solo el Admin puede usarlo
-    if update.effective_user.id != ADMIN_ID:
-        return
-
+    if update.effective_user.id != ADMIN_ID: return
     if not context.args:
-        await update.message.reply_text("⚠️ Escribe el mensaje. Ej: <code>/global Hola a todos</code>", parse_mode=ParseMode.HTML)
+        await update.message.reply_text("⚠️ Escribe el mensaje.", parse_mode=ParseMode.HTML)
         return
-
     mensaje = " ".join(context.args)
-    
-    # Obtenemos TODOS los usuarios de la base de datos
     users = get_all_users_ids()
     if not users:
-        await update.message.reply_text("⚠️ No hay usuarios en la base de datos.")
+        await update.message.reply_text("⚠️ No hay usuarios.")
         return
-
     await update.message.reply_text(f"🚀 Iniciando difusión a {len(users)} usuarios...")
-
     enviados = 0
     fallidos = 0
-    # Enviamos el mensaje a cada ID registrado
     for user_id in users:
         try:
             await context.bot.send_message(chat_id=user_id, text=mensaje)
             enviados += 1
         except Exception:
             fallidos += 1
-
-    await update.message.reply_text(f"✅ <b>Difusión Terminada</b>\n\n📨 Enviados: {enviados}\n❌ Fallidos (Bloquearon el bot): {fallidos}", parse_mode=ParseMode.HTML)
+    await update.message.reply_text(f"✅ <b>Terminado</b>\n\n📨 Enviados: {enviados}\n❌ Fallidos: {fallidos}", parse_mode=ParseMode.HTML)
 
 # --- CALCULADORA ---
 async def calculate_conversion(update: Update, text_amount, currency_type):
@@ -328,7 +325,6 @@ async def calculate_conversion(update: Update, text_amount, currency_type):
     try:
         clean_text = ''.join(c for c in text_amount if c.isdigit() or c in '.,')
         amount = float(clean_text.replace(',', '.'))
-        
         if currency_type == "USDT":
             total = amount * rate
             await update.message.reply_text(f"🇺🇸 {amount:,.2f} USDT son:\n🇻🇪 <b>{total:,.2f} Bolívares</b>\n<i>(Tasa: {rate:,.2f})</i>", parse_mode=ParseMode.HTML)
@@ -388,12 +384,11 @@ if __name__ == "__main__":
     app.add_handler(CommandHandler("precio", precio))
     app.add_handler(CommandHandler("ia", prediccion))
     app.add_handler(CommandHandler("stats", stats))
-    # Aquí está el comando GLOBAL restaurado:
     app.add_handler(CommandHandler("global", global_message))
     app.add_handler(CallbackQueryHandler(button_handler))
 
     if app.job_queue:
         app.job_queue.run_repeating(update_price_task, interval=UPDATE_INTERVAL, first=1)
 
-    print("Bot MONITOR (Binance + BCV + Broadcast) iniciando...")
+    print("Bot MONITOR (Binance Merchants + BCV + Broadcast) iniciando...")
     app.run_polling()
