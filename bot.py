@@ -29,12 +29,10 @@ logging.basicConfig(
 
 TOKEN = os.getenv("TOKEN")
 DATABASE_URL = os.getenv("DATABASE_URL")
-
-# ⚠️ TU ID DE ADMIN (Configurado)
-ADMIN_ID = 533888411  
+ADMIN_ID = 533888411 # Tu ID
 
 # --- CONFIGURACIÓN ---
-UPDATE_INTERVAL = 120 # 2 Minutos
+UPDATE_INTERVAL = 120 
 TIMEZONE = pytz.timezone('America/Caracas') 
 
 # 🔴 TUS ENLACES 🔴
@@ -42,8 +40,15 @@ LINK_CANAL = "https://t.me/tasabinance"
 LINK_GRUPO = "https://t.me/tasabinancegrupo"
 LINK_SOPORTE = "https://t.me/tasabinancesoporte"
 
-# --- ESTADOS CONVERSACIÓN ---
-ESPERANDO_INPUT_USDT, ESPERANDO_INPUT_BS = range(2)
+# --- EMOJIS PREMIUM (IDs Personalizados) ---
+# La etiqueta <tg-emoji> permite usar emojis animados. 
+# El emoji dentro de la etiqueta (ej: 🔶) es el "fallback" para versiones viejas de Telegram.
+EMOJI_BINANCE = '<tg-emoji emoji-id="5269277053684819725">🔶</tg-emoji>'
+EMOJI_PAYPAL  = '<tg-emoji emoji-id="5364111181415996352">🅿️</tg-emoji>'
+EMOJI_SUBIDA  = '<tg-emoji emoji-id="5244837092042750681">📈</tg-emoji>'
+EMOJI_BAJADA  = '<tg-emoji emoji-id="5246762912428603768">📉</tg-emoji>'
+EMOJI_STATS   = '<tg-emoji emoji-id="5231200819986047254">📊</tg-emoji>'
+EMOJI_STORE   = '<tg-emoji emoji-id="5895288113537748673">🏪</tg-emoji>'
 
 # --- MEMORIA (Caché) ---
 MARKET_DATA = {
@@ -117,7 +122,7 @@ def get_all_users_ids():
         return []
 
 # ==============================================================================
-#  BACKEND DE PRECIOS (BINANCE TOP 5 + BCV)
+#  BACKEND DE PRECIOS
 # ==============================================================================
 def fetch_binance_price():
     url = "https://p2p.binance.com/bapi/c2c/v2/friendly/c2c/adv/search"
@@ -125,29 +130,24 @@ def fetch_binance_price():
         "Content-Type": "application/json",
         "User-Agent": "Mozilla/5.0"
     }
-    
-    # 🔥 CONFIGURACIÓN DE PRECISIÓN MÁXIMA 🔥
+    # Filtro Top 5 Verificados + Pago Móvil
     payload = {
         "page": 1, 
-        "rows": 5,  # <--- CAMBIO: Solo los primeros 5 (Top Screen)
+        "rows": 5, 
         "payTypes": ["PagoMovil"], 
-        "publisherType": "merchant", # Solo Verificados
-        "transAmount": "3600",       # Monto realista (~10$)
+        "publisherType": "merchant",
+        "transAmount": "3600", 
         "asset": "USDT", 
         "fiat": "VES", 
         "tradeType": "BUY"
     }
-    
     try:
         response = requests.post(url, json=payload, headers=headers, timeout=10)
         data = response.json()
-        
-        # Fallback: Si no hay merchants con esos filtros (raro), buscar generales
         if not data.get("data"):
-            del payload["publisherType"]
+            del payload["publisherType"] # Fallback
             response = requests.post(url, json=payload, headers=headers, timeout=10)
             data = response.json()
-
         prices = [float(item["adv"]["price"]) for item in data["data"]]
         return sum(prices) / len(prices) if prices else None
     except Exception as e:
@@ -185,7 +185,7 @@ async def update_price_task(context: ContextTypes.DEFAULT_TYPE):
     if new_binance or new_bcv:
         now = datetime.now(TIMEZONE)
         MARKET_DATA["last_updated"] = now.strftime("%I:%M %p")
-        logging.info(f"🔄 Actualizado - Bin (Top 5): {new_binance} | BCV: {new_bcv}")
+        logging.info(f"🔄 Actualizado - Bin: {new_binance} | BCV: {new_bcv}")
 
 # ==============================================================================
 #  COMANDOS
@@ -194,18 +194,18 @@ async def update_price_task(context: ContextTypes.DEFAULT_TYPE):
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     track_user(update.effective_user.id)
     mensaje = (
-        "👋 <b>¡Bienvenido al Monitor P2P Inteligente!</b>\n\n"
-        "Soy tu asistente financiero conectado a <b>Binance P2P</b> y al <b>BCV</b>.\n\n"
-        "⚡ <b>Características:</b>\n"
-        "• <b>Confianza:</b> Solo monitoreamos comerciantes verificados.\n"
-        "• <b>Completo:</b> Tasa Paralela, Oficial y Brecha.\n"
-        "• <b>Velocidad:</b> Actualizado cada 2 min.\n\n"
-        "🛠 <b>HERRAMIENTAS:</b>\n\n"
-        "📊 <b>/precio</b> → Ver tabla de tasas.\n"
-        "🧠 <b>/ia</b> → Predicción de Tendencia.\n\n"
-        "🧮 <b>CALCULADORA (Toca abajo):</b>\n"
-        "• <b>/usdt</b> → Dólares a Bs.\n"
-        "• <b>/bs</b> → Bs a Dólares."
+        f"👋 <b>¡Bienvenido al Monitor P2P Inteligente!</b>\n\n"
+        f"Soy tu asistente financiero conectado a {EMOJI_BINANCE} <b>Binance P2P</b> y al <b>BCV</b>.\n\n"
+        f"⚡ <b>Características:</b>\n"
+        f"• <b>Confianza:</b> Solo monitoreamos comerciantes verificados.\n"
+        f"• <b>Completo:</b> Tasa Paralela, Oficial y PayPal.\n"
+        f"• <b>Velocidad:</b> Actualizado cada 2 min.\n\n"
+        f"🛠 <b>HERRAMIENTAS:</b>\n\n"
+        f"{EMOJI_STATS} <b>/precio</b> → Ver tabla de tasas.\n"
+        f"🧠 <b>/ia</b> → Predicción de Tendencia.\n\n"
+        f"🧮 <b>CALCULADORA (Toca abajo):</b>\n"
+        f"• <b>/usdt</b> → Dólares a Bs.\n"
+        f"• <b>/bs</b> → Bs a Dólares."
     )
     keyboard = [
         [InlineKeyboardButton("📢 Canal", url=LINK_CANAL), InlineKeyboardButton("💬 Grupo", url=LINK_GRUPO)],
@@ -220,8 +220,13 @@ async def precio(update: Update, context: ContextTypes.DEFAULT_TYPE):
     time_str = MARKET_DATA["last_updated"]
     
     if binance:
-        text = "📊 <b>MONITOR DE TASAS</b>\n\n"
-        text += f"🔶 <b>Tasa Binance:</b> {binance:,.2f} Bs\n"
+        # Tasa PayPal = 10% menos que Binance
+        paypal = binance * 0.90
+        
+        text = f"{EMOJI_STATS} <b>MONITOR DE TASAS</b>\n\n"
+        text += f"{EMOJI_BINANCE} <b>Tasa Binance:</b> {binance:,.2f} Bs\n"
+        text += f"{EMOJI_PAYPAL} <b>Tasa PayPal (Aprox):</b> {paypal:,.2f} Bs\n"
+        text += f"<i>(Calculado a -10%)</i>\n\n"
         
         if bcv:
             text += f"🏛️ <b>BCV (Oficial):</b> {bcv:,.2f} Bs\n\n"
@@ -233,7 +238,7 @@ async def precio(update: Update, context: ContextTypes.DEFAULT_TYPE):
         else:
             text += "🏛️ <b>BCV:</b> <i>No disponible</i>\n\n"
             
-        text += f"🕒 <i>Actualizado: {time_str}</i>"
+        text += f"{EMOJI_STORE} <i>Actualizado: {time_str}</i>"
 
         keyboard = [[InlineKeyboardButton("🔄 Actualizar Precio", callback_data='refresh_price')]]
         await update.message.reply_text(text, parse_mode=ParseMode.HTML, reply_markup=InlineKeyboardMarkup(keyboard))
@@ -251,8 +256,12 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         time_str = MARKET_DATA["last_updated"]
         
         if binance:
-            text = "📊 <b>MONITOR DE TASAS</b>\n\n"
-            text += f"🔶 <b>Tasa Binance:</b> {binance:,.2f} Bs\n"
+            paypal = binance * 0.90
+            text = f"{EMOJI_STATS} <b>MONITOR DE TASAS</b>\n\n"
+            text += f"{EMOJI_BINANCE} <b>Tasa Binance:</b> {binance:,.2f} Bs\n"
+            text += f"{EMOJI_PAYPAL} <b>Tasa PayPal (Aprox):</b> {paypal:,.2f} Bs\n"
+            text += f"<i>(Calculado a -10%)</i>\n\n"
+            
             if bcv:
                 text += f"🏛️ <b>BCV (Oficial):</b> {bcv:,.2f} Bs\n\n"
                 brecha = ((binance - bcv) / bcv) * 100
@@ -262,7 +271,7 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 text += f"📈 <b>Brecha:</b> {brecha:.2f}% {emoji}\n\n"
             else:
                 text += "🏛️ <b>BCV:</b> <i>No disponible</i>\n\n"
-            text += f"🕒 <i>Actualizado: {time_str}</i>"
+            text += f"{EMOJI_STORE} <i>Actualizado: {time_str}</i>"
 
             try:
                 keyboard = [[InlineKeyboardButton("🔄 Actualizar Precio", callback_data='refresh_price')]]
@@ -278,23 +287,24 @@ async def prediccion(update: Update, context: ContextTypes.DEFAULT_TYPE):
     start_p, end_p = history[0], history[-1]
     percent = ((end_p - start_p) / start_p) * 100
     
-    if percent > 0.5: emoji, status, msg = "🚀", "ALCISTA FUERTE", "Subida rápida."
-    elif percent > 0: emoji, status, msg = "📈", "LIGERAMENTE ALCISTA", "Recuperación."
-    elif percent < -0.5: emoji, status, msg = "🩸", "BAJISTA FUERTE", "Caída rápida."
-    elif percent < 0: emoji, status, msg = "📉", "LIGERAMENTE BAJISTA", "Corrección."
+    # Aquí usamos tus emojis de flecha custom
+    if percent > 0.5: emoji, status, msg = EMOJI_SUBIDA, "ALCISTA FUERTE", "Subida rápida."
+    elif percent > 0: emoji, status, msg = EMOJI_SUBIDA, "LIGERAMENTE ALCISTA", "Recuperación."
+    elif percent < -0.5: emoji, status, msg = EMOJI_BAJADA, "BAJISTA FUERTE", "Caída rápida."
+    elif percent < 0: emoji, status, msg = EMOJI_BAJADA, "LIGERAMENTE BAJISTA", "Corrección."
     else: emoji, status, msg = "⚖️", "LATERAL / ESTABLE", "Sin cambios."
 
     text = (f"🧠 <b>ANÁLISIS DE MERCADO (IA)</b>\n<i>Tendencia basada en historial reciente.</i>\n\n"
-            f"{emoji} <b>Estado:</b> {status}\n📊 <b>Variación (1h):</b> {percent:.2f}%\n\n"
+            f"{emoji} <b>Estado:</b> {status}\n{EMOJI_STATS} <b>Variación (1h):</b> {percent:.2f}%\n\n"
             f"💡 <b>Conclusión:</b>\n<i>{msg}</i>\n\n⚠️ <i>No es consejo financiero.</i>")
     await update.message.reply_text(text, parse_mode=ParseMode.HTML)
 
 async def stats(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if update.effective_user.id == ADMIN_ID:
         count = get_total_users()
-        await update.message.reply_text(f"📊 <b>ESTADÍSTICAS (DB)</b>\n👥 Usuarios: {count}", parse_mode=ParseMode.HTML)
+        await update.message.reply_text(f"{EMOJI_STATS} <b>ESTADÍSTICAS (DB)</b>\n👥 Usuarios: {count}", parse_mode=ParseMode.HTML)
 
-# --- COMANDO GLOBAL (BROADCAST) ---
+# --- COMANDO GLOBAL ---
 async def global_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if update.effective_user.id != ADMIN_ID: return
     if not context.args:
@@ -390,5 +400,5 @@ if __name__ == "__main__":
     if app.job_queue:
         app.job_queue.run_repeating(update_price_task, interval=UPDATE_INTERVAL, first=1)
 
-    print("Bot FINAL (Top 5 Verificados + BD + BCV) iniciando...")
+    print("Bot PREMIUM VISUAL iniciando...")
     app.run_polling()
