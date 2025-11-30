@@ -29,7 +29,7 @@ logging.basicConfig(
 
 TOKEN = os.getenv("TOKEN")
 DATABASE_URL = os.getenv("DATABASE_URL")
-ADMIN_ID = 533888411 # Tu ID
+ADMIN_ID = 533888411 
 
 # --- CONFIGURACIÓN ---
 UPDATE_INTERVAL = 120 
@@ -40,10 +40,11 @@ LINK_CANAL = "https://t.me/tasabinance"
 LINK_GRUPO = "https://t.me/tasabinancegrupo"
 LINK_SOPORTE = "https://t.me/tasabinancesoporte"
 
-# --- ESTADOS CONVERSACIÓN (¡RECUPERADO!) ---
+# --- ESTADOS CONVERSACIÓN ---
 ESPERANDO_INPUT_USDT, ESPERANDO_INPUT_BS = range(2)
 
 # --- EMOJIS PREMIUM (IDs Personalizados) ---
+# Nota: Si el bot no es dueño del pack, mostrará el emoji de respaldo (🔶, 🅿️, etc.)
 EMOJI_BINANCE = '<tg-emoji emoji-id="5269277053684819725">🔶</tg-emoji>'
 EMOJI_PAYPAL  = '<tg-emoji emoji-id="5364111181415996352">🅿️</tg-emoji>'
 EMOJI_SUBIDA  = '<tg-emoji emoji-id="5244837092042750681">📈</tg-emoji>'
@@ -221,12 +222,12 @@ async def precio(update: Update, context: ContextTypes.DEFAULT_TYPE):
     time_str = MARKET_DATA["last_updated"]
     
     if binance:
-        paypal = binance * 0.90
+        paypal = binance * 0.90 # Calculado al 10% menos
         
         text = f"{EMOJI_STATS} <b>MONITOR DE TASAS</b>\n\n"
         text += f"{EMOJI_BINANCE} <b>Tasa Binance:</b> {binance:,.2f} Bs\n"
-        text += f"{EMOJI_PAYPAL} <b>Tasa PayPal (Aprox):</b> {paypal:,.2f} Bs\n"
-        text += f"<i>(Calculado a -10%)</i>\n\n"
+        # MODIFICADO: Se quitó el texto (Aprox) y (Calculado a...)
+        text += f"{EMOJI_PAYPAL} <b>Tasa PayPal:</b> {paypal:,.2f} Bs\n\n"
         
         if bcv:
             text += f"🏛️ <b>BCV (Oficial):</b> {bcv:,.2f} Bs\n\n"
@@ -259,8 +260,8 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
             paypal = binance * 0.90
             text = f"{EMOJI_STATS} <b>MONITOR DE TASAS</b>\n\n"
             text += f"{EMOJI_BINANCE} <b>Tasa Binance:</b> {binance:,.2f} Bs\n"
-            text += f"{EMOJI_PAYPAL} <b>Tasa PayPal (Aprox):</b> {paypal:,.2f} Bs\n"
-            text += f"<i>(Calculado a -10%)</i>\n\n"
+            # MODIFICADO AQUÍ TAMBIÉN
+            text += f"{EMOJI_PAYPAL} <b>Tasa PayPal:</b> {paypal:,.2f} Bs\n\n"
             
             if bcv:
                 text += f"🏛️ <b>BCV (Oficial):</b> {bcv:,.2f} Bs\n\n"
@@ -399,5 +400,5 @@ if __name__ == "__main__":
     if app.job_queue:
         app.job_queue.run_repeating(update_price_task, interval=UPDATE_INTERVAL, first=1)
 
-    print("Bot PREMIUM VISUAL iniciando...")
+    print("Bot LISTO (Texto Limpio + Premium + PayPal) iniciando...")
     app.run_polling()
