@@ -40,9 +40,10 @@ LINK_CANAL = "https://t.me/tasabinance"
 LINK_GRUPO = "https://t.me/tasabinancegrupo"
 LINK_SOPORTE = "https://t.me/tasabinancesoporte"
 
+# --- ESTADOS CONVERSACIÓN (¡RECUPERADO!) ---
+ESPERANDO_INPUT_USDT, ESPERANDO_INPUT_BS = range(2)
+
 # --- EMOJIS PREMIUM (IDs Personalizados) ---
-# La etiqueta <tg-emoji> permite usar emojis animados. 
-# El emoji dentro de la etiqueta (ej: 🔶) es el "fallback" para versiones viejas de Telegram.
 EMOJI_BINANCE = '<tg-emoji emoji-id="5269277053684819725">🔶</tg-emoji>'
 EMOJI_PAYPAL  = '<tg-emoji emoji-id="5364111181415996352">🅿️</tg-emoji>'
 EMOJI_SUBIDA  = '<tg-emoji emoji-id="5244837092042750681">📈</tg-emoji>'
@@ -220,7 +221,6 @@ async def precio(update: Update, context: ContextTypes.DEFAULT_TYPE):
     time_str = MARKET_DATA["last_updated"]
     
     if binance:
-        # Tasa PayPal = 10% menos que Binance
         paypal = binance * 0.90
         
         text = f"{EMOJI_STATS} <b>MONITOR DE TASAS</b>\n\n"
@@ -287,7 +287,6 @@ async def prediccion(update: Update, context: ContextTypes.DEFAULT_TYPE):
     start_p, end_p = history[0], history[-1]
     percent = ((end_p - start_p) / start_p) * 100
     
-    # Aquí usamos tus emojis de flecha custom
     if percent > 0.5: emoji, status, msg = EMOJI_SUBIDA, "ALCISTA FUERTE", "Subida rápida."
     elif percent > 0: emoji, status, msg = EMOJI_SUBIDA, "LIGERAMENTE ALCISTA", "Recuperación."
     elif percent < -0.5: emoji, status, msg = EMOJI_BAJADA, "BAJISTA FUERTE", "Caída rápida."
