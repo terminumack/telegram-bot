@@ -43,10 +43,10 @@ LINK_SOPORTE = "https://t.me/tasabinancesoporte"
 # --- ESTADOS CONVERSACIÓN ---
 ESPERANDO_INPUT_USDT, ESPERANDO_INPUT_BS = range(2)
 
-# --- EMOJIS PREMIUM (IDs Personalizados) ---
-# Nota: Si el bot no es dueño del pack, mostrará el emoji de respaldo (🔶, 🅿️, etc.)
+# --- EMOJIS PREMIUM ---
 EMOJI_BINANCE = '<tg-emoji emoji-id="5269277053684819725">🔶</tg-emoji>'
 EMOJI_PAYPAL  = '<tg-emoji emoji-id="5364111181415996352">🅿️</tg-emoji>'
+EMOJI_AMAZON  = '🎁' # Puedes poner un ID Premium aquí si tienes uno
 EMOJI_SUBIDA  = '<tg-emoji emoji-id="5244837092042750681">📈</tg-emoji>'
 EMOJI_BAJADA  = '<tg-emoji emoji-id="5246762912428603768">📉</tg-emoji>'
 EMOJI_STATS   = '<tg-emoji emoji-id="5231200819986047254">📊</tg-emoji>'
@@ -200,7 +200,7 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
         f"Soy tu asistente financiero conectado a {EMOJI_BINANCE} <b>Binance P2P</b> y al <b>BCV</b>.\n\n"
         f"⚡ <b>Características:</b>\n"
         f"• <b>Confianza:</b> Solo monitoreamos comerciantes verificados.\n"
-        f"• <b>Completo:</b> Tasa Paralela, Oficial y PayPal.\n"
+        f"• <b>Completo:</b> Tasa Paralela, Oficial, PayPal y Amazon.\n"
         f"• <b>Velocidad:</b> Actualizado cada 2 min.\n\n"
         f"🛠 <b>HERRAMIENTAS:</b>\n\n"
         f"{EMOJI_STATS} <b>/precio</b> → Ver tabla de tasas.\n"
@@ -222,23 +222,32 @@ async def precio(update: Update, context: ContextTypes.DEFAULT_TYPE):
     time_str = MARKET_DATA["last_updated"]
     
     if binance:
-        paypal = binance * 0.90 # Calculado al 10% menos
+        # Cálculos de tasas alternativas
+        paypal = binance * 0.90 # 10% menos
+        amazon = binance * 0.75 # 25% menos
         
+        # --- CONSTRUCCIÓN DEL MENSAJE (NUEVO ORDEN) ---
         text = f"{EMOJI_STATS} <b>MONITOR DE TASAS</b>\n\n"
-        text += f"{EMOJI_BINANCE} <b>Tasa Binance:</b> {binance:,.2f} Bs\n"
-        # MODIFICADO: Se quitó el texto (Aprox) y (Calculado a...)
-        text += f"{EMOJI_PAYPAL} <b>Tasa PayPal:</b> {paypal:,.2f} Bs\n\n"
         
+        # 1. Binance (Principal)
+        text += f"{EMOJI_BINANCE} <b>Tasa Binance:</b> {binance:,.2f} Bs\n\n"
+        
+        # 2. BCV + Brecha
         if bcv:
-            text += f"🏛️ <b>BCV (Oficial):</b> {bcv:,.2f} Bs\n\n"
+            text += f"🏛️ <b>BCV (Oficial):</b> {bcv:,.2f} Bs\n"
             brecha = ((binance - bcv) / bcv) * 100
-            if brecha >= 20: emoji = "🔴"
-            elif brecha >= 10: emoji = "🟠"
-            else: emoji = "🟢"
-            text += f"📈 <b>Brecha:</b> {brecha:.2f}% {emoji}\n\n"
+            if brecha >= 20: emoji_brecha = "🔴"
+            elif brecha >= 10: emoji_brecha = "🟠"
+            else: emoji_brecha = "🟢"
+            text += f"📈 <b>Brecha:</b> {brecha:.2f}% {emoji_brecha}\n\n"
         else:
             text += "🏛️ <b>BCV:</b> <i>No disponible</i>\n\n"
             
+        # 3. Tasas "Castigadas" (PayPal + Amazon)
+        text += f"{EMOJI_PAYPAL} <b>Tasa PayPal:</b> {paypal:,.2f} Bs\n"
+        text += f"{EMOJI_AMAZON} <b>Giftcard Amazon:</b> {amazon:,.2f} Bs\n\n"
+        
+        # 4. Footer
         text += f"{EMOJI_STORE} <i>Actualizado: {time_str}</i>"
 
         keyboard = [[InlineKeyboardButton("🔄 Actualizar Precio", callback_data='refresh_price')]]
@@ -258,20 +267,24 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         
         if binance:
             paypal = binance * 0.90
+            amazon = binance * 0.75
+            
             text = f"{EMOJI_STATS} <b>MONITOR DE TASAS</b>\n\n"
-            text += f"{EMOJI_BINANCE} <b>Tasa Binance:</b> {binance:,.2f} Bs\n"
-            # MODIFICADO AQUÍ TAMBIÉN
-            text += f"{EMOJI_PAYPAL} <b>Tasa PayPal:</b> {paypal:,.2f} Bs\n\n"
+            text += f"{EMOJI_BINANCE} <b>Tasa Binance:</b> {binance:,.2f} Bs\n\n"
             
             if bcv:
-                text += f"🏛️ <b>BCV (Oficial):</b> {bcv:,.2f} Bs\n\n"
+                text += f"🏛️ <b>BCV (Oficial):</b> {bcv:,.2f} Bs\n"
                 brecha = ((binance - bcv) / bcv) * 100
-                if brecha >= 20: emoji = "🔴"
-                elif brecha >= 10: emoji = "🟠"
-                else: emoji = "🟢"
-                text += f"📈 <b>Brecha:</b> {brecha:.2f}% {emoji}\n\n"
+                if brecha >= 20: emoji_brecha = "🔴"
+                elif brecha >= 10: emoji_brecha = "🟠"
+                else: emoji_brecha = "🟢"
+                text += f"📈 <b>Brecha:</b> {brecha:.2f}% {emoji_brecha}\n\n"
             else:
                 text += "🏛️ <b>BCV:</b> <i>No disponible</i>\n\n"
+            
+            text += f"{EMOJI_PAYPAL} <b>Tasa PayPal:</b> {paypal:,.2f} Bs\n"
+            text += f"{EMOJI_AMAZON} <b>Giftcard Amazon:</b> {amazon:,.2f} Bs\n\n"
+            
             text += f"{EMOJI_STORE} <i>Actualizado: {time_str}</i>"
 
             try:
@@ -400,5 +413,5 @@ if __name__ == "__main__":
     if app.job_queue:
         app.job_queue.run_repeating(update_price_task, interval=UPDATE_INTERVAL, first=1)
 
-    print("Bot LISTO (Texto Limpio + Premium + PayPal) iniciando...")
+    print("Bot PRO (Top 5 Verificados + Amazon + Nuevo Orden) iniciando...")
     app.run_polling()
