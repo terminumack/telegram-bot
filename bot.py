@@ -55,15 +55,16 @@ EMOJI_STORE   = '<tg-emoji emoji-id="5895288113537748673">🏪</tg-emoji>'
 # --- MEMORIA (Caché) ---
 MARKET_DATA = {
     "price": None, 
-    "bcv": {'usd': None, 'eur': None},   # Ahora guardamos dos valores
+    "bcv": None,   
     "last_updated": "Esperando...",
     "history": [] 
 }
 
 # ==============================================================================
-#  BASE DE DATOS (POSTGRESQL)
+#  BASE DE DATOS (CON REFERIDOS Y MIGRACIÓN)
 # ==============================================================================
 def init_db():
+    """Crea la tabla inicial si no existe y aplica migraciones."""
     if not DATABASE_URL:
         logging.warning("⚠️ Sin DATABASE_URL. Usando RAM temporal.")
         return
@@ -73,29 +74,107 @@ def init_db():
         cur.execute("""
             CREATE TABLE IF NOT EXISTS users (
                 user_id BIGINT PRIMARY KEY,
-                joined_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+                joined_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                first_name TEXT,
+                referral_count INTEGER DEFAULT 0,
+                referred_by BIGINT
             )
         """)
         conn.commit()
         cur.close()
         conn.close()
+        # Intentamos migrar por seguridad (agrega columnas si faltan)
+        migrate_db()
     except Exception as e:
-        logging.error(f"❌ Error BD: {e}")
+        logging.error(f"❌ Error BD Init: {e}")
 
-def track_user(user_id):
-    if not DATABASE_URL: return 
+def migrate_db():
+    """Agrega columnas de referidos a tablas viejas."""
+    if not DATABASE_URL: return
     try:
         conn = psycopg2.connect(DATABASE_URL)
         cur = conn.cursor()
-        cur.execute("""
-            INSERT INTO users (user_id) VALUES (%s)
-            ON CONFLICT (user_id) DO NOTHING
-        """, (user_id,))
+        try:
+            cur.execute("ALTER TABLE users ADD COLUMN IF NOT EXISTS first_name TEXT;")
+            cur.execute("ALTER TABLE users ADD COLUMN IF NOT EXISTS referral_count INTEGER DEFAULT 0;")
+            cur.execute("ALTER TABLE users ADD COLUMN IF NOT EXISTS referred_by BIGINT;")
+            conn.commit()
+        except Exception:
+            conn.rollback()
+        finally:
+            cur.close()
+            conn.close()
+    except Exception: pass
+
+def track_user(user, referrer_id=None):
+    """Guarda usuario y procesa referidos."""
+    if not DATABASE_URL: return 
+    
+    user_id = user.id
+    first_name = user.first_name[:50] if user.first_name else "Usuario"
+
+    try:
+        conn = psycopg2.connect(DATABASE_URL)
+        cur = conn.cursor()
+        
+        # Verificar si existe
+        cur.execute("SELECT user_id FROM users WHERE user_id = %s", (user_id,))
+        exists = cur.fetchone()
+        
+        if not exists:
+            # ES NUEVO: Procesar referido
+            valid_referrer = False
+            if referrer_id and referrer_id != user_id:
+                # Verificar que el padrino exista
+                cur.execute("SELECT user_id FROM users WHERE user_id = %s", (referrer_id,))
+                if cur.fetchone():
+                    valid_referrer = True
+            
+            final_referrer = referrer_id if valid_referrer else None
+            
+            cur.execute("""
+                INSERT INTO users (user_id, first_name, referred_by) 
+                VALUES (%s, %s, %s)
+            """, (user_id, first_name, final_referrer))
+            
+            if valid_referrer:
+                cur.execute("UPDATE users SET referral_count = referral_count + 1 WHERE user_id = %s", (final_referrer,))
+                logging.info(f"➕ Referido sumado a {final_referrer}")
+        else:
+            # YA EXISTE: Actualizar nombre
+            cur.execute("UPDATE users SET first_name = %s WHERE user_id = %s", (first_name, user_id))
+            
         conn.commit()
         cur.close()
         conn.close()
     except Exception as e:
         logging.error(f"Error track_user: {e}")
+
+def get_referral_stats(user_id):
+    """Datos para /referidos"""
+    if not DATABASE_URL: return (0, 0, [])
+    try:
+        conn = psycopg2.connect(DATABASE_URL)
+        cur = conn.cursor()
+        
+        # Mis invitados
+        cur.execute("SELECT referral_count FROM users WHERE user_id = %s", (user_id,))
+        res = cur.fetchone()
+        my_count = res[0] if res else 0
+        
+        # Mi Rango
+        cur.execute("SELECT COUNT(*) + 1 FROM users WHERE referral_count > %s", (my_count,))
+        my_rank = cur.fetchone()[0]
+        
+        # Top 3
+        cur.execute("SELECT first_name, referral_count FROM users ORDER BY referral_count DESC LIMIT 3")
+        top_3 = cur.fetchall()
+        
+        cur.close()
+        conn.close()
+        return (my_count, my_rank, top_3)
+    except Exception:
+        return (0, 0, [])
 
 def get_total_users():
     if not DATABASE_URL: return 0
@@ -107,8 +186,7 @@ def get_total_users():
         cur.close()
         conn.close()
         return count
-    except Exception:
-        return 0
+    except Exception: return 0
 
 def get_all_users_ids():
     if not DATABASE_URL: return []
@@ -120,26 +198,22 @@ def get_all_users_ids():
         cur.close()
         conn.close()
         return ids
-    except Exception:
-        return []
+    except Exception: return []
 
 # ==============================================================================
-#  BACKEND DE PRECIOS (BINANCE V2 + BCV USD/EUR)
+#  BACKEND PRECIOS (ALGORITMO AJUSTADO V3)
 # ==============================================================================
 def fetch_binance_price():
     url = "https://p2p.binance.com/bapi/c2c/v2/friendly/c2c/adv/search"
-    headers = {
-        "Content-Type": "application/json",
-        "User-Agent": "Mozilla/5.0"
-    }
+    headers = {"Content-Type": "application/json", "User-Agent": "Mozilla/5.0"}
     
     # 🔥 ALGORITMO: Top 3 + 5000 VES + MultiBanco 🔥
     payload = {
         "page": 1, 
-        "rows": 3,  
+        "rows": 3, 
         "payTypes": ["PagoMovil", "Banesco", "Mercantil", "Provincial"], 
         "publisherType": "merchant", 
-        "transAmount": "5000",       
+        "transAmount": "5000", 
         "asset": "USDT", 
         "fiat": "VES", 
         "tradeType": "BUY"
@@ -149,6 +223,7 @@ def fetch_binance_price():
         response = requests.post(url, json=payload, headers=headers, timeout=10)
         data = response.json()
         
+        # Fallbacks de seguridad
         if not data.get("data"):
             del payload["publisherType"]
             response = requests.post(url, json=payload, headers=headers, timeout=10)
@@ -166,116 +241,67 @@ def fetch_binance_price():
         return None
 
 def fetch_bcv_price():
-    """Busca Dólar y Euro en la web del BCV"""
     url = "http://www.bcv.org.ve/"
     headers = {"User-Agent": "Mozilla/5.0"}
     rates = {'usd': None, 'eur': None}
-    
     try:
         response = requests.get(url, headers=headers, timeout=15, verify=False)
         if response.status_code == 200:
             soup = BeautifulSoup(response.content, 'html.parser')
-            
-            # Buscar Dólar
             dolar_div = soup.find('div', id='dolar')
-            if dolar_div:
-                rate_text = dolar_div.find('strong').text.strip()
-                rates['usd'] = float(rate_text.replace(',', '.'))
-            
-            # Buscar Euro (Nuevo)
+            if dolar_div: rates['usd'] = float(dolar_div.find('strong').text.strip().replace(',', '.'))
             euro_div = soup.find('div', id='euro')
-            if euro_div:
-                rate_text = euro_div.find('strong').text.strip()
-                rates['eur'] = float(rate_text.replace(',', '.'))
-                
+            if euro_div: rates['eur'] = float(euro_div.find('strong').text.strip().replace(',', '.'))
             return rates if (rates['usd'] or rates['eur']) else None
-            
-    except Exception:
-        return None
+    except Exception: return None
     return None
 
-# --- TAREA AUTOMÁTICA ---
 async def update_price_task(context: ContextTypes.DEFAULT_TYPE):
     new_binance = fetch_binance_price()
-    new_bcv = fetch_bcv_price() # Devuelve diccionario
-
+    new_bcv = fetch_bcv_price()
     if new_binance:
         MARKET_DATA["price"] = new_binance
         MARKET_DATA["history"].append(new_binance)
         if len(MARKET_DATA["history"]) > 30: MARKET_DATA["history"].pop(0)
-
-    if new_bcv:
-        MARKET_DATA["bcv"] = new_bcv
-
+    if new_bcv: MARKET_DATA["bcv"] = new_bcv
     if new_binance or new_bcv:
         now = datetime.now(TIMEZONE)
         MARKET_DATA["last_updated"] = now.strftime("%I:%M %p")
         logging.info(f"🔄 Actualizado - Bin: {new_binance} | BCV: {new_bcv}")
 
-# --- FORMATO DEL MENSAJE DE PRECIOS ---
-def build_price_message(binance, bcv_data, time_str):
-    paypal = binance * 0.90
-    amazon = binance * 0.75
-    
-    text = f"{EMOJI_STATS} <b>MONITOR DE TASAS</b>\n\n"
-    
-    # 1. Binance
-    text += f"{EMOJI_BINANCE} <b>Tasa Binance:</b> {binance:,.2f} Bs\n\n"
-    
-    # 2. BCV (Dólar y Euro)
-    if bcv_data:
-        if bcv_data.get('usd'):
-            usd_bcv = bcv_data['usd']
-            text += f"🏛️ <b>BCV (Dólar):</b> {usd_bcv:,.2f} Bs\n"
-            
-            # Brecha (con respecto al dólar)
-            brecha = ((binance - usd_bcv) / usd_bcv) * 100
-            if brecha >= 20: emoji_brecha = "🔴"
-            elif brecha >= 10: emoji_brecha = "🟠"
-            else: emoji_brecha = "🟢"
-            text += f"📈 <b>Brecha:</b> {brecha:.2f}% {emoji_brecha}\n"
-            
-        if bcv_data.get('eur'):
-            text += f"🇪🇺 <b>BCV (Euro):</b> {bcv_data['eur']:,.2f} Bs\n"
-        
-        text += "\n"
-    else:
-        text += "🏛️ <b>BCV:</b> <i>No disponible</i>\n\n"
-        
-    # 3. Otros
-    text += f"{EMOJI_PAYPAL} <b>Tasa PayPal:</b> {paypal:,.2f} Bs\n"
-    text += f"{EMOJI_AMAZON} <b>Giftcard Amazon:</b> {amazon:,.2f} Bs\n\n"
-    
-    text += f"{EMOJI_STORE} <i>Actualizado: {time_str}</i>"
-    return text
-
-# --- REPORTES DIARIOS ---
 async def send_daily_report(context: ContextTypes.DEFAULT_TYPE):
     binance = MARKET_DATA["price"]
     bcv = MARKET_DATA["bcv"]
-    
     if not binance: binance = fetch_binance_price()
     if not bcv: bcv = fetch_bcv_price()
     if not binance: return
 
     time_str = datetime.now(TIMEZONE).strftime("%I:%M %p")
     hour = datetime.now(TIMEZONE).hour
+    header = "☀️ <b>¡Buenos días! Así abre el mercado:</b>" if hour < 12 else "🌤 <b>Reporte de la Tarde:</b>"
 
-    if hour < 12: header = "☀️ <b>¡Buenos días! Así abre el mercado:</b>"
-    else: header = "🌤 <b>Reporte de la Tarde:</b>"
-
-    body = build_price_message(binance, bcv, time_str)
-    # Quitamos el título duplicado "MONITOR DE TASAS" para el reporte, usamos el saludo
-    body = body.replace(f"{EMOJI_STATS} <b>MONITOR DE TASAS</b>\n\n", "")
-    text = f"{header}\n\n{body}"
+    paypal = binance * 0.90
+    amazon = binance * 0.75
+    
+    text = f"{header}\n\n{EMOJI_BINANCE} <b>Tasa Binance:</b> {binance:,.2f} Bs\n\n"
+    if bcv:
+        if bcv.get('usd'):
+            text += f"🏛️ <b>BCV (Dólar):</b> {bcv['usd']:,.2f} Bs\n"
+            brecha = ((binance - bcv['usd']) / bcv['usd']) * 100
+            emoji_brecha = "🔴" if brecha >= 20 else "🟠" if brecha >= 10 else "🟢"
+            text += f"📈 <b>Brecha:</b> {brecha:.2f}% {emoji_brecha}\n"
+        if bcv.get('eur'): text += f"🇪🇺 <b>BCV (Euro):</b> {bcv['eur']:,.2f} Bs\n"
+        text += "\n"
+    else: text += "🏛️ <b>BCV:</b> <i>No disponible</i>\n\n"
+        
+    text += f"{EMOJI_PAYPAL} <b>Tasa PayPal:</b> {paypal:,.2f} Bs\n"
+    text += f"{EMOJI_AMAZON} <b>Giftcard Amazon:</b> {amazon:,.2f} Bs\n\n"
+    text += f"{EMOJI_STORE} <i>Actualizado: {time_str}</i>"
 
     keyboard = [[InlineKeyboardButton("🔄 Ver en tiempo real", callback_data='refresh_price')]]
-    reply_markup = InlineKeyboardMarkup(keyboard)
-
     users = get_all_users_ids()
     for user_id in users:
-        try:
-            await context.bot.send_message(chat_id=user_id, text=text, parse_mode=ParseMode.HTML, reply_markup=reply_markup)
+        try: await context.bot.send_message(chat_id=user_id, text=text, parse_mode=ParseMode.HTML, reply_markup=InlineKeyboardMarkup(keyboard))
         except Exception: pass
 
 # ==============================================================================
@@ -283,17 +309,25 @@ async def send_daily_report(context: ContextTypes.DEFAULT_TYPE):
 # ==============================================================================
 
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    track_user(update.effective_user.id)
+    # Detección de Referidos
+    referrer_id = None
+    if context.args:
+        try: referrer_id = int(context.args[0])
+        except ValueError: referrer_id = None
+            
+    track_user(update.effective_user, referrer_id)
+    
     mensaje = (
         f"👋 <b>¡Bienvenido al Monitor P2P Inteligente!</b>\n\n"
         f"Soy tu asistente financiero conectado a {EMOJI_BINANCE} <b>Binance P2P</b> y al <b>BCV</b>.\n\n"
         f"⚡ <b>Características:</b>\n"
         f"• <b>Confianza:</b> Solo monitoreamos comerciantes verificados.\n"
-        f"• <b>Completo:</b> Tasa Paralela, Oficial (USD/EUR), PayPal y Amazon.\n"
+        f"• <b>Completo:</b> Tasa Paralela, Oficial, PayPal y Amazon.\n"
         f"• <b>Velocidad:</b> Actualizado cada 2 min.\n\n"
         f"🛠 <b>HERRAMIENTAS:</b>\n\n"
         f"{EMOJI_STATS} <b>/precio</b> → Ver tabla de tasas.\n"
-        f"🧠 <b>/ia</b> → Predicción de Tendencia.\n\n"
+        f"🧠 <b>/ia</b> → Predicción de Tendencia.\n"
+        f"🎁 <b>/referidos</b> → ¡Invita y Gana!\n\n"
         f"🧮 <b>CALCULADORA (Toca abajo):</b>\n"
         f"• <b>/usdt</b> → Dólares a Bs.\n"
         f"• <b>/bs</b> → Bs a Dólares."
@@ -304,51 +338,101 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     ]
     await update.message.reply_text(mensaje, parse_mode=ParseMode.HTML, reply_markup=InlineKeyboardMarkup(keyboard))
 
+async def referidos(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    user_id = update.effective_user.id
+    track_user(update.effective_user) # Asegurar registro
+    
+    count, rank, top_3 = get_referral_stats(user_id)
+    
+    ranking_text = ""
+    medals = ["🥇", "🥈", "🥉"]
+    for i, (name, score) in enumerate(top_3):
+        medal = medals[i] if i < 3 else f"#{i+1}"
+        clean_name = name.split()[0] if name else "Usuario"
+        ranking_text += f"{medal} <b>{clean_name}</b> — {score} refs\n"
+
+    invite_link = f"https://t.me/{context.bot.username}?start={user_id}"
+
+    text = (
+        f"🎁 <b>PROGRAMA DE REFERIDOS</b>\n\n"
+        f"Invita a tus amigos y compite por premios exclusivos.\n\n"
+        f"👤 <b>TUS ESTADÍSTICAS:</b>\n"
+        f"👥 Invitados: <b>{count}</b>\n"
+        f"🏆 Tu Rango Global: <b>#{rank}</b>\n\n"
+        f"🔗 <b>TU ENLACE ÚNICO:</b>\n"
+        f"<code>{invite_link}</code>\n"
+        f"<i>(Toca para copiar)</i>\n\n"
+        f"🏆 <b>TOP 3 LÍDERES:</b>\n"
+        f"{ranking_text}\n"
+        f"👇 <b>¡Compártelo ahora!</b>"
+    )
+    await update.message.reply_text(text, parse_mode=ParseMode.HTML, disable_web_page_preview=True)
+
 async def precio(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    track_user(update.effective_user.id)
+    track_user(update.effective_user)
     binance = MARKET_DATA["price"]
     bcv = MARKET_DATA["bcv"]
     time_str = MARKET_DATA["last_updated"]
     
     if binance:
-        text = build_price_message(binance, bcv, time_str)
+        paypal = binance * 0.90
+        amazon = binance * 0.75
+        text = f"{EMOJI_STATS} <b>MONITOR DE TASAS</b>\n\n{EMOJI_BINANCE} <b>Tasa Binance:</b> {binance:,.2f} Bs\n\n"
+        if bcv:
+            if bcv.get('usd'):
+                text += f"🏛️ <b>BCV (Dólar):</b> {bcv['usd']:,.2f} Bs\n"
+                brecha = ((binance - bcv['usd']) / bcv['usd']) * 100
+                emoji_brecha = "🔴" if brecha >= 20 else "🟠" if brecha >= 10 else "🟢"
+                text += f"📈 <b>Brecha:</b> {brecha:.2f}% {emoji_brecha}\n"
+            if bcv.get('eur'): text += f"🇪🇺 <b>BCV (Euro):</b> {bcv['eur']:,.2f} Bs\n"
+            text += "\n"
+        else: text += "🏛️ <b>BCV:</b> <i>No disponible</i>\n\n"
+        text += f"{EMOJI_PAYPAL} <b>Tasa PayPal:</b> {paypal:,.2f} Bs\n{EMOJI_AMAZON} <b>Giftcard Amazon:</b> {amazon:,.2f} Bs\n\n{EMOJI_STORE} <i>Actualizado: {time_str}</i>"
         keyboard = [[InlineKeyboardButton("🔄 Actualizar Precio", callback_data='refresh_price')]]
         await update.message.reply_text(text, parse_mode=ParseMode.HTML, reply_markup=InlineKeyboardMarkup(keyboard))
     else:
         await update.message.reply_text("🔄 Iniciando sistema... intenta en unos segundos.")
 
 async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    track_user(update.effective_user.id)
+    track_user(update.effective_user)
     query = update.callback_query
     await query.answer()
-    
     if query.data == 'refresh_price':
         binance = MARKET_DATA["price"]
         bcv = MARKET_DATA["bcv"]
         time_str = MARKET_DATA["last_updated"]
-        
         if binance:
-            text = build_price_message(binance, bcv, time_str)
+            paypal = binance * 0.90
+            amazon = binance * 0.75
+            text = f"{EMOJI_STATS} <b>MONITOR DE TASAS</b>\n\n{EMOJI_BINANCE} <b>Tasa Binance:</b> {binance:,.2f} Bs\n\n"
+            if bcv:
+                if bcv.get('usd'):
+                    text += f"🏛️ <b>BCV (Dólar):</b> {bcv['usd']:,.2f} Bs\n"
+                    brecha = ((binance - bcv['usd']) / bcv['usd']) * 100
+                    emoji_brecha = "🔴" if brecha >= 20 else "🟠" if brecha >= 10 else "🟢"
+                    text += f"📈 <b>Brecha:</b> {brecha:.2f}% {emoji_brecha}\n"
+                if bcv.get('eur'): text += f"🇪🇺 <b>BCV (Euro):</b> {bcv['eur']:,.2f} Bs\n"
+                text += "\n"
+            else: text += "🏛️ <b>BCV:</b> <i>No disponible</i>\n\n"
+            text += f"{EMOJI_PAYPAL} <b>Tasa PayPal:</b> {paypal:,.2f} Bs\n{EMOJI_AMAZON} <b>Giftcard Amazon:</b> {amazon:,.2f} Bs\n\n{EMOJI_STORE} <i>Actualizado: {time_str}</i>"
             try:
                 keyboard = [[InlineKeyboardButton("🔄 Actualizar Precio", callback_data='refresh_price')]]
                 await query.edit_message_text(text=text, parse_mode=ParseMode.HTML, reply_markup=InlineKeyboardMarkup(keyboard))
             except Exception: pass
 
 async def prediccion(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    track_user(update.effective_user.id)
+    track_user(update.effective_user)
     history = MARKET_DATA["history"]
     if len(history) < 5:
-        await update.message.reply_text("🧠 <b>Calibrando IA...</b>\nRecopilando datos. Intenta en unos minutos.", parse_mode=ParseMode.HTML)
+        await update.message.reply_text("🧠 <b>Calibrando IA...</b>\nRecopilando datos.", parse_mode=ParseMode.HTML)
         return
     start_p, end_p = history[0], history[-1]
     percent = ((end_p - start_p) / start_p) * 100
-    
     if percent > 0.5: emoji, status, msg = EMOJI_SUBIDA, "ALCISTA FUERTE", "Subida rápida."
     elif percent > 0: emoji, status, msg = EMOJI_SUBIDA, "LIGERAMENTE ALCISTA", "Recuperación."
     elif percent < -0.5: emoji, status, msg = EMOJI_BAJADA, "BAJISTA FUERTE", "Caída rápida."
     elif percent < 0: emoji, status, msg = EMOJI_BAJADA, "LIGERAMENTE BAJISTA", "Corrección."
     else: emoji, status, msg = "⚖️", "LATERAL / ESTABLE", "Sin cambios."
-
     text = (f"🧠 <b>ANÁLISIS DE MERCADO (IA)</b>\n<i>Tendencia basada en historial reciente.</i>\n\n"
             f"{emoji} <b>Estado:</b> {status}\n{EMOJI_STATS} <b>Variación (1h):</b> {percent:.2f}%\n\n"
             f"💡 <b>Conclusión:</b>\n<i>{msg}</i>\n\n⚠️ <i>No es consejo financiero.</i>")
@@ -376,8 +460,7 @@ async def global_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
         try:
             await context.bot.send_message(chat_id=user_id, text=mensaje)
             enviados += 1
-        except Exception:
-            fallidos += 1
+        except Exception: fallidos += 1
     await update.message.reply_text(f"✅ <b>Terminado</b>\n\n📨 Enviados: {enviados}\n❌ Fallidos: {fallidos}", parse_mode=ParseMode.HTML)
 
 async def calculate_conversion(update: Update, text_amount, currency_type):
@@ -398,15 +481,14 @@ async def calculate_conversion(update: Update, text_amount, currency_type):
         await update.message.reply_text("🔢 Número inválido.")
     return ConversationHandler.END
 
-# --- MANEJADORES CONVERSACIÓN ---
 async def start_usdt_calc(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    track_user(update.effective_user.id)
+    track_user(update.effective_user)
     if context.args: return await calculate_conversion(update, context.args[0], "USDT")
     await update.message.reply_text("🇺🇸 <b>Calculadora USDT:</b>\n\n¿Cuántos Dólares?\n<i>Escribe el número:</i>", parse_mode=ParseMode.HTML)
     return ESPERANDO_INPUT_USDT
 
 async def start_bs_calc(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    track_user(update.effective_user.id)
+    track_user(update.effective_user)
     if context.args: return await calculate_conversion(update, context.args[0], "BS")
     await update.message.reply_text("🇻🇪 <b>Calculadora Bolívares:</b>\n\n¿Cuántos Bs?\n<i>Escribe el número:</i>", parse_mode=ParseMode.HTML)
     return ESPERANDO_INPUT_BS
@@ -423,13 +505,10 @@ async def cancel(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text("Cancelado.")
     return ConversationHandler.END
 
-# --- MAIN ---
 if __name__ == "__main__":
     init_db()
     if not TOKEN: exit(1)
-
     app = ApplicationBuilder().token(TOKEN).build()
-
     conv_usdt = ConversationHandler(
         entry_points=[CommandHandler("usdt", start_usdt_calc)],
         states={ESPERANDO_INPUT_USDT: [MessageHandler(filters.TEXT & ~filters.COMMAND, process_usdt_input)]},
@@ -440,7 +519,6 @@ if __name__ == "__main__":
         states={ESPERANDO_INPUT_BS: [MessageHandler(filters.TEXT & ~filters.COMMAND, process_bs_input)]},
         fallbacks=[CommandHandler("cancel", cancel)]
     )
-
     app.add_handler(conv_usdt)
     app.add_handler(conv_bs)
     app.add_handler(CommandHandler("start", start))
@@ -448,14 +526,11 @@ if __name__ == "__main__":
     app.add_handler(CommandHandler("ia", prediccion))
     app.add_handler(CommandHandler("stats", stats))
     app.add_handler(CommandHandler("global", global_message))
+    app.add_handler(CommandHandler("referidos", referidos)) 
     app.add_handler(CallbackQueryHandler(button_handler))
-
     if app.job_queue:
         app.job_queue.run_repeating(update_price_task, interval=UPDATE_INTERVAL, first=1)
-        # 9 AM
         app.job_queue.run_daily(send_daily_report, time=time(hour=9, minute=0, tzinfo=TIMEZONE), days=(0, 1, 2, 3, 4, 5, 6))
-        # 1 PM (13:00)
         app.job_queue.run_daily(send_daily_report, time=time(hour=13, minute=0, tzinfo=TIMEZONE), days=(0, 1, 2, 3, 4, 5, 6))
-
-    print("Bot FINAL V4 (Con Euro BCV) iniciando...")
+    print("Bot GOLDEN MASTER V6 (All Features Included) iniciando...")
     app.run_polling()
