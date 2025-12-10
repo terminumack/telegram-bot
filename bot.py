@@ -4,7 +4,7 @@ import requests
 import psycopg2 
 from bs4 import BeautifulSoup 
 import urllib3
-from datetime import datetime
+from datetime import datetime, time # <--- Importante para la hora
 import pytz 
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.constants import ParseMode
@@ -46,7 +46,7 @@ ESPERANDO_INPUT_USDT, ESPERANDO_INPUT_BS = range(2)
 # --- EMOJIS PREMIUM ---
 EMOJI_BINANCE = '<tg-emoji emoji-id="5269277053684819725">🔶</tg-emoji>'
 EMOJI_PAYPAL  = '<tg-emoji emoji-id="5364111181415996352">🅿️</tg-emoji>'
-EMOJI_AMAZON  = '🎁' # Puedes poner un ID Premium aquí si tienes uno
+EMOJI_AMAZON  = '🎁' 
 EMOJI_SUBIDA  = '<tg-emoji emoji-id="5244837092042750681">📈</tg-emoji>'
 EMOJI_BAJADA  = '<tg-emoji emoji-id="5246762912428603768">📉</tg-emoji>'
 EMOJI_STATS   = '<tg-emoji emoji-id="5231200819986047254">📊</tg-emoji>'
@@ -132,22 +132,18 @@ def fetch_binance_price():
         "Content-Type": "application/json",
         "User-Agent": "Mozilla/5.0"
     }
-    # Filtro Top 5 Verificados + Pago Móvil
     payload = {
-        "page": 1, 
-        "rows": 5, 
+        "page": 1, "rows": 5, 
         "payTypes": ["PagoMovil"], 
         "publisherType": "merchant",
         "transAmount": "3600", 
-        "asset": "USDT", 
-        "fiat": "VES", 
-        "tradeType": "BUY"
+        "asset": "USDT", "fiat": "VES", "tradeType": "BUY"
     }
     try:
         response = requests.post(url, json=payload, headers=headers, timeout=10)
         data = response.json()
         if not data.get("data"):
-            del payload["publisherType"] # Fallback
+            del payload["publisherType"]
             response = requests.post(url, json=payload, headers=headers, timeout=10)
             data = response.json()
         prices = [float(item["adv"]["price"]) for item in data["data"]]
@@ -171,7 +167,7 @@ def fetch_bcv_price():
         return None
     return None
 
-# --- TAREA AUTOMÁTICA ---
+# --- TAREA AUTOMÁTICA (UPDATE CACHÉ) ---
 async def update_price_task(context: ContextTypes.DEFAULT_TYPE):
     new_binance = fetch_binance_price()
     new_bcv = fetch_bcv_price()
@@ -188,6 +184,63 @@ async def update_price_task(context: ContextTypes.DEFAULT_TYPE):
         now = datetime.now(TIMEZONE)
         MARKET_DATA["last_updated"] = now.strftime("%I:%M %p")
         logging.info(f"🔄 Actualizado - Bin: {new_binance} | BCV: {new_bcv}")
+
+# ==============================================================================
+#  NUEVO: REPORTES DIARIOS AUTOMÁTICOS (9AM y 1PM)
+# ==============================================================================
+async def send_daily_report(context: ContextTypes.DEFAULT_TYPE):
+    """Envía el reporte a todos los usuarios."""
+    binance = MARKET_DATA["price"]
+    bcv = MARKET_DATA["bcv"]
+    
+    # Si no hay datos (ej. se reinició recién), intentamos buscar
+    if not binance: binance = fetch_binance_price()
+    if not bcv: bcv = fetch_bcv_price()
+    
+    if not binance: return # Si sigue sin haber datos, abortamos
+
+    time_str = datetime.now(TIMEZONE).strftime("%I:%M %p")
+    hour = datetime.now(TIMEZONE).hour
+
+    # Encabezado dinámico según la hora
+    if hour < 12:
+        header = "☀️ <b>¡Buenos días! Así abre el mercado:</b>"
+    else:
+        header = "🌤 <b>Reporte de la Tarde:</b>"
+
+    paypal = binance * 0.90
+    amazon = binance * 0.75
+    
+    text = f"{header}\n\n"
+    text += f"{EMOJI_BINANCE} <b>Tasa Binance:</b> {binance:,.2f} Bs\n\n"
+    
+    if bcv:
+        text += f"🏛️ <b>BCV (Oficial):</b> {bcv:,.2f} Bs\n"
+        brecha = ((binance - bcv) / bcv) * 100
+        if brecha >= 20: emoji_brecha = "🔴"
+        elif brecha >= 10: emoji_brecha = "🟠"
+        else: emoji_brecha = "🟢"
+        text += f"📈 <b>Brecha:</b> {brecha:.2f}% {emoji_brecha}\n\n"
+    else:
+        text += "🏛️ <b>BCV:</b> <i>No disponible</i>\n\n"
+        
+    text += f"{EMOJI_PAYPAL} <b>Tasa PayPal:</b> {paypal:,.2f} Bs\n"
+    text += f"{EMOJI_AMAZON} <b>Giftcard Amazon:</b> {amazon:,.2f} Bs\n\n"
+    text += f"{EMOJI_STORE} <i>Actualizado: {time_str}</i>"
+
+    # Botón para actualizar manualmente
+    keyboard = [[InlineKeyboardButton("🔄 Ver en tiempo real", callback_data='refresh_price')]]
+    reply_markup = InlineKeyboardMarkup(keyboard)
+
+    # Difusión masiva
+    users = get_all_users_ids()
+    logging.info(f"📢 Enviando reporte automático a {len(users)} usuarios...")
+    
+    for user_id in users:
+        try:
+            await context.bot.send_message(chat_id=user_id, text=text, parse_mode=ParseMode.HTML, reply_markup=reply_markup)
+        except Exception:
+            pass # Si el usuario bloqueó, ignoramos
 
 # ==============================================================================
 #  COMANDOS
@@ -222,17 +275,12 @@ async def precio(update: Update, context: ContextTypes.DEFAULT_TYPE):
     time_str = MARKET_DATA["last_updated"]
     
     if binance:
-        # Cálculos de tasas alternativas
-        paypal = binance * 0.90 # 10% menos
-        amazon = binance * 0.75 # 25% menos
+        paypal = binance * 0.90
+        amazon = binance * 0.75
         
-        # --- CONSTRUCCIÓN DEL MENSAJE (NUEVO ORDEN) ---
         text = f"{EMOJI_STATS} <b>MONITOR DE TASAS</b>\n\n"
-        
-        # 1. Binance (Principal)
         text += f"{EMOJI_BINANCE} <b>Tasa Binance:</b> {binance:,.2f} Bs\n\n"
         
-        # 2. BCV + Brecha
         if bcv:
             text += f"🏛️ <b>BCV (Oficial):</b> {bcv:,.2f} Bs\n"
             brecha = ((binance - bcv) / bcv) * 100
@@ -243,11 +291,9 @@ async def precio(update: Update, context: ContextTypes.DEFAULT_TYPE):
         else:
             text += "🏛️ <b>BCV:</b> <i>No disponible</i>\n\n"
             
-        # 3. Tasas "Castigadas" (PayPal + Amazon)
         text += f"{EMOJI_PAYPAL} <b>Tasa PayPal:</b> {paypal:,.2f} Bs\n"
         text += f"{EMOJI_AMAZON} <b>Giftcard Amazon:</b> {amazon:,.2f} Bs\n\n"
         
-        # 4. Footer
         text += f"{EMOJI_STORE} <i>Actualizado: {time_str}</i>"
 
         keyboard = [[InlineKeyboardButton("🔄 Actualizar Precio", callback_data='refresh_price')]]
@@ -390,6 +436,7 @@ if __name__ == "__main__":
 
     app = ApplicationBuilder().token(TOKEN).build()
 
+    # Conversation Handlers
     conv_usdt = ConversationHandler(
         entry_points=[CommandHandler("usdt", start_usdt_calc)],
         states={ESPERANDO_INPUT_USDT: [MessageHandler(filters.TEXT & ~filters.COMMAND, process_usdt_input)]},
@@ -411,7 +458,22 @@ if __name__ == "__main__":
     app.add_handler(CallbackQueryHandler(button_handler))
 
     if app.job_queue:
+        # Tarea de caché cada 2 min
         app.job_queue.run_repeating(update_price_task, interval=UPDATE_INTERVAL, first=1)
+        
+        # --- REPORTES DIARIOS AUTOMÁTICOS ---
+        # 9:00 AM Venezuela
+        app.job_queue.run_daily(
+            send_daily_report, 
+            time=time(hour=9, minute=0, tzinfo=TIMEZONE), 
+            days=(0, 1, 2, 3, 4, 5, 6)
+        )
+        # 1:00 PM Venezuela
+        app.job_queue.run_daily(
+            send_daily_report, 
+            time=time(hour=13, minute=0, tzinfo=TIMEZONE), 
+            days=(0, 1, 2, 3, 4, 5, 6)
+        )
 
-    print("Bot PRO (Top 5 Verificados + Amazon + Nuevo Orden) iniciando...")
+    print("Bot FINAL REPORTES (9am/1pm + Amazon + Top 5) iniciando...")
     app.run_polling()
