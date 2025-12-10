@@ -4,7 +4,7 @@ import requests
 import psycopg2 
 from bs4 import BeautifulSoup 
 import urllib3
-from datetime import datetime, time # <--- Importante para la hora
+from datetime import datetime, time
 import pytz 
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.constants import ParseMode
@@ -54,8 +54,8 @@ EMOJI_STORE   = '<tg-emoji emoji-id="5895288113537748673">🏪</tg-emoji>'
 
 # --- MEMORIA (Caché) ---
 MARKET_DATA = {
-    "price": None, # Binance
-    "bcv": None,   # BCV
+    "price": None, 
+    "bcv": None,   
     "last_updated": "Esperando...",
     "history": [] 
 }
@@ -124,7 +124,7 @@ def get_all_users_ids():
         return []
 
 # ==============================================================================
-#  BACKEND DE PRECIOS
+#  BACKEND DE PRECIOS (ALGORITMO ACTUALIZADO)
 # ==============================================================================
 def fetch_binance_price():
     url = "https://p2p.binance.com/bapi/c2c/v2/friendly/c2c/adv/search"
@@ -132,20 +132,36 @@ def fetch_binance_price():
         "Content-Type": "application/json",
         "User-Agent": "Mozilla/5.0"
     }
+    
+    # 🔥 NUEVO FILTRO MULTI-BANCO 🔥
     payload = {
-        "page": 1, "rows": 5, 
-        "payTypes": ["PagoMovil"], 
-        "publisherType": "merchant",
-        "transAmount": "3600", 
-        "asset": "USDT", "fiat": "VES", "tradeType": "BUY"
+        "page": 1, 
+        "rows": 3,  # Solo los primeros 3 (Top absoluto)
+        # Lista explícita de bancos principales
+        "payTypes": ["PagoMovil", "Banesco", "Mercantil", "Provincial"], 
+        "publisherType": "merchant", # Solo Verificados
+        "transAmount": "5000",       # Monto mínimo subido a 5000 VES
+        "asset": "USDT", 
+        "fiat": "VES", 
+        "tradeType": "BUY"
     }
+    
     try:
         response = requests.post(url, json=payload, headers=headers, timeout=10)
         data = response.json()
+        
+        # Fallback 1: Si no encuentra con merchant, intenta sin merchant pero con mismos bancos
         if not data.get("data"):
             del payload["publisherType"]
             response = requests.post(url, json=payload, headers=headers, timeout=10)
             data = response.json()
+            
+        # Fallback 2: Si falla por bancos específicos, intenta solo PagoMovil
+        if not data.get("data"):
+            payload["payTypes"] = ["PagoMovil"]
+            response = requests.post(url, json=payload, headers=headers, timeout=10)
+            data = response.json()
+
         prices = [float(item["adv"]["price"]) for item in data["data"]]
         return sum(prices) / len(prices) if prices else None
     except Exception as e:
@@ -167,7 +183,7 @@ def fetch_bcv_price():
         return None
     return None
 
-# --- TAREA AUTOMÁTICA (UPDATE CACHÉ) ---
+# --- TAREA AUTOMÁTICA ---
 async def update_price_task(context: ContextTypes.DEFAULT_TYPE):
     new_binance = fetch_binance_price()
     new_bcv = fetch_bcv_price()
@@ -185,28 +201,20 @@ async def update_price_task(context: ContextTypes.DEFAULT_TYPE):
         MARKET_DATA["last_updated"] = now.strftime("%I:%M %p")
         logging.info(f"🔄 Actualizado - Bin: {new_binance} | BCV: {new_bcv}")
 
-# ==============================================================================
-#  NUEVO: REPORTES DIARIOS AUTOMÁTICOS (9AM y 1PM)
-# ==============================================================================
+# --- REPORTES AUTOMÁTICOS (9AM / 1PM) ---
 async def send_daily_report(context: ContextTypes.DEFAULT_TYPE):
-    """Envía el reporte a todos los usuarios."""
     binance = MARKET_DATA["price"]
     bcv = MARKET_DATA["bcv"]
     
-    # Si no hay datos (ej. se reinició recién), intentamos buscar
     if not binance: binance = fetch_binance_price()
     if not bcv: bcv = fetch_bcv_price()
-    
-    if not binance: return # Si sigue sin haber datos, abortamos
+    if not binance: return
 
     time_str = datetime.now(TIMEZONE).strftime("%I:%M %p")
     hour = datetime.now(TIMEZONE).hour
 
-    # Encabezado dinámico según la hora
-    if hour < 12:
-        header = "☀️ <b>¡Buenos días! Así abre el mercado:</b>"
-    else:
-        header = "🌤 <b>Reporte de la Tarde:</b>"
+    if hour < 12: header = "☀️ <b>¡Buenos días! Así abre el mercado:</b>"
+    else: header = "🌤 <b>Reporte de la Tarde:</b>"
 
     paypal = binance * 0.90
     amazon = binance * 0.75
@@ -228,19 +236,14 @@ async def send_daily_report(context: ContextTypes.DEFAULT_TYPE):
     text += f"{EMOJI_AMAZON} <b>Giftcard Amazon:</b> {amazon:,.2f} Bs\n\n"
     text += f"{EMOJI_STORE} <i>Actualizado: {time_str}</i>"
 
-    # Botón para actualizar manualmente
     keyboard = [[InlineKeyboardButton("🔄 Ver en tiempo real", callback_data='refresh_price')]]
     reply_markup = InlineKeyboardMarkup(keyboard)
 
-    # Difusión masiva
     users = get_all_users_ids()
-    logging.info(f"📢 Enviando reporte automático a {len(users)} usuarios...")
-    
     for user_id in users:
         try:
             await context.bot.send_message(chat_id=user_id, text=text, parse_mode=ParseMode.HTML, reply_markup=reply_markup)
-        except Exception:
-            pass # Si el usuario bloqueó, ignoramos
+        except Exception: pass
 
 # ==============================================================================
 #  COMANDOS
@@ -363,7 +366,6 @@ async def stats(update: Update, context: ContextTypes.DEFAULT_TYPE):
         count = get_total_users()
         await update.message.reply_text(f"{EMOJI_STATS} <b>ESTADÍSTICAS (DB)</b>\n👥 Usuarios: {count}", parse_mode=ParseMode.HTML)
 
-# --- COMANDO GLOBAL ---
 async def global_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if update.effective_user.id != ADMIN_ID: return
     if not context.args:
@@ -385,7 +387,6 @@ async def global_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
             fallidos += 1
     await update.message.reply_text(f"✅ <b>Terminado</b>\n\n📨 Enviados: {enviados}\n❌ Fallidos: {fallidos}", parse_mode=ParseMode.HTML)
 
-# --- CALCULADORA ---
 async def calculate_conversion(update: Update, text_amount, currency_type):
     rate = MARKET_DATA["price"]
     if not rate:
@@ -404,7 +405,6 @@ async def calculate_conversion(update: Update, text_amount, currency_type):
         await update.message.reply_text("🔢 Número inválido.")
     return ConversationHandler.END
 
-# --- MANEJADORES CONVERSACIÓN ---
 async def start_usdt_calc(update: Update, context: ContextTypes.DEFAULT_TYPE):
     track_user(update.effective_user.id)
     if context.args: return await calculate_conversion(update, context.args[0], "USDT")
@@ -436,7 +436,6 @@ if __name__ == "__main__":
 
     app = ApplicationBuilder().token(TOKEN).build()
 
-    # Conversation Handlers
     conv_usdt = ConversationHandler(
         entry_points=[CommandHandler("usdt", start_usdt_calc)],
         states={ESPERANDO_INPUT_USDT: [MessageHandler(filters.TEXT & ~filters.COMMAND, process_usdt_input)]},
@@ -458,22 +457,11 @@ if __name__ == "__main__":
     app.add_handler(CallbackQueryHandler(button_handler))
 
     if app.job_queue:
-        # Tarea de caché cada 2 min
         app.job_queue.run_repeating(update_price_task, interval=UPDATE_INTERVAL, first=1)
-        
-        # --- REPORTES DIARIOS AUTOMÁTICOS ---
-        # 9:00 AM Venezuela
-        app.job_queue.run_daily(
-            send_daily_report, 
-            time=time(hour=9, minute=0, tzinfo=TIMEZONE), 
-            days=(0, 1, 2, 3, 4, 5, 6)
-        )
-        # 1:00 PM Venezuela
-        app.job_queue.run_daily(
-            send_daily_report, 
-            time=time(hour=13, minute=0, tzinfo=TIMEZONE), 
-            days=(0, 1, 2, 3, 4, 5, 6)
-        )
+        # 9 AM
+        app.job_queue.run_daily(send_daily_report, time=time(hour=9, minute=0, tzinfo=TIMEZONE), days=(0, 1, 2, 3, 4, 5, 6))
+        # 1 PM (13:00)
+        app.job_queue.run_daily(send_daily_report, time=time(hour=13, minute=0, tzinfo=TIMEZONE), days=(0, 1, 2, 3, 4, 5, 6))
 
-    print("Bot FINAL REPORTES (9am/1pm + Amazon + Top 5) iniciando...")
+    print("Bot FINAL (Top 3 + 5000VES + MultiBancos + Reportes) iniciando...")
     app.run_polling()
