@@ -55,16 +55,15 @@ EMOJI_STORE   = '<tg-emoji emoji-id="5895288113537748673">🏪</tg-emoji>'
 # --- MEMORIA (Caché) ---
 MARKET_DATA = {
     "price": None, 
-    "bcv": None,   
+    "bcv": {'usd': None, 'eur': None},   
     "last_updated": "Esperando...",
     "history": [] 
 }
 
 # ==============================================================================
-#  BASE DE DATOS (CON REFERIDOS Y MIGRACIÓN)
+#  BASE DE DATOS (CON REFERIDOS)
 # ==============================================================================
 def init_db():
-    """Crea la tabla inicial si no existe y aplica migraciones."""
     if not DATABASE_URL:
         logging.warning("⚠️ Sin DATABASE_URL. Usando RAM temporal.")
         return
@@ -83,13 +82,11 @@ def init_db():
         conn.commit()
         cur.close()
         conn.close()
-        # Intentamos migrar por seguridad (agrega columnas si faltan)
         migrate_db()
     except Exception as e:
         logging.error(f"❌ Error BD Init: {e}")
 
 def migrate_db():
-    """Agrega columnas de referidos a tablas viejas."""
     if not DATABASE_URL: return
     try:
         conn = psycopg2.connect(DATABASE_URL)
@@ -99,82 +96,56 @@ def migrate_db():
             cur.execute("ALTER TABLE users ADD COLUMN IF NOT EXISTS referral_count INTEGER DEFAULT 0;")
             cur.execute("ALTER TABLE users ADD COLUMN IF NOT EXISTS referred_by BIGINT;")
             conn.commit()
-        except Exception:
-            conn.rollback()
+        except Exception: conn.rollback()
         finally:
             cur.close()
             conn.close()
     except Exception: pass
 
 def track_user(user, referrer_id=None):
-    """Guarda usuario y procesa referidos."""
     if not DATABASE_URL: return 
-    
     user_id = user.id
     first_name = user.first_name[:50] if user.first_name else "Usuario"
-
     try:
         conn = psycopg2.connect(DATABASE_URL)
         cur = conn.cursor()
-        
-        # Verificar si existe
         cur.execute("SELECT user_id FROM users WHERE user_id = %s", (user_id,))
         exists = cur.fetchone()
-        
         if not exists:
-            # ES NUEVO: Procesar referido
             valid_referrer = False
             if referrer_id and referrer_id != user_id:
-                # Verificar que el padrino exista
                 cur.execute("SELECT user_id FROM users WHERE user_id = %s", (referrer_id,))
-                if cur.fetchone():
-                    valid_referrer = True
-            
+                if cur.fetchone(): valid_referrer = True
             final_referrer = referrer_id if valid_referrer else None
-            
             cur.execute("""
                 INSERT INTO users (user_id, first_name, referred_by) 
                 VALUES (%s, %s, %s)
             """, (user_id, first_name, final_referrer))
-            
             if valid_referrer:
                 cur.execute("UPDATE users SET referral_count = referral_count + 1 WHERE user_id = %s", (final_referrer,))
-                logging.info(f"➕ Referido sumado a {final_referrer}")
         else:
-            # YA EXISTE: Actualizar nombre
             cur.execute("UPDATE users SET first_name = %s WHERE user_id = %s", (first_name, user_id))
-            
         conn.commit()
         cur.close()
         conn.close()
-    except Exception as e:
-        logging.error(f"Error track_user: {e}")
+    except Exception as e: logging.error(f"Error track_user: {e}")
 
 def get_referral_stats(user_id):
-    """Datos para /referidos"""
     if not DATABASE_URL: return (0, 0, [])
     try:
         conn = psycopg2.connect(DATABASE_URL)
         cur = conn.cursor()
-        
-        # Mis invitados
         cur.execute("SELECT referral_count FROM users WHERE user_id = %s", (user_id,))
         res = cur.fetchone()
         my_count = res[0] if res else 0
-        
-        # Mi Rango
         cur.execute("SELECT COUNT(*) + 1 FROM users WHERE referral_count > %s", (my_count,))
         my_rank = cur.fetchone()[0]
-        
-        # Top 3
         cur.execute("SELECT first_name, referral_count FROM users ORDER BY referral_count DESC LIMIT 3")
         top_3 = cur.fetchall()
-        
         cur.close()
         conn.close()
         return (my_count, my_rank, top_3)
-    except Exception:
-        return (0, 0, [])
+    except Exception: return (0, 0, [])
 
 def get_total_users():
     if not DATABASE_URL: return 0
@@ -201,39 +172,28 @@ def get_all_users_ids():
     except Exception: return []
 
 # ==============================================================================
-#  BACKEND PRECIOS (ALGORITMO AJUSTADO V3)
+#  BACKEND PRECIOS
 # ==============================================================================
 def fetch_binance_price():
     url = "https://p2p.binance.com/bapi/c2c/v2/friendly/c2c/adv/search"
     headers = {"Content-Type": "application/json", "User-Agent": "Mozilla/5.0"}
-    
-    # 🔥 ALGORITMO: Top 3 + 5000 VES + MultiBanco 🔥
     payload = {
-        "page": 1, 
-        "rows": 3, 
+        "page": 1, "rows": 3, 
         "payTypes": ["PagoMovil", "Banesco", "Mercantil", "Provincial"], 
-        "publisherType": "merchant", 
-        "transAmount": "5000", 
-        "asset": "USDT", 
-        "fiat": "VES", 
-        "tradeType": "BUY"
+        "publisherType": "merchant", "transAmount": "5000", 
+        "asset": "USDT", "fiat": "VES", "tradeType": "BUY"
     }
-    
     try:
         response = requests.post(url, json=payload, headers=headers, timeout=10)
         data = response.json()
-        
-        # Fallbacks de seguridad
         if not data.get("data"):
             del payload["publisherType"]
             response = requests.post(url, json=payload, headers=headers, timeout=10)
             data = response.json()
-            
         if not data.get("data"):
             payload["payTypes"] = ["PagoMovil"]
             response = requests.post(url, json=payload, headers=headers, timeout=10)
             data = response.json()
-
         prices = [float(item["adv"]["price"]) for item in data["data"]]
         return sum(prices) / len(prices) if prices else None
     except Exception as e:
@@ -266,8 +226,9 @@ async def update_price_task(context: ContextTypes.DEFAULT_TYPE):
     if new_bcv: MARKET_DATA["bcv"] = new_bcv
     if new_binance or new_bcv:
         now = datetime.now(TIMEZONE)
-        MARKET_DATA["last_updated"] = now.strftime("%I:%M %p")
-        logging.info(f"🔄 Actualizado - Bin: {new_binance} | BCV: {new_bcv}")
+        # 🔥 AQUÍ ESTÁ EL CAMBIO DE LA FECHA 🔥
+        MARKET_DATA["last_updated"] = now.strftime("%d/%m/%Y %I:%M %p")
+        logging.info(f"🔄 Actualizado - Bin: {new_binance}")
 
 async def send_daily_report(context: ContextTypes.DEFAULT_TYPE):
     binance = MARKET_DATA["price"]
@@ -276,7 +237,8 @@ async def send_daily_report(context: ContextTypes.DEFAULT_TYPE):
     if not bcv: bcv = fetch_bcv_price()
     if not binance: return
 
-    time_str = datetime.now(TIMEZONE).strftime("%I:%M %p")
+    # 🔥 FECHA EN REPORTE 🔥
+    time_str = datetime.now(TIMEZONE).strftime("%d/%m/%Y %I:%M %p")
     hour = datetime.now(TIMEZONE).hour
     header = "☀️ <b>¡Buenos días! Así abre el mercado:</b>" if hour < 12 else "🌤 <b>Reporte de la Tarde:</b>"
 
@@ -309,7 +271,6 @@ async def send_daily_report(context: ContextTypes.DEFAULT_TYPE):
 # ==============================================================================
 
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    # Detección de Referidos
     referrer_id = None
     if context.args:
         try: referrer_id = int(context.args[0])
@@ -340,32 +301,19 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 async def referidos(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id = update.effective_user.id
-    track_user(update.effective_user) # Asegurar registro
-    
+    track_user(update.effective_user)
     count, rank, top_3 = get_referral_stats(user_id)
-    
     ranking_text = ""
     medals = ["🥇", "🥈", "🥉"]
     for i, (name, score) in enumerate(top_3):
         medal = medals[i] if i < 3 else f"#{i+1}"
         clean_name = name.split()[0] if name else "Usuario"
         ranking_text += f"{medal} <b>{clean_name}</b> — {score} refs\n"
-
     invite_link = f"https://t.me/{context.bot.username}?start={user_id}"
-
-    text = (
-        f"🎁 <b>PROGRAMA DE REFERIDOS</b>\n\n"
-        f"Invita a tus amigos y compite por premios exclusivos.\n\n"
-        f"👤 <b>TUS ESTADÍSTICAS:</b>\n"
-        f"👥 Invitados: <b>{count}</b>\n"
-        f"🏆 Tu Rango Global: <b>#{rank}</b>\n\n"
-        f"🔗 <b>TU ENLACE ÚNICO:</b>\n"
-        f"<code>{invite_link}</code>\n"
-        f"<i>(Toca para copiar)</i>\n\n"
-        f"🏆 <b>TOP 3 LÍDERES:</b>\n"
-        f"{ranking_text}\n"
-        f"👇 <b>¡Compártelo ahora!</b>"
-    )
+    text = (f"🎁 <b>PROGRAMA DE REFERIDOS</b>\n\nInvita a tus amigos y compite por premios.\n\n"
+            f"👤 <b>TUS ESTADÍSTICAS:</b>\n👥 Invitados: <b>{count}</b>\n🏆 Tu Rango: <b>#{rank}</b>\n\n"
+            f"🔗 <b>TU ENLACE ÚNICO:</b>\n<code>{invite_link}</code>\n<i>(Toca para copiar)</i>\n\n"
+            f"🏆 <b>TOP 3 LÍDERES:</b>\n{ranking_text}\n👇 <b>¡Compártelo ahora!</b>")
     await update.message.reply_text(text, parse_mode=ParseMode.HTML, disable_web_page_preview=True)
 
 async def precio(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -532,5 +480,5 @@ if __name__ == "__main__":
         app.job_queue.run_repeating(update_price_task, interval=UPDATE_INTERVAL, first=1)
         app.job_queue.run_daily(send_daily_report, time=time(hour=9, minute=0, tzinfo=TIMEZONE), days=(0, 1, 2, 3, 4, 5, 6))
         app.job_queue.run_daily(send_daily_report, time=time(hour=13, minute=0, tzinfo=TIMEZONE), days=(0, 1, 2, 3, 4, 5, 6))
-    print("Bot GOLDEN MASTER V6 (All Features Included) iniciando...")
+    print("Bot FINAL V7 (Completo + Fecha) iniciando...")
     app.run_polling()
