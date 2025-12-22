@@ -61,7 +61,7 @@ MARKET_DATA = {
 }
 
 # ==============================================================================
-#  BASE DE DATOS (CON REFERIDOS)
+#  BASE DE DATOS (POSTGRESQL)
 # ==============================================================================
 def init_db():
     if not DATABASE_URL:
@@ -172,7 +172,7 @@ def get_all_users_ids():
     except Exception: return []
 
 # ==============================================================================
-#  BACKEND PRECIOS
+#  BACKEND PRECIOS (ALGORITMO V3: Top 3 + 5000 + Multibanco)
 # ==============================================================================
 def fetch_binance_price():
     url = "https://p2p.binance.com/bapi/c2c/v2/friendly/c2c/adv/search"
@@ -226,9 +226,8 @@ async def update_price_task(context: ContextTypes.DEFAULT_TYPE):
     if new_bcv: MARKET_DATA["bcv"] = new_bcv
     if new_binance or new_bcv:
         now = datetime.now(TIMEZONE)
-        # 🔥 AQUÍ ESTÁ EL CAMBIO DE LA FECHA 🔥
         MARKET_DATA["last_updated"] = now.strftime("%d/%m/%Y %I:%M %p")
-        logging.info(f"🔄 Actualizado - Bin: {new_binance}")
+        logging.info(f"🔄 Actualizado - Bin: {new_binance} | BCV: {new_bcv}")
 
 async def send_daily_report(context: ContextTypes.DEFAULT_TYPE):
     binance = MARKET_DATA["price"]
@@ -237,7 +236,6 @@ async def send_daily_report(context: ContextTypes.DEFAULT_TYPE):
     if not bcv: bcv = fetch_bcv_price()
     if not binance: return
 
-    # 🔥 FECHA EN REPORTE 🔥
     time_str = datetime.now(TIMEZONE).strftime("%d/%m/%Y %I:%M %p")
     hour = datetime.now(TIMEZONE).hour
     header = "☀️ <b>¡Buenos días! Así abre el mercado:</b>" if hour < 12 else "🌤 <b>Reporte de la Tarde:</b>"
@@ -283,12 +281,12 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
         f"Soy tu asistente financiero conectado a {EMOJI_BINANCE} <b>Binance P2P</b> y al <b>BCV</b>.\n\n"
         f"⚡ <b>Características:</b>\n"
         f"• <b>Confianza:</b> Solo monitoreamos comerciantes verificados.\n"
-        f"• <b>Completo:</b> Tasa Paralela, Oficial, PayPal y Amazon.\n"
+        f"• <b>Completo:</b> Tasa Paralela, Oficial (USD/EUR), PayPal y Amazon.\n"
         f"• <b>Velocidad:</b> Actualizado cada 2 min.\n\n"
         f"🛠 <b>HERRAMIENTAS:</b>\n\n"
         f"{EMOJI_STATS} <b>/precio</b> → Ver tabla de tasas.\n"
         f"🧠 <b>/ia</b> → Predicción de Tendencia.\n"
-        f"🎁 <b>/referidos</b> → ¡Invita y Gana!\n\n"
+        f"🎁 <b>/referidos</b> → ¡Gana USDT invitando!\n\n"
         f"🧮 <b>CALCULADORA (Toca abajo):</b>\n"
         f"• <b>/usdt</b> → Dólares a Bs.\n"
         f"• <b>/bs</b> → Bs a Dólares."
@@ -299,21 +297,40 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     ]
     await update.message.reply_text(mensaje, parse_mode=ParseMode.HTML, reply_markup=InlineKeyboardMarkup(keyboard))
 
+# 🔥 AQUÍ ESTÁ EL CAMBIO DE LA FASE 2 🔥
 async def referidos(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id = update.effective_user.id
     track_user(update.effective_user)
+    
     count, rank, top_3 = get_referral_stats(user_id)
+    
     ranking_text = ""
     medals = ["🥇", "🥈", "🥉"]
     for i, (name, score) in enumerate(top_3):
         medal = medals[i] if i < 3 else f"#{i+1}"
         clean_name = name.split()[0] if name else "Usuario"
         ranking_text += f"{medal} <b>{clean_name}</b> — {score} refs\n"
+
     invite_link = f"https://t.me/{context.bot.username}?start={user_id}"
-    text = (f"🎁 <b>PROGRAMA DE REFERIDOS</b>\n\nInvita a tus amigos y compite por premios.\n\n"
-            f"👤 <b>TUS ESTADÍSTICAS:</b>\n👥 Invitados: <b>{count}</b>\n🏆 Tu Rango: <b>#{rank}</b>\n\n"
-            f"🔗 <b>TU ENLACE ÚNICO:</b>\n<code>{invite_link}</code>\n<i>(Toca para copiar)</i>\n\n"
-            f"🏆 <b>TOP 3 LÍDERES:</b>\n{ranking_text}\n👇 <b>¡Compártelo ahora!</b>")
+
+    text = (
+        f"🎁 <b>PROGRAMA DE REFERIDOS (PREMIOS USDT)</b>\n\n"
+        f"¡Gana dinero real invitando a tus amigos!\n"
+        f"📅 <b>Corte y Pago:</b> Día 30 de cada mes.\n\n"
+        f"🏆 <b>PREMIOS MENSUALES:</b>\n"
+        f"🥇 1er Lugar: <b>$10 USDT</b>\n"
+        f"🥈 2do Lugar: <b>$5 USDT</b>\n"
+        f"🥉 3er Lugar: <b>$5 USDT</b>\n\n"
+        f"👤 <b>TUS ESTADÍSTICAS:</b>\n"
+        f"👥 Invitados: <b>{count}</b>\n"
+        f"🏆 Tu Rango: <b>#{rank}</b>\n\n"
+        f"🔗 <b>TU ENLACE ÚNICO:</b>\n"
+        f"<code>{invite_link}</code>\n"
+        f"<i>(Toca para copiar y compartir)</i>\n\n"
+        f"📊 <b>TOP 3 LÍDERES:</b>\n"
+        f"{ranking_text}\n"
+        f"👇 <b>¡Compártelo ahora!</b>"
+    )
     await update.message.reply_text(text, parse_mode=ParseMode.HTML, disable_web_page_preview=True)
 
 async def precio(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -480,5 +497,5 @@ if __name__ == "__main__":
         app.job_queue.run_repeating(update_price_task, interval=UPDATE_INTERVAL, first=1)
         app.job_queue.run_daily(send_daily_report, time=time(hour=9, minute=0, tzinfo=TIMEZONE), days=(0, 1, 2, 3, 4, 5, 6))
         app.job_queue.run_daily(send_daily_report, time=time(hour=13, minute=0, tzinfo=TIMEZONE), days=(0, 1, 2, 3, 4, 5, 6))
-    print("Bot FINAL V7 (Completo + Fecha) iniciando...")
+    print("Bot FASE 2 (Premios Referidos + Todas las mejoras) iniciando...")
     app.run_polling()
