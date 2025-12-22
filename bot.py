@@ -409,24 +409,44 @@ async def stats(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await update.message.reply_text(f"{EMOJI_STATS} <b>ESTADÍSTICAS (DB)</b>\n👥 Usuarios: {count}", parse_mode=ParseMode.HTML)
 
 async def global_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    if update.effective_user.id != ADMIN_ID: return
-    if not context.args:
-        await update.message.reply_text("⚠️ Escribe el mensaje.", parse_mode=ParseMode.HTML)
+    # 1. Seguridad
+    if update.effective_user.id != ADMIN_ID:
         return
-    mensaje = " ".join(context.args)
+
+    # 2. Capturar el mensaje EXACTO (respetando espacios y enters)
+    # update.message.text trae todo: "/global Hola..."
+    # .partition(' ')[2] separa el comando del resto y se queda con el resto intacto
+    mensaje_original = update.message.text_html # Usamos text_html para capturar formato si reenvias
+    
+    # Truco: Quitamos el comando "/global " del inicio
+    if mensaje_original.startswith('/global'):
+        mensaje_final = mensaje_original.replace('/global', '', 1).strip()
+    else:
+        return
+
+    if not mensaje_final:
+        await update.message.reply_text("⚠️ Escribe el mensaje. Ej: <code>/global Hola</code>", parse_mode=ParseMode.HTML)
+        return
+
     users = get_all_users_ids()
     if not users:
         await update.message.reply_text("⚠️ No hay usuarios.")
         return
-    await update.message.reply_text(f"🚀 Iniciando difusión a {len(users)} usuarios...")
+
+    await update.message.reply_text(f"🚀 Iniciando difusión a {len(users)} usuarios...\n\n👁 <b>Vista Previa:</b>\n{mensaje_final}", parse_mode=ParseMode.HTML)
+
     enviados = 0
     fallidos = 0
+    
+    # 3. Enviar conservando el formato HTML
     for user_id in users:
         try:
-            await context.bot.send_message(chat_id=user_id, text=mensaje)
+            await context.bot.send_message(chat_id=user_id, text=mensaje_final, parse_mode=ParseMode.HTML)
             enviados += 1
-        except Exception: fallidos += 1
-    await update.message.reply_text(f"✅ <b>Terminado</b>\n\n📨 Enviados: {enviados}\n❌ Fallidos: {fallidos}", parse_mode=ParseMode.HTML)
+        except Exception:
+            fallidos += 1
+
+    await update.message.reply_text(f"✅ <b>Difusión Terminada</b>\n\n📨 Enviados: {enviados}\n❌ Fallidos: {fallidos}", parse_mode=ParseMode.HTML)
 
 async def calculate_conversion(update: Update, text_amount, currency_type):
     rate = MARKET_DATA["price"]
