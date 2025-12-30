@@ -2,12 +2,14 @@ import os
 import logging
 import requests
 import psycopg2 
+import asyncio 
 from bs4 import BeautifulSoup 
 import urllib3
 from datetime import datetime, time
 import pytz 
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.constants import ParseMode
+from telegram.error import Forbidden, BadRequest # Importamos BadRequest para manejar el error 400
 from telegram.ext import (
     ApplicationBuilder, 
     CommandHandler, 
@@ -172,40 +174,59 @@ def get_all_users_ids():
     except Exception: return []
 
 # ==============================================================================
-#  BACKEND PRECIOS (ALGORITMO V3: Top 3 + 5000 + Multibanco)
+#  BACKEND PRECIOS (ALGORITMO ROBUSTO)
 # ==============================================================================
 def fetch_binance_price():
     url = "https://p2p.binance.com/bapi/c2c/v2/friendly/c2c/adv/search"
-    headers = {"Content-Type": "application/json", "User-Agent": "Mozilla/5.0"}
+    
+    # User-Agent mejorado
+    headers = {
+        "Content-Type": "application/json",
+        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
+    }
+    
     payload = {
         "page": 1, "rows": 3, 
         "payTypes": ["PagoMovil", "Banesco", "Mercantil", "Provincial"], 
         "publisherType": "merchant", "transAmount": "5000", 
         "asset": "USDT", "fiat": "VES", "tradeType": "BUY"
     }
+    
     try:
         response = requests.post(url, json=payload, headers=headers, timeout=10)
+        
+        if response.status_code != 200:
+            logging.error(f"⚠️ Binance Error HTTP {response.status_code}")
+            return None
+
         data = response.json()
+        
+        # Fallbacks
         if not data.get("data"):
             del payload["publisherType"]
             response = requests.post(url, json=payload, headers=headers, timeout=10)
             data = response.json()
+            
         if not data.get("data"):
             payload["payTypes"] = ["PagoMovil"]
             response = requests.post(url, json=payload, headers=headers, timeout=10)
             data = response.json()
+
         prices = [float(item["adv"]["price"]) for item in data["data"]]
         return sum(prices) / len(prices) if prices else None
+
     except Exception as e:
-        logging.error(f"Error Binance: {e}")
+        logging.error(f"❌ Error Binance: {e}")
         return None
 
 def fetch_bcv_price():
     url = "http://www.bcv.org.ve/"
-    headers = {"User-Agent": "Mozilla/5.0"}
+    headers = {
+        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
+    }
     rates = {'usd': None, 'eur': None}
     try:
-        response = requests.get(url, headers=headers, timeout=15, verify=False)
+        response = requests.get(url, headers=headers, timeout=20, verify=False)
         if response.status_code == 200:
             soup = BeautifulSoup(response.content, 'html.parser')
             dolar_div = soup.find('div', id='dolar')
@@ -213,22 +234,29 @@ def fetch_bcv_price():
             euro_div = soup.find('div', id='euro')
             if euro_div: rates['eur'] = float(euro_div.find('strong').text.strip().replace(',', '.'))
             return rates if (rates['usd'] or rates['eur']) else None
-    except Exception: return None
+    except Exception as e: 
+        logging.error(f"❌ Error BCV: {e}")
     return None
 
 async def update_price_task(context: ContextTypes.DEFAULT_TYPE):
     new_binance = fetch_binance_price()
     new_bcv = fetch_bcv_price()
+    
     if new_binance:
         MARKET_DATA["price"] = new_binance
         MARKET_DATA["history"].append(new_binance)
         if len(MARKET_DATA["history"]) > 30: MARKET_DATA["history"].pop(0)
-    if new_bcv: MARKET_DATA["bcv"] = new_bcv
+    
+    if new_bcv: 
+        MARKET_DATA["bcv"] = new_bcv
+    
     if new_binance or new_bcv:
         now = datetime.now(TIMEZONE)
-        MARKET_DATA["last_updated"] = now.strftime("%d/%m/%Y %I:%M %p")
+        # Formato con SEGUNDOS para evitar error de edición repetida
+        MARKET_DATA["last_updated"] = now.strftime("%d/%m/%Y %I:%M:%S %p")
         logging.info(f"🔄 Actualizado - Bin: {new_binance} | BCV: {new_bcv}")
 
+# --- REPORTE DIARIO ---
 async def send_daily_report(context: ContextTypes.DEFAULT_TYPE):
     binance = MARKET_DATA["price"]
     bcv = MARKET_DATA["bcv"]
@@ -259,10 +287,20 @@ async def send_daily_report(context: ContextTypes.DEFAULT_TYPE):
     text += f"{EMOJI_STORE} <i>Actualizado: {time_str}</i>"
 
     keyboard = [[InlineKeyboardButton("🔄 Ver en tiempo real", callback_data='refresh_price')]]
+    reply_markup = InlineKeyboardMarkup(keyboard)
+
     users = get_all_users_ids()
-    for user_id in users:
-        try: await context.bot.send_message(chat_id=user_id, text=text, parse_mode=ParseMode.HTML, reply_markup=InlineKeyboardMarkup(keyboard))
-        except Exception: pass
+    logging.info(f"📢 Iniciando reporte a {len(users)} usuarios...")
+    
+    batch_size = 25
+    for i in range(0, len(users), batch_size):
+        batch = users[i:i + batch_size]
+        for user_id in batch:
+            try:
+                await context.bot.send_message(chat_id=user_id, text=text, parse_mode=ParseMode.HTML, reply_markup=reply_markup)
+            except Forbidden: pass 
+            except Exception: pass 
+        await asyncio.sleep(1)
 
 # ==============================================================================
 #  COMANDOS
@@ -281,12 +319,12 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
         f"Soy tu asistente financiero conectado a {EMOJI_BINANCE} <b>Binance P2P</b> y al <b>BCV</b>.\n\n"
         f"⚡ <b>Características:</b>\n"
         f"• <b>Confianza:</b> Solo monitoreamos comerciantes verificados.\n"
-        f"• <b>Completo:</b> Tasa Paralela, Oficial (USD/EUR), PayPal y Amazon.\n"
+        f"• <b>Completo:</b> Tasa Paralela, Oficial, PayPal y Amazon.\n"
         f"• <b>Velocidad:</b> Actualizado cada 2 min.\n\n"
         f"🛠 <b>HERRAMIENTAS:</b>\n\n"
         f"{EMOJI_STATS} <b>/precio</b> → Ver tabla de tasas.\n"
         f"🧠 <b>/ia</b> → Predicción de Tendencia.\n"
-        f"🎁 <b>/referidos</b> → ¡Gana USDT invitando!\n\n"
+        f"🎁 <b>/referidos</b> → ¡Invita y Gana!\n\n"
         f"🧮 <b>CALCULADORA (Toca abajo):</b>\n"
         f"• <b>/usdt</b> → Dólares a Bs.\n"
         f"• <b>/bs</b> → Bs a Dólares."
@@ -297,40 +335,18 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     ]
     await update.message.reply_text(mensaje, parse_mode=ParseMode.HTML, reply_markup=InlineKeyboardMarkup(keyboard))
 
-# 🔥 AQUÍ ESTÁ EL CAMBIO DE LA FASE 2 🔥
 async def referidos(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id = update.effective_user.id
     track_user(update.effective_user)
-    
     count, rank, top_3 = get_referral_stats(user_id)
-    
     ranking_text = ""
     medals = ["🥇", "🥈", "🥉"]
     for i, (name, score) in enumerate(top_3):
         medal = medals[i] if i < 3 else f"#{i+1}"
         clean_name = name.split()[0] if name else "Usuario"
         ranking_text += f"{medal} <b>{clean_name}</b> — {score} refs\n"
-
     invite_link = f"https://t.me/{context.bot.username}?start={user_id}"
-
-    text = (
-        f"🎁 <b>PROGRAMA DE REFERIDOS (PREMIOS USDT)</b>\n\n"
-        f"¡Gana dinero real invitando a tus amigos!\n"
-        f"📅 <b>Corte y Pago:</b> Día 30 de cada mes.\n\n"
-        f"🏆 <b>PREMIOS MENSUALES:</b>\n"
-        f"🥇 1er Lugar: <b>$10 USDT</b>\n"
-        f"🥈 2do Lugar: <b>$5 USDT</b>\n"
-        f"🥉 3er Lugar: <b>$5 USDT</b>\n\n"
-        f"👤 <b>TUS ESTADÍSTICAS:</b>\n"
-        f"👥 Invitados: <b>{count}</b>\n"
-        f"🏆 Tu Rango: <b>#{rank}</b>\n\n"
-        f"🔗 <b>TU ENLACE ÚNICO:</b>\n"
-        f"<code>{invite_link}</code>\n"
-        f"<i>(Toca para copiar y compartir)</i>\n\n"
-        f"📊 <b>TOP 3 LÍDERES:</b>\n"
-        f"{ranking_text}\n"
-        f"👇 <b>¡Compártelo ahora!</b>"
-    )
+    text = (f"🎁 <b>PROGRAMA DE REFERIDOS (PREMIOS USDT)</b>\n\n¡Gana dinero real invitando a tus amigos!\n📅 <b>Corte y Pago:</b> Día 30 de cada mes.\n\n🏆 <b>PREMIOS MENSUALES:</b>\n🥇 1er Lugar: <b>$10 USDT</b>\n🥈 2do Lugar: <b>$5 USDT</b>\n🥉 3er Lugar: <b>$5 USDT</b>\n\n👤 <b>TUS ESTADÍSTICAS:</b>\n👥 Invitados: <b>{count}</b>\n🏆 Tu Rango: <b>#{rank}</b>\n\n🔗 <b>TU ENLACE ÚNICO:</b>\n<code>{invite_link}</code>\n<i>(Toca para copiar y compartir)</i>\n\n📊 <b>TOP 3 LÍDERES:</b>\n{ranking_text}\n👇 <b>¡Compártelo ahora!</b>")
     await update.message.reply_text(text, parse_mode=ParseMode.HTML, disable_web_page_preview=True)
 
 async def precio(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -362,10 +378,12 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     track_user(update.effective_user)
     query = update.callback_query
     await query.answer()
+    
     if query.data == 'refresh_price':
         binance = MARKET_DATA["price"]
         bcv = MARKET_DATA["bcv"]
         time_str = MARKET_DATA["last_updated"]
+        
         if binance:
             paypal = binance * 0.90
             amazon = binance * 0.75
@@ -380,10 +398,17 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 text += "\n"
             else: text += "🏛️ <b>BCV:</b> <i>No disponible</i>\n\n"
             text += f"{EMOJI_PAYPAL} <b>Tasa PayPal:</b> {paypal:,.2f} Bs\n{EMOJI_AMAZON} <b>Giftcard Amazon:</b> {amazon:,.2f} Bs\n\n{EMOJI_STORE} <i>Actualizado: {time_str}</i>"
+            
+            # --- PROTECCIÓN ANTI-ERROR 400 ---
+            # Solo tratamos de editar si el mensaje es diferente o si queremos forzar refresh
             try:
                 keyboard = [[InlineKeyboardButton("🔄 Actualizar Precio", callback_data='refresh_price')]]
                 await query.edit_message_text(text=text, parse_mode=ParseMode.HTML, reply_markup=InlineKeyboardMarkup(keyboard))
-            except Exception: pass
+            except BadRequest:
+                # Si el mensaje es idéntico, Telegram lanza BadRequest. Lo ignoramos.
+                pass
+            except Exception as e:
+                logging.error(f"Error editando mensaje: {e}")
 
 async def prediccion(update: Update, context: ContextTypes.DEFAULT_TYPE):
     track_user(update.effective_user)
@@ -409,44 +434,31 @@ async def stats(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await update.message.reply_text(f"{EMOJI_STATS} <b>ESTADÍSTICAS (DB)</b>\n👥 Usuarios: {count}", parse_mode=ParseMode.HTML)
 
 async def global_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    # 1. Seguridad
-    if update.effective_user.id != ADMIN_ID:
-        return
-
-    # 2. Capturar el mensaje EXACTO (respetando espacios y enters)
-    # update.message.text trae todo: "/global Hola..."
-    # .partition(' ')[2] separa el comando del resto y se queda con el resto intacto
-    mensaje_original = update.message.text_html # Usamos text_html para capturar formato si reenvias
-    
-    # Truco: Quitamos el comando "/global " del inicio
+    if update.effective_user.id != ADMIN_ID: return
+    mensaje_original = update.message.text_html
     if mensaje_original.startswith('/global'):
         mensaje_final = mensaje_original.replace('/global', '', 1).strip()
-    else:
-        return
-
+    else: return
     if not mensaje_final:
-        await update.message.reply_text("⚠️ Escribe el mensaje. Ej: <code>/global Hola</code>", parse_mode=ParseMode.HTML)
+        await update.message.reply_text("⚠️ Escribe el mensaje.", parse_mode=ParseMode.HTML)
         return
-
     users = get_all_users_ids()
     if not users:
         await update.message.reply_text("⚠️ No hay usuarios.")
         return
-
-    await update.message.reply_text(f"🚀 Iniciando difusión a {len(users)} usuarios...\n\n👁 <b>Vista Previa:</b>\n{mensaje_final}", parse_mode=ParseMode.HTML)
-
+    await update.message.reply_text(f"🚀 Iniciando difusión rápida a {len(users)} usuarios...")
     enviados = 0
     fallidos = 0
-    
-    # 3. Enviar conservando el formato HTML
-    for user_id in users:
-        try:
-            await context.bot.send_message(chat_id=user_id, text=mensaje_final, parse_mode=ParseMode.HTML)
-            enviados += 1
-        except Exception:
-            fallidos += 1
-
-    await update.message.reply_text(f"✅ <b>Difusión Terminada</b>\n\n📨 Enviados: {enviados}\n❌ Fallidos: {fallidos}", parse_mode=ParseMode.HTML)
+    batch_size = 25
+    for i in range(0, len(users), batch_size):
+        batch = users[i:i + batch_size]
+        for user_id in batch:
+            try:
+                await context.bot.send_message(chat_id=user_id, text=mensaje_final, parse_mode=ParseMode.HTML)
+                enviados += 1
+            except Exception: fallidos += 1
+        await asyncio.sleep(1)
+    await update.message.reply_text(f"✅ <b>Difusión Completada</b>\n\n📨 Enviados: {enviados}\n❌ Fallidos: {fallidos}", parse_mode=ParseMode.HTML)
 
 async def calculate_conversion(update: Update, text_amount, currency_type):
     rate = MARKET_DATA["price"]
@@ -517,5 +529,5 @@ if __name__ == "__main__":
         app.job_queue.run_repeating(update_price_task, interval=UPDATE_INTERVAL, first=1)
         app.job_queue.run_daily(send_daily_report, time=time(hour=9, minute=0, tzinfo=TIMEZONE), days=(0, 1, 2, 3, 4, 5, 6))
         app.job_queue.run_daily(send_daily_report, time=time(hour=13, minute=0, tzinfo=TIMEZONE), days=(0, 1, 2, 3, 4, 5, 6))
-    print("Bot FASE 2 (Premios Referidos + Todas las mejoras) iniciando...")
+    print("Bot ANTI-BUG (Logs detallados + Fix 400 + Seconds) iniciando...")
     app.run_polling()
