@@ -9,7 +9,7 @@ from datetime import datetime, time
 import pytz 
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.constants import ParseMode
-from telegram.error import Forbidden, BadRequest # Importamos BadRequest para manejar el error 400
+from telegram.error import Forbidden, BadRequest 
 from telegram.ext import (
     ApplicationBuilder, 
     CommandHandler, 
@@ -36,6 +36,7 @@ ADMIN_ID = 533888411
 # --- CONFIGURACIÓN ---
 UPDATE_INTERVAL = 120 
 TIMEZONE = pytz.timezone('America/Caracas') 
+FILTER_MIN_USD = 20 # <--- NUEVO: FILTRO DINÁMICO EN DÓLARES
 
 # 🔴 TUS ENLACES 🔴
 LINK_CANAL = "https://t.me/tasabinance"
@@ -174,21 +175,28 @@ def get_all_users_ids():
     except Exception: return []
 
 # ==============================================================================
-#  BACKEND PRECIOS (ALGORITMO ROBUSTO)
+#  BACKEND PRECIOS (ALGORITMO DINÁMICO 20$)
 # ==============================================================================
 def fetch_binance_price():
     url = "https://p2p.binance.com/bapi/c2c/v2/friendly/c2c/adv/search"
     
-    # User-Agent mejorado
     headers = {
         "Content-Type": "application/json",
         "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
     }
     
+    # --- CÁLCULO DINÁMICO DEL FILTRO ---
+    # Si tenemos un precio anterior en memoria, lo usamos. Si no, usamos base 600.
+    last_known_price = MARKET_DATA["price"] if MARKET_DATA["price"] else 600
+    dynamic_trans_amount = int(last_known_price * FILTER_MIN_USD)
+    
+    logging.info(f"🔍 Buscando con Filtro Dinámico: {FILTER_MIN_USD}$ = {dynamic_trans_amount} VES")
+
     payload = {
         "page": 1, "rows": 3, 
         "payTypes": ["PagoMovil", "Banesco", "Mercantil", "Provincial"], 
-        "publisherType": "merchant", "transAmount": "5000", 
+        "publisherType": "merchant", 
+        "transAmount": str(dynamic_trans_amount), # Filtro calculado
         "asset": "USDT", "fiat": "VES", "tradeType": "BUY"
     }
     
@@ -201,19 +209,31 @@ def fetch_binance_price():
 
         data = response.json()
         
-        # Fallbacks
+        # Fallbacks (si falla el filtro estricto)
         if not data.get("data"):
+            logging.info("⚠️ Fallback: Quitando filtro Merchant")
             del payload["publisherType"]
             response = requests.post(url, json=payload, headers=headers, timeout=10)
             data = response.json()
             
         if not data.get("data"):
+            logging.info("⚠️ Fallback: Quitando Bancos (Solo PagoMovil)")
             payload["payTypes"] = ["PagoMovil"]
             response = requests.post(url, json=payload, headers=headers, timeout=10)
             data = response.json()
 
+        # Último recurso: Si con 20$ no encuentra nada, bajamos el filtro a 0 para no dar error
+        if not data.get("data"):
+            logging.info("⚠️ Fallback Crítico: Quitando Filtro Monto")
+            del payload["transAmount"]
+            response = requests.post(url, json=payload, headers=headers, timeout=10)
+            data = response.json()
+
         prices = [float(item["adv"]["price"]) for item in data["data"]]
-        return sum(prices) / len(prices) if prices else None
+        if prices:
+            return sum(prices) / len(prices)
+        else:
+            return None
 
     except Exception as e:
         logging.error(f"❌ Error Binance: {e}")
@@ -252,9 +272,8 @@ async def update_price_task(context: ContextTypes.DEFAULT_TYPE):
     
     if new_binance or new_bcv:
         now = datetime.now(TIMEZONE)
-        # Formato con SEGUNDOS para evitar error de edición repetida
         MARKET_DATA["last_updated"] = now.strftime("%d/%m/%Y %I:%M:%S %p")
-        logging.info(f"🔄 Actualizado - Bin: {new_binance} | BCV: {new_bcv}")
+        logging.info(f"🔄 Actualizado - Bin: {new_binance}")
 
 # --- REPORTE DIARIO ---
 async def send_daily_report(context: ContextTypes.DEFAULT_TYPE):
@@ -378,12 +397,10 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     track_user(update.effective_user)
     query = update.callback_query
     await query.answer()
-    
     if query.data == 'refresh_price':
         binance = MARKET_DATA["price"]
         bcv = MARKET_DATA["bcv"]
         time_str = MARKET_DATA["last_updated"]
-        
         if binance:
             paypal = binance * 0.90
             amazon = binance * 0.75
@@ -399,16 +416,11 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
             else: text += "🏛️ <b>BCV:</b> <i>No disponible</i>\n\n"
             text += f"{EMOJI_PAYPAL} <b>Tasa PayPal:</b> {paypal:,.2f} Bs\n{EMOJI_AMAZON} <b>Giftcard Amazon:</b> {amazon:,.2f} Bs\n\n{EMOJI_STORE} <i>Actualizado: {time_str}</i>"
             
-            # --- PROTECCIÓN ANTI-ERROR 400 ---
-            # Solo tratamos de editar si el mensaje es diferente o si queremos forzar refresh
             try:
                 keyboard = [[InlineKeyboardButton("🔄 Actualizar Precio", callback_data='refresh_price')]]
                 await query.edit_message_text(text=text, parse_mode=ParseMode.HTML, reply_markup=InlineKeyboardMarkup(keyboard))
-            except BadRequest:
-                # Si el mensaje es idéntico, Telegram lanza BadRequest. Lo ignoramos.
-                pass
-            except Exception as e:
-                logging.error(f"Error editando mensaje: {e}")
+            except BadRequest: pass # Evita error 400 si el precio no cambió
+            except Exception as e: logging.error(f"Error edit: {e}")
 
 async def prediccion(update: Update, context: ContextTypes.DEFAULT_TYPE):
     track_user(update.effective_user)
@@ -529,5 +541,5 @@ if __name__ == "__main__":
         app.job_queue.run_repeating(update_price_task, interval=UPDATE_INTERVAL, first=1)
         app.job_queue.run_daily(send_daily_report, time=time(hour=9, minute=0, tzinfo=TIMEZONE), days=(0, 1, 2, 3, 4, 5, 6))
         app.job_queue.run_daily(send_daily_report, time=time(hour=13, minute=0, tzinfo=TIMEZONE), days=(0, 1, 2, 3, 4, 5, 6))
-    print("Bot ANTI-BUG (Logs detallados + Fix 400 + Seconds) iniciando...")
+    print("Bot DYNAMIC 20 USD iniciando...")
     app.run_polling()
