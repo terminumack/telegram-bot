@@ -36,6 +36,7 @@ ADMIN_ID = 533888411
 # --- CONFIGURACIÓN ---
 UPDATE_INTERVAL = 120 
 TIMEZONE = pytz.timezone('America/Caracas') 
+FILTER_MIN_USD = 20 # Filtro Dinámico (20$)
 
 # 🔴 TUS ENLACES 🔴
 LINK_CANAL = "https://t.me/tasabinance"
@@ -83,7 +84,7 @@ def init_db():
                 referred_by BIGINT
             )
         """)
-        # Tabla Alertas (NUEVA)
+        # Tabla Alertas
         cur.execute("""
             CREATE TABLE IF NOT EXISTS alerts (
                 id SERIAL PRIMARY KEY,
@@ -150,14 +151,12 @@ def add_alert(user_id, target_price, condition):
     try:
         conn = psycopg2.connect(DATABASE_URL)
         cur = conn.cursor()
-        # Limite de 3 alertas por usuario
         cur.execute("SELECT COUNT(*) FROM alerts WHERE user_id = %s", (user_id,))
         count = cur.fetchone()[0]
         if count >= 3:
             cur.close()
             conn.close()
-            return False # Límite alcanzado
-            
+            return False
         cur.execute("INSERT INTO alerts (user_id, target_price, condition) VALUES (%s, %s, %s)", 
                     (user_id, target_price, condition))
         conn.commit()
@@ -169,34 +168,23 @@ def add_alert(user_id, target_price, condition):
         return False
 
 def get_triggered_alerts(current_price):
-    """Busca alertas que se cumplan con el precio actual."""
     if not DATABASE_URL: return []
     triggered = []
     try:
         conn = psycopg2.connect(DATABASE_URL)
         cur = conn.cursor()
-        
-        # Alertas DE SUBIDA (Precio actual >= Objetivo)
         cur.execute("SELECT id, user_id, target_price FROM alerts WHERE condition = 'ABOVE' AND %s >= target_price", (current_price,))
         above = cur.fetchall()
-        
-        # Alertas DE BAJADA (Precio actual <= Objetivo)
         cur.execute("SELECT id, user_id, target_price FROM alerts WHERE condition = 'BELOW' AND %s <= target_price", (current_price,))
         below = cur.fetchall()
-        
         triggered = above + below
-        
-        # Borrar alertas disparadas (One-Shot)
         if triggered:
             ids = tuple([t[0] for t in triggered])
             cur.execute(f"DELETE FROM alerts WHERE id IN {ids}")
             conn.commit()
-            
         cur.close()
         conn.close()
-    except Exception as e:
-        logging.error(f"Error checking alerts: {e}")
-    
+    except Exception as e: logging.error(f"Error checking alerts: {e}")
     return triggered
 
 def get_referral_stats(user_id):
@@ -241,20 +229,32 @@ def get_all_users_ids():
     except Exception: return []
 
 # ==============================================================================
-#  BACKEND PRECIOS
+#  BACKEND PRECIOS (DINÁMICO 20$)
 # ==============================================================================
 def fetch_binance_price():
     url = "https://p2p.binance.com/bapi/c2c/v2/friendly/c2c/adv/search"
-    headers = {"Content-Type": "application/json", "User-Agent": "Mozilla/5.0"}
+    headers = {
+        "Content-Type": "application/json",
+        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
+    }
+    
+    # 🔥 CÁLCULO DINÁMICO (20$) 🔥
+    last_known = MARKET_DATA["price"] if MARKET_DATA["price"] else 600
+    dynamic_amount = int(last_known * FILTER_MIN_USD)
+    
     payload = {
-        "page": 1, "rows": 3, 
+        "page": 1, "rows": 3, # Top 3
         "payTypes": ["PagoMovil", "Banesco", "Mercantil", "Provincial"], 
-        "publisherType": "merchant", "transAmount": "5000", 
+        "publisherType": "merchant", 
+        "transAmount": str(dynamic_amount), 
         "asset": "USDT", "fiat": "VES", "tradeType": "BUY"
     }
+    
     try:
         response = requests.post(url, json=payload, headers=headers, timeout=10)
         data = response.json()
+        
+        # Fallbacks
         if not data.get("data"):
             del payload["publisherType"]
             response = requests.post(url, json=payload, headers=headers, timeout=10)
@@ -263,6 +263,11 @@ def fetch_binance_price():
             payload["payTypes"] = ["PagoMovil"]
             response = requests.post(url, json=payload, headers=headers, timeout=10)
             data = response.json()
+        if not data.get("data"): # Fallback Crítico: Quitar monto
+            del payload["transAmount"]
+            response = requests.post(url, json=payload, headers=headers, timeout=10)
+            data = response.json()
+
         prices = [float(item["adv"]["price"]) for item in data["data"]]
         return sum(prices) / len(prices) if prices else None
     except Exception as e:
@@ -271,10 +276,10 @@ def fetch_binance_price():
 
 def fetch_bcv_price():
     url = "http://www.bcv.org.ve/"
-    headers = {"User-Agent": "Mozilla/5.0"}
+    headers = {"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36"}
     rates = {'usd': None, 'eur': None}
     try:
-        response = requests.get(url, headers=headers, timeout=15, verify=False)
+        response = requests.get(url, headers=headers, timeout=20, verify=False)
         if response.status_code == 200:
             soup = BeautifulSoup(response.content, 'html.parser')
             dolar_div = soup.find('div', id='dolar')
@@ -285,7 +290,6 @@ def fetch_bcv_price():
     except Exception: return None
     return None
 
-# --- TAREA AUTOMÁTICA (CON CHEQUEO DE ALERTAS) ---
 async def update_price_task(context: ContextTypes.DEFAULT_TYPE):
     new_binance = fetch_binance_price()
     new_bcv = fetch_bcv_price()
@@ -295,7 +299,7 @@ async def update_price_task(context: ContextTypes.DEFAULT_TYPE):
         MARKET_DATA["history"].append(new_binance)
         if len(MARKET_DATA["history"]) > 30: MARKET_DATA["history"].pop(0)
         
-        # 🔥 CHEQUEAR ALERTAS 🔥
+        # Alertas
         alerts = get_triggered_alerts(new_binance)
         if alerts:
             for alert in alerts:
@@ -310,9 +314,11 @@ async def update_price_task(context: ContextTypes.DEFAULT_TYPE):
                 except Exception: pass
 
     if new_bcv: MARKET_DATA["bcv"] = new_bcv
+    
     if new_binance or new_bcv:
         now = datetime.now(TIMEZONE)
-        MARKET_DATA["last_updated"] = now.strftime("%d/%m/%Y %I:%M %p")
+        # 🔥 FORMATO CON SEGUNDOS (Anti-Bug) 🔥
+        MARKET_DATA["last_updated"] = now.strftime("%d/%m/%Y %I:%M:%S %p")
         logging.info(f"🔄 Actualizado - Bin: {new_binance}")
 
 async def send_daily_report(context: ContextTypes.DEFAULT_TYPE):
@@ -322,7 +328,8 @@ async def send_daily_report(context: ContextTypes.DEFAULT_TYPE):
     if not bcv: bcv = fetch_bcv_price()
     if not binance: return
 
-    time_str = datetime.now(TIMEZONE).strftime("%d/%m/%Y %I:%M %p")
+    # 🔥 FORMATO CON SEGUNDOS EN REPORTE 🔥
+    time_str = datetime.now(TIMEZONE).strftime("%d/%m/%Y %I:%M:%S %p")
     hour = datetime.now(TIMEZONE).hour
     header = "☀️ <b>¡Buenos días! Así abre el mercado:</b>" if hour < 12 else "🌤 <b>Reporte de la Tarde:</b>"
 
@@ -347,13 +354,16 @@ async def send_daily_report(context: ContextTypes.DEFAULT_TYPE):
     keyboard = [[InlineKeyboardButton("🔄 Ver en tiempo real", callback_data='refresh_price')]]
     
     users = get_all_users_ids()
+    logging.info(f"📢 Iniciando reporte a {len(users)} usuarios...")
+    
     batch_size = 25
     for i in range(0, len(users), batch_size):
         batch = users[i:i + batch_size]
         for user_id in batch:
             try:
                 await context.bot.send_message(chat_id=user_id, text=text, parse_mode=ParseMode.HTML, reply_markup=InlineKeyboardMarkup(keyboard))
-            except Exception: pass
+            except Forbidden: pass 
+            except Exception: pass 
         await asyncio.sleep(1)
 
 # ==============================================================================
@@ -510,7 +520,6 @@ async def global_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
 # --- LÓGICA DE ALERTAS ---
 async def start_alert(update: Update, context: ContextTypes.DEFAULT_TYPE):
     track_user(update.effective_user)
-    # Caso A: Directo "/alerta 600"
     if context.args:
         try:
             target = float(context.args[0].replace(',', '.'))
@@ -518,8 +527,6 @@ async def start_alert(update: Update, context: ContextTypes.DEFAULT_TYPE):
         except ValueError:
             await update.message.reply_text("🔢 Error: Ingresa un número válido.", parse_mode=ParseMode.HTML)
             return ConversationHandler.END
-    
-    # Caso B: Interactivo
     await update.message.reply_text(f"{EMOJI_ALERTA} <b>CONFIGURAR ALERTA</b>\n\n¿A qué precio quieres que te avise?\n\n<i>Escribe el monto abajo (Ej: 600):</i>", parse_mode=ParseMode.HTML)
     return ESPERANDO_PRECIO_ALERTA
 
@@ -536,8 +543,6 @@ async def process_alert_logic(update: Update, target):
     if not current_price:
         await update.message.reply_text("⚠️ Esperando actualización de precios... intenta en 1 minuto.")
         return
-    
-    # Lógica de dirección
     if target > current_price:
         condition = "ABOVE"
         msg = f"📈 <b>ALERTA DE SUBIDA</b>\n\nTe avisaré cuando el dólar <b>SUPERE</b> los {target} Bs."
@@ -547,13 +552,12 @@ async def process_alert_logic(update: Update, target):
     else:
         await update.message.reply_text(f"⚠️ El precio actual ya es {current_price}. Define un valor distinto.")
         return
-
-    # Guardar en DB
     success = add_alert(update.effective_user.id, target, condition)
     if success:
         await update.message.reply_text(f"✅ {msg}", parse_mode=ParseMode.HTML)
     else:
         await update.message.reply_text("⛔ <b>Límite alcanzado</b>\nSolo puedes tener 3 alertas activas al mismo tiempo.", parse_mode=ParseMode.HTML)
+    return ConversationHandler.END
 
 # --- CALCULADORA ---
 async def calculate_conversion(update: Update, text_amount, currency_type):
@@ -614,7 +618,6 @@ if __name__ == "__main__":
         states={ESPERANDO_INPUT_BS: [MessageHandler(filters.TEXT & ~filters.COMMAND, process_bs_input)]},
         fallbacks=[CommandHandler("cancel", cancel)]
     )
-    # Nuevo Handler Alerta Interactivo
     conv_alert = ConversationHandler(
         entry_points=[CommandHandler("alerta", start_alert)],
         states={ESPERANDO_PRECIO_ALERTA: [MessageHandler(filters.TEXT & ~filters.COMMAND, process_alert_input)]},
@@ -637,5 +640,5 @@ if __name__ == "__main__":
         app.job_queue.run_daily(send_daily_report, time=time(hour=9, minute=0, tzinfo=TIMEZONE), days=(0, 1, 2, 3, 4, 5, 6))
         app.job_queue.run_daily(send_daily_report, time=time(hour=13, minute=0, tzinfo=TIMEZONE), days=(0, 1, 2, 3, 4, 5, 6))
     
-    print("Bot ALERTAS V9 iniciando...")
+    print("Bot V10 (Todo Integrado + Segundos) iniciando...")
     app.run_polling()
