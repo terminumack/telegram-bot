@@ -170,7 +170,7 @@ def log_activity(user_id, command):
     except Exception as e: logging.error(f"Error log_activity: {e}")
 
 # ==============================================================================
-#  MOTOR DE ANALÍTICAS
+#  MOTOR DE ANALÍTICAS VISUALES (MODO DARK)
 # ==============================================================================
 def generate_stats_chart():
     if not DATABASE_URL: return None
@@ -178,7 +178,6 @@ def generate_stats_chart():
     try:
         conn = psycopg2.connect(DATABASE_URL)
         cur = conn.cursor()
-        
         cur.execute("""
             SELECT TO_CHAR(joined_at, 'MM-DD'), COUNT(*) 
             FROM users 
@@ -186,21 +185,17 @@ def generate_stats_chart():
             GROUP BY 1 ORDER BY 1
         """)
         growth_data = cur.fetchall()
-        
         cur.execute("""
             SELECT command, COUNT(*) FROM activity_logs 
             GROUP BY command ORDER BY 2 DESC LIMIT 5
         """)
         cmd_data = cur.fetchall()
-        
         plt.style.use('dark_background')
         fig, (ax1, ax2) = plt.subplots(1, 2, figsize=(10, 5))
-        
         bg_color = '#212121'
         fig.patch.set_facecolor(bg_color)
         ax1.set_facecolor(bg_color)
         ax2.set_facecolor(bg_color)
-
         if growth_data:
             dates = [row[0] for row in growth_data]
             counts = [row[1] for row in growth_data]
@@ -211,7 +206,6 @@ def generate_stats_chart():
             ax1.bar_label(bars, color='white')
         else:
             ax1.text(0.5, 0.5, "Sin datos", ha='center', color='gray')
-
         if cmd_data:
             labels = [row[0] for row in cmd_data]
             sizes = [row[1] for row in cmd_data]
@@ -220,7 +214,6 @@ def generate_stats_chart():
             ax2.set_title('Comandos Favoritos', color='white', fontsize=12)
         else:
             ax2.text(0.5, 0.5, "Esperando data", ha='center', color='gray')
-
         plt.tight_layout()
         plt.savefig(buf, format='png', facecolor=bg_color)
         buf.seek(0)
@@ -237,7 +230,6 @@ def get_detailed_report_text():
     try:
         conn = psycopg2.connect(DATABASE_URL)
         cur = conn.cursor()
-        
         cur.execute("SELECT COUNT(*) FROM users")
         total = cur.fetchone()[0]
         cur.execute("SELECT COUNT(*) FROM users WHERE joined_at >= CURRENT_DATE")
@@ -246,7 +238,6 @@ def get_detailed_report_text():
         active_24h = cur.fetchone()[0]
         cur.execute("SELECT COUNT(*) FROM activity_logs WHERE created_at >= CURRENT_DATE")
         requests_today = cur.fetchone()[0]
-
         cur.execute("""
             SELECT TO_CHAR(joined_at, 'MM-DD'), COUNT(*) 
             FROM users 
@@ -254,17 +245,14 @@ def get_detailed_report_text():
             GROUP BY 1 ORDER BY 1
         """)
         growth_data = cur.fetchall()
-        
         cur.execute("""
             SELECT command, COUNT(*) 
             FROM activity_logs 
             GROUP BY command ORDER BY 2 DESC LIMIT 5
         """)
         cmd_data = cur.fetchall()
-        
         cur.close()
         conn.close()
-        
         text = (
             f"📊 <b>REPORTE EJECUTIVO</b>\n\n"
             f"👥 <b>Total Histórico:</b> {total}\n"
@@ -279,7 +267,7 @@ def get_detailed_report_text():
         if cmd_data:
             text += "🤖 <b>Top Comandos:</b>\n"
             for cmd, count in cmd_data: text += f"• {cmd}: <b>{count}</b> usos\n"
-        text += f"\n<i>El sistema opera con normalidad (V15).</i> ✅"
+        text += f"\n<i>El sistema opera con normalidad (V16).</i> ✅"
         return text
     except Exception: return "Error calculando métricas."
 
@@ -441,6 +429,36 @@ async def update_price_task(context: ContextTypes.DEFAULT_TYPE):
         MARKET_DATA["last_updated"] = now.strftime("%d/%m/%Y %I:%M:%S %p")
         logging.info(f"🔄 Actualizado - Bin: {new_binance}")
 
+# --- FUNCIÓN GENERADORA DEL MENSAJE (CON EURO Y BRECHA) ---
+def build_price_message(binance, bcv_data, time_str):
+    paypal = binance * 0.90
+    amazon = binance * 0.75
+    
+    text = f"{EMOJI_STATS} <b>MONITOR DE TASAS</b>\n\n"
+    text += f"{EMOJI_BINANCE} <b>Tasa Binance:</b> {binance:,.2f} Bs\n\n"
+    
+    if bcv_data:
+        if bcv_data.get('usd'):
+            usd_bcv = bcv_data['usd']
+            text += f"🏛️ <b>BCV (Dólar):</b> {usd_bcv:,.2f} Bs\n"
+            brecha = ((binance - usd_bcv) / usd_bcv) * 100
+            if brecha >= 20: emoji_brecha = "🔴"
+            elif brecha >= 10: emoji_brecha = "🟠"
+            else: emoji_brecha = "🟢"
+            text += f"📈 <b>Brecha:</b> {brecha:.2f}% {emoji_brecha}\n"
+            
+        if bcv_data.get('eur'):
+            text += f"🇪🇺 <b>BCV (Euro):</b> {bcv_data['eur']:,.2f} Bs\n"
+        
+        text += "\n"
+    else:
+        text += "🏛️ <b>BCV:</b> <i>No disponible</i>\n\n"
+        
+    text += f"{EMOJI_PAYPAL} <b>Tasa PayPal:</b> {paypal:,.2f} Bs\n"
+    text += f"{EMOJI_AMAZON} <b>Giftcard Amazon:</b> {amazon:,.2f} Bs\n\n"
+    text += f"{EMOJI_STORE} <i>Actualizado: {time_str}</i>"
+    return text
+
 async def send_daily_report(context: ContextTypes.DEFAULT_TYPE):
     binance = MARKET_DATA["price"]
     bcv = MARKET_DATA["bcv"]
@@ -452,23 +470,13 @@ async def send_daily_report(context: ContextTypes.DEFAULT_TYPE):
     hour = datetime.now(TIMEZONE).hour
     header = "☀️ <b>¡Buenos días! Así abre el mercado:</b>" if hour < 12 else "🌤 <b>Reporte de la Tarde:</b>"
 
-    paypal = binance * 0.90
-    amazon = binance * 0.75
-    text = f"{header}\n\n{EMOJI_BINANCE} <b>Tasa Binance:</b> {binance:,.2f} Bs\n\n"
-    if bcv:
-        if bcv.get('usd'):
-            text += f"🏛️ <b>BCV (Dólar):</b> {bcv['usd']:,.2f} Bs\n"
-            brecha = ((binance - bcv['usd']) / bcv['usd']) * 100
-            emoji_brecha = "🔴" if brecha >= 20 else "🟠" if brecha >= 10 else "🟢"
-            text += f"📈 <b>Brecha:</b> {brecha:.2f}% {emoji_brecha}\n"
-        if bcv.get('eur'): text += f"🇪🇺 <b>BCV (Euro):</b> {bcv['eur']:,.2f} Bs\n"
-        text += "\n"
-    else: text += "🏛️ <b>BCV:</b> <i>No disponible</i>\n\n"
-    text += f"{EMOJI_PAYPAL} <b>Tasa PayPal:</b> {paypal:,.2f} Bs\n{EMOJI_AMAZON} <b>Giftcard Amazon:</b> {amazon:,.2f} Bs\n\n{EMOJI_STORE} <i>Actualizado: {time_str}</i>"
+    # Usamos la función constructora para tener el mismo formato
+    body = build_price_message(binance, bcv, time_str)
+    body = body.replace(f"{EMOJI_STATS} <b>MONITOR DE TASAS</b>\n\n", "") # Quitamos título duplicado
+    
+    text = f"{header}\n\n{body}"
 
     keyboard = [[InlineKeyboardButton("🔄 Ver en tiempo real", callback_data='refresh_price')]]
-    
-    # BATCHING OPTIMIZADO
     users = get_all_users_ids()
     batch_size = 25
     for i in range(0, len(users), batch_size):
@@ -537,19 +545,7 @@ async def precio(update: Update, context: ContextTypes.DEFAULT_TYPE):
     time_str = MARKET_DATA["last_updated"]
     
     if binance:
-        paypal = binance * 0.90
-        amazon = binance * 0.75
-        text = f"{EMOJI_STATS} <b>MONITOR DE TASAS</b>\n\n{EMOJI_BINANCE} <b>Tasa Binance:</b> {binance:,.2f} Bs\n\n"
-        if bcv:
-            if bcv.get('usd'):
-                text += f"🏛️ <b>BCV (Dólar):</b> {bcv['usd']:,.2f} Bs\n"
-                brecha = ((binance - bcv['usd']) / bcv['usd']) * 100
-                emoji_brecha = "🔴" if brecha >= 20 else "🟠" if brecha >= 10 else "🟢"
-                text += f"📈 <b>Brecha:</b> {brecha:.2f}% {emoji_brecha}\n"
-            if bcv.get('eur'): text += f"🇪🇺 <b>BCV (Euro):</b> {bcv['eur']:,.2f} Bs\n"
-            text += "\n"
-        else: text += "🏛️ <b>BCV:</b> <i>No disponible</i>\n\n"
-        text += f"{EMOJI_PAYPAL} <b>Tasa PayPal:</b> {paypal:,.2f} Bs\n{EMOJI_AMAZON} <b>Giftcard Amazon:</b> {amazon:,.2f} Bs\n\n{EMOJI_STORE} <i>Actualizado: {time_str}</i>"
+        text = build_price_message(binance, bcv, time_str)
         keyboard = [[InlineKeyboardButton("🔄 Actualizar Precio", callback_data='refresh_price')]]
         await update.message.reply_text(text, parse_mode=ParseMode.HTML, reply_markup=InlineKeyboardMarkup(keyboard))
     else:
@@ -566,19 +562,7 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         bcv = MARKET_DATA["bcv"]
         time_str = MARKET_DATA["last_updated"]
         if binance:
-            paypal = binance * 0.90
-            amazon = binance * 0.75
-            text = f"{EMOJI_STATS} <b>MONITOR DE TASAS</b>\n\n{EMOJI_BINANCE} <b>Tasa Binance:</b> {binance:,.2f} Bs\n\n"
-            if bcv:
-                if bcv.get('usd'):
-                    text += f"🏛️ <b>BCV (Dólar):</b> {bcv['usd']:,.2f} Bs\n"
-                    brecha = ((binance - bcv['usd']) / bcv['usd']) * 100
-                    emoji_brecha = "🔴" if brecha >= 20 else "🟠" if brecha >= 10 else "🟢"
-                    text += f"📈 <b>Brecha:</b> {brecha:.2f}% {emoji_brecha}\n"
-                if bcv.get('eur'): text += f"🇪🇺 <b>BCV (Euro):</b> {bcv['eur']:,.2f} Bs\n"
-                text += "\n"
-            else: text += "🏛️ <b>BCV:</b> <i>No disponible</i>\n\n"
-            text += f"{EMOJI_PAYPAL} <b>Tasa PayPal:</b> {paypal:,.2f} Bs\n{EMOJI_AMAZON} <b>Giftcard Amazon:</b> {amazon:,.2f} Bs\n\n{EMOJI_STORE} <i>Actualizado: {time_str}</i>"
+            text = build_price_message(binance, bcv, time_str)
             try:
                 keyboard = [[InlineKeyboardButton("🔄 Actualizar Precio", callback_data='refresh_price')]]
                 await query.edit_message_text(text=text, parse_mode=ParseMode.HTML, reply_markup=InlineKeyboardMarkup(keyboard))
@@ -759,7 +743,6 @@ if __name__ == "__main__":
     app.add_handler(CallbackQueryHandler(button_handler))
     
     # 🔥 WEBHOOK CONFIGURATION 🔥
-    # Railway inyecta la variable PORT automáticamente.
     WEBHOOK_URL = os.getenv("WEBHOOK_URL")
     PORT = int(os.environ.get("PORT", "8080"))
 
