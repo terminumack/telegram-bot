@@ -3,9 +3,9 @@ import logging
 import requests
 import psycopg2 
 import asyncio
-import io # Para manejar la imagen en memoria
-import matplotlib # Librería de gráficos
-matplotlib.use('Agg') # Modo sin pantalla (crucial para servidores)
+import io 
+import matplotlib
+matplotlib.use('Agg') 
 import matplotlib.pyplot as plt
 from bs4 import BeautifulSoup 
 import urllib3
@@ -69,7 +69,7 @@ MARKET_DATA = {
 }
 
 # ==============================================================================
-#  BASE DE DATOS (ANALYTICS)
+#  BASE DE DATOS
 # ==============================================================================
 def init_db():
     if not DATABASE_URL:
@@ -169,6 +169,107 @@ def log_activity(user_id, command):
         conn.close()
     except Exception as e: logging.error(f"Error log_activity: {e}")
 
+# ==============================================================================
+#  MOTOR DE ANALÍTICAS VISUALES (MODO DARK)
+# ==============================================================================
+def generate_stats_chart():
+    if not DATABASE_URL: return None
+    buf = io.BytesIO()
+    try:
+        conn = psycopg2.connect(DATABASE_URL)
+        cur = conn.cursor()
+        
+        # 1. Crecimiento 7 Días
+        cur.execute("""
+            SELECT TO_CHAR(joined_at, 'MM-DD'), COUNT(*) 
+            FROM users 
+            WHERE joined_at >= NOW() - INTERVAL '7 DAYS'
+            GROUP BY 1 ORDER BY 1
+        """)
+        growth_data = cur.fetchall()
+        
+        # 2. Comandos Favoritos
+        cur.execute("""
+            SELECT command, COUNT(*) FROM activity_logs 
+            GROUP BY command ORDER BY 2 DESC LIMIT 5
+        """)
+        cmd_data = cur.fetchall()
+        
+        # --- ESTILO DARK ---
+        plt.style.use('dark_background')
+        fig, (ax1, ax2) = plt.subplots(1, 2, figsize=(10, 5))
+        
+        # Fondo personalizado (Gris Telegram)
+        bg_color = '#212121'
+        fig.patch.set_facecolor(bg_color)
+        ax1.set_facecolor(bg_color)
+        ax2.set_facecolor(bg_color)
+
+        # Gráfico 1: Barras
+        if growth_data:
+            dates = [row[0] for row in growth_data]
+            counts = [row[1] for row in growth_data]
+            bars = ax1.bar(dates, counts, color='#F3BA2F') # Amarillo Binance
+            ax1.set_title('Nuevos Usuarios (7 Días)', color='white', fontsize=12)
+            ax1.tick_params(axis='x', rotation=45, colors='white')
+            ax1.tick_params(axis='y', colors='white')
+            ax1.bar_label(bars, color='white') # Poner número encima de la barra
+        else:
+            ax1.text(0.5, 0.5, "Sin datos", ha='center', color='gray')
+
+        # Gráfico 2: Torta
+        if cmd_data:
+            labels = [row[0] for row in cmd_data]
+            sizes = [row[1] for row in cmd_data]
+            colors = ['#F3BA2F', '#33b5e5', '#00C851', '#ff4444', '#aa66cc']
+            ax2.pie(sizes, labels=labels, autopct='%1.1f%%', startangle=90, colors=colors, textprops={'color':"white"})
+            ax2.set_title('Comandos Favoritos', color='white', fontsize=12)
+        else:
+            ax2.text(0.5, 0.5, "Esperando data", ha='center', color='gray')
+
+        plt.tight_layout()
+        plt.savefig(buf, format='png', facecolor=bg_color)
+        buf.seek(0)
+        plt.close()
+        cur.close()
+        conn.close()
+        return buf
+    except Exception as e:
+        logging.error(f"Error Chart: {e}")
+        return None
+
+def get_detailed_report_text():
+    if not DATABASE_URL: return "⚠️ Error DB"
+    try:
+        conn = psycopg2.connect(DATABASE_URL)
+        cur = conn.cursor()
+        
+        # Métricas Clave
+        cur.execute("SELECT COUNT(*) FROM users")
+        total = cur.fetchone()[0]
+        
+        cur.execute("SELECT COUNT(*) FROM users WHERE joined_at >= CURRENT_DATE")
+        new_today = cur.fetchone()[0]
+        
+        cur.execute("SELECT COUNT(*) FROM users WHERE last_active >= NOW() - INTERVAL '24 HOURS'")
+        active_24h = cur.fetchone()[0]
+        
+        cur.execute("SELECT COUNT(*) FROM activity_logs WHERE created_at >= CURRENT_DATE")
+        requests_today = cur.fetchone()[0]
+        
+        cur.close()
+        conn.close()
+        
+        return (
+            f"📊 <b>REPORTE EJECUTIVO</b>\n\n"
+            f"👥 <b>Total Histórico:</b> {total}\n"
+            f"📈 <b>Nuevos Hoy:</b> +{new_today}\n"
+            f"🔥 <b>Activos (24h):</b> {active_24h}\n"
+            f"📥 <b>Consultas Hoy:</b> {requests_today}\n\n"
+            f"<i>El sistema opera con normalidad.</i> ✅"
+        )
+    except Exception: return "Error calculando métricas."
+
 def get_referral_stats(user_id):
     if not DATABASE_URL: return (0, 0, [])
     try:
@@ -185,6 +286,18 @@ def get_referral_stats(user_id):
         conn.close()
         return (my_count, my_rank, top_3)
     except Exception: return (0, 0, [])
+
+def get_total_users():
+    if not DATABASE_URL: return 0
+    try:
+        conn = psycopg2.connect(DATABASE_URL)
+        cur = conn.cursor()
+        cur.execute("SELECT COUNT(*) FROM users")
+        count = cur.fetchone()[0]
+        cur.close()
+        conn.close()
+        return count
+    except Exception: return 0
 
 def get_all_users_ids():
     if not DATABASE_URL: return []
@@ -237,87 +350,6 @@ def get_triggered_alerts(current_price):
         conn.close()
     except Exception: pass
     return triggered
-
-# ==============================================================================
-#  MOTOR DE GRÁFICOS (MATPLOTLIB)
-# ==============================================================================
-def generate_stats_chart():
-    if not DATABASE_URL: return None
-    
-    buf = io.BytesIO()
-    
-    try:
-        conn = psycopg2.connect(DATABASE_URL)
-        cur = conn.cursor()
-        
-        # 1. Datos de Crecimiento (Últimos 7 días)
-        cur.execute("""
-            SELECT TO_CHAR(joined_at, 'MM-DD'), COUNT(*) 
-            FROM users 
-            WHERE joined_at >= NOW() - INTERVAL '7 DAYS'
-            GROUP BY 1 
-            ORDER BY 1
-        """)
-        growth_data = cur.fetchall()
-        
-        # 2. Datos de Comandos (Top 5)
-        cur.execute("""
-            SELECT command, COUNT(*) 
-            FROM activity_logs 
-            GROUP BY command 
-            ORDER BY 2 DESC 
-            LIMIT 5
-        """)
-        cmd_data = cur.fetchall()
-        
-        # Crear Gráficos
-        fig, (ax1, ax2) = plt.subplots(1, 2, figsize=(10, 5))
-        
-        # Gráfico 1: Barras Crecimiento
-        if growth_data:
-            dates = [row[0] for row in growth_data]
-            counts = [row[1] for row in growth_data]
-            ax1.bar(dates, counts, color='#F3BA2F') # Color Binance
-            ax1.set_title('Nuevos Usuarios (7 Días)')
-            ax1.tick_params(axis='x', rotation=45)
-        else:
-            ax1.text(0.5, 0.5, "Sin datos suficientes", ha='center')
-
-        # Gráfico 2: Torta Comandos
-        if cmd_data:
-            labels = [row[0] for row in cmd_data]
-            sizes = [row[1] for row in cmd_data]
-            ax2.pie(sizes, labels=labels, autopct='%1.1f%%', startangle=90)
-            ax2.set_title('Comandos Favoritos')
-        else:
-            ax2.text(0.5, 0.5, "Esperando actividad...", ha='center')
-
-        plt.tight_layout()
-        plt.savefig(buf, format='png')
-        buf.seek(0)
-        plt.close()
-        
-        cur.close()
-        conn.close()
-        return buf
-    except Exception as e:
-        logging.error(f"Error Chart: {e}")
-        return None
-
-def get_basic_stats_text():
-    """Texto simple para acompañar la foto."""
-    if not DATABASE_URL: return "Sin DB"
-    try:
-        conn = psycopg2.connect(DATABASE_URL)
-        cur = conn.cursor()
-        cur.execute("SELECT COUNT(*) FROM users")
-        total = cur.fetchone()[0]
-        cur.execute("SELECT COUNT(*) FROM users WHERE last_active >= NOW() - INTERVAL '24 HOURS'")
-        dau = cur.fetchone()[0]
-        cur.close()
-        conn.close()
-        return f"📊 <b>Dashboard Ejecutivo</b>\n👥 Total: {total}\n🔥 Activos 24h: {dau}"
-    except Exception: return "Error DB"
 
 # ==============================================================================
 #  BACKEND PRECIOS
@@ -557,17 +589,17 @@ async def prediccion(update: Update, context: ContextTypes.DEFAULT_TYPE):
             f"💡 <b>Conclusión:</b>\n<i>{msg}</i>\n\n⚠️ <i>No es consejo financiero.</i>")
     await update.message.reply_text(text, parse_mode=ParseMode.HTML)
 
-# --- NUEVO STATS VISUAL ---
+# --- STATS VISUAL ---
 async def stats(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if update.effective_user.id != ADMIN_ID: return
     
-    chart = generate_stats_chart() # Generar foto
-    text_data = get_basic_stats_text() # Datos numéricos
+    chart = generate_stats_chart() 
+    report = get_detailed_report_text()
     
     if chart:
-        await context.bot.send_photo(chat_id=ADMIN_ID, photo=chart, caption=text_data, parse_mode=ParseMode.HTML)
+        await context.bot.send_photo(chat_id=ADMIN_ID, photo=chart, caption=report, parse_mode=ParseMode.HTML)
     else:
-        await update.message.reply_text("❌ Error generando gráfico (faltan datos).")
+        await update.message.reply_text("❌ Error generando gráfico.")
 
 async def global_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if update.effective_user.id != ADMIN_ID: return
@@ -719,5 +751,5 @@ if __name__ == "__main__":
         app.job_queue.run_daily(send_daily_report, time=time(hour=9, minute=0, tzinfo=TIMEZONE), days=(0, 1, 2, 3, 4, 5, 6))
         app.job_queue.run_daily(send_daily_report, time=time(hour=13, minute=0, tzinfo=TIMEZONE), days=(0, 1, 2, 3, 4, 5, 6))
     
-    print("Bot ANALYTICS V12 (Visual + Todo Integrado) iniciando...")
+    print("Bot ANALYTICS V13 (Dark Mode + Detalle) iniciando...")
     app.run_polling()
