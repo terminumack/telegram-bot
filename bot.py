@@ -256,19 +256,58 @@ def get_detailed_report_text():
         
         cur.execute("SELECT COUNT(*) FROM activity_logs WHERE created_at >= CURRENT_DATE")
         requests_today = cur.fetchone()[0]
+
+        # --- NUEVO: DATOS DEL GRÁFICO ESCRITOS ---
+        
+        # 1. Crecimiento 7 Días
+        cur.execute("""
+            SELECT TO_CHAR(joined_at, 'MM-DD'), COUNT(*) 
+            FROM users 
+            WHERE joined_at >= NOW() - INTERVAL '7 DAYS'
+            GROUP BY 1 
+            ORDER BY 1
+        """)
+        growth_data = cur.fetchall()
+        
+        # 2. Top Comandos
+        cur.execute("""
+            SELECT command, COUNT(*) 
+            FROM activity_logs 
+            GROUP BY command 
+            ORDER BY 2 DESC 
+            LIMIT 5
+        """)
+        cmd_data = cur.fetchall()
         
         cur.close()
         conn.close()
         
-        return (
+        # Construir Texto
+        text = (
             f"📊 <b>REPORTE EJECUTIVO</b>\n\n"
             f"👥 <b>Total Histórico:</b> {total}\n"
             f"📈 <b>Nuevos Hoy:</b> +{new_today}\n"
             f"🔥 <b>Activos (24h):</b> {active_24h}\n"
             f"📥 <b>Consultas Hoy:</b> {requests_today}\n\n"
-            f"<i>El sistema opera con normalidad.</i> ✅"
         )
-    except Exception: return "Error calculando métricas."
+        
+        if growth_data:
+            text += "📅 <b>Crecimiento (7 Días):</b>\n"
+            for date, count in growth_data:
+                text += f"• {date}: <b>{count}</b> nuevos\n"
+            text += "\n"
+            
+        if cmd_data:
+            text += "🤖 <b>Top Comandos:</b>\n"
+            for cmd, count in cmd_data:
+                text += f"• {cmd}: <b>{count}</b> usos\n"
+        
+        text += f"\n<i>El sistema opera con normalidad.</i> ✅"
+        
+        return text
+    except Exception as e: 
+        logging.error(f"Error report text: {e}")
+        return "Error calculando métricas."
 
 def get_referral_stats(user_id):
     if not DATABASE_URL: return (0, 0, [])
