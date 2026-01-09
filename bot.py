@@ -3,6 +3,10 @@ import logging
 import requests
 import psycopg2 
 import asyncio
+import io # Para manejar la imagen en memoria
+import matplotlib # Librería de gráficos
+matplotlib.use('Agg') # Modo sin pantalla (crucial para servidores)
+import matplotlib.pyplot as plt
 from bs4 import BeautifulSoup 
 import urllib3
 from datetime import datetime, time, timedelta
@@ -65,7 +69,7 @@ MARKET_DATA = {
 }
 
 # ==============================================================================
-#  BASE DE DATOS (ANALYTICS UPGRADE)
+#  BASE DE DATOS (ANALYTICS)
 # ==============================================================================
 def init_db():
     if not DATABASE_URL:
@@ -74,8 +78,6 @@ def init_db():
     try:
         conn = psycopg2.connect(DATABASE_URL)
         cur = conn.cursor()
-        
-        # Tabla Usuarios (Con last_active)
         cur.execute("""
             CREATE TABLE IF NOT EXISTS users (
                 user_id BIGINT PRIMARY KEY,
@@ -86,8 +88,6 @@ def init_db():
                 last_active TIMESTAMP DEFAULT CURRENT_TIMESTAMP
             )
         """)
-        
-        # Tabla Alertas
         cur.execute("""
             CREATE TABLE IF NOT EXISTS alerts (
                 id SERIAL PRIMARY KEY,
@@ -97,8 +97,6 @@ def init_db():
                 created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
             )
         """)
-        
-        # Tabla Logs de Actividad (NUEVA)
         cur.execute("""
             CREATE TABLE IF NOT EXISTS activity_logs (
                 id SERIAL PRIMARY KEY,
@@ -107,7 +105,6 @@ def init_db():
                 created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
             )
         """)
-        
         conn.commit()
         cur.close()
         conn.close()
@@ -121,11 +118,9 @@ def migrate_db():
         conn = psycopg2.connect(DATABASE_URL)
         cur = conn.cursor()
         try:
-            # Migraciones Viejas
             cur.execute("ALTER TABLE users ADD COLUMN IF NOT EXISTS first_name TEXT;")
             cur.execute("ALTER TABLE users ADD COLUMN IF NOT EXISTS referral_count INTEGER DEFAULT 0;")
             cur.execute("ALTER TABLE users ADD COLUMN IF NOT EXISTS referred_by BIGINT;")
-            # Migración NUEVA (Analytics)
             cur.execute("ALTER TABLE users ADD COLUMN IF NOT EXISTS last_active TIMESTAMP DEFAULT CURRENT_TIMESTAMP;")
             conn.commit()
         except Exception: conn.rollback()
@@ -135,47 +130,35 @@ def migrate_db():
     except Exception: pass
 
 def track_user(user, referrer_id=None):
-    """Registra usuario nuevo o actualiza existente."""
     if not DATABASE_URL: return 
-    
     user_id = user.id
     first_name = user.first_name[:50] if user.first_name else "Usuario"
     now = datetime.now()
-
     try:
         conn = psycopg2.connect(DATABASE_URL)
         cur = conn.cursor()
-        
         cur.execute("SELECT user_id FROM users WHERE user_id = %s", (user_id,))
         exists = cur.fetchone()
-        
         if not exists:
-            # NUEVO USUARIO
             valid_referrer = False
             if referrer_id and referrer_id != user_id:
                 cur.execute("SELECT user_id FROM users WHERE user_id = %s", (referrer_id,))
                 if cur.fetchone(): valid_referrer = True
-            
             final_referrer = referrer_id if valid_referrer else None
-            
             cur.execute("""
                 INSERT INTO users (user_id, first_name, referred_by, last_active) 
                 VALUES (%s, %s, %s, %s)
             """, (user_id, first_name, final_referrer, now))
-            
             if valid_referrer:
                 cur.execute("UPDATE users SET referral_count = referral_count + 1 WHERE user_id = %s", (final_referrer,))
         else:
-            # USUARIO EXISTENTE (Actualizamos last_active)
             cur.execute("UPDATE users SET first_name = %s, last_active = %s WHERE user_id = %s", (first_name, now, user_id))
-            
         conn.commit()
         cur.close()
         conn.close()
     except Exception as e: logging.error(f"Error track_user: {e}")
 
 def log_activity(user_id, command):
-    """Guarda cada interacción para estadísticas detalladas."""
     if not DATABASE_URL: return
     try:
         conn = psycopg2.connect(DATABASE_URL)
@@ -185,49 +168,6 @@ def log_activity(user_id, command):
         cur.close()
         conn.close()
     except Exception as e: logging.error(f"Error log_activity: {e}")
-
-# --- ESTADÍSTICAS AVANZADAS (DASHBOARD) ---
-def get_advanced_stats():
-    if not DATABASE_URL: return None
-    stats = {}
-    try:
-        conn = psycopg2.connect(DATABASE_URL)
-        cur = conn.cursor()
-        
-        # 1. Total Histórico
-        cur.execute("SELECT COUNT(*) FROM users")
-        stats['total_users'] = cur.fetchone()[0]
-        
-        # 2. Activos Hoy (DAU - Últimas 24h)
-        cur.execute("SELECT COUNT(*) FROM users WHERE last_active >= NOW() - INTERVAL '24 HOURS'")
-        stats['dau'] = cur.fetchone()[0]
-        
-        # 3. Activos Mes (MAU - Últimos 30 días)
-        cur.execute("SELECT COUNT(*) FROM users WHERE last_active >= NOW() - INTERVAL '30 DAYS'")
-        stats['mau'] = cur.fetchone()[0]
-        
-        # 4. Total Interacciones Hoy (Volumen de Carga)
-        cur.execute("SELECT COUNT(*) FROM activity_logs WHERE created_at >= NOW() - INTERVAL '24 HOURS'")
-        stats['requests_today'] = cur.fetchone()[0]
-        
-        # 5. Top Comando (El más usado hoy)
-        cur.execute("""
-            SELECT command, COUNT(*) as cnt 
-            FROM activity_logs 
-            WHERE created_at >= NOW() - INTERVAL '24 HOURS' 
-            GROUP BY command 
-            ORDER BY cnt DESC 
-            LIMIT 1
-        """)
-        top = cur.fetchone()
-        stats['top_command'] = f"{top[0]} ({top[1]})" if top else "N/A"
-        
-        cur.close()
-        conn.close()
-        return stats
-    except Exception as e:
-        logging.error(f"Error stats: {e}")
-        return None
 
 def get_referral_stats(user_id):
     if not DATABASE_URL: return (0, 0, [])
@@ -299,6 +239,87 @@ def get_triggered_alerts(current_price):
     return triggered
 
 # ==============================================================================
+#  MOTOR DE GRÁFICOS (MATPLOTLIB)
+# ==============================================================================
+def generate_stats_chart():
+    if not DATABASE_URL: return None
+    
+    buf = io.BytesIO()
+    
+    try:
+        conn = psycopg2.connect(DATABASE_URL)
+        cur = conn.cursor()
+        
+        # 1. Datos de Crecimiento (Últimos 7 días)
+        cur.execute("""
+            SELECT TO_CHAR(joined_at, 'MM-DD'), COUNT(*) 
+            FROM users 
+            WHERE joined_at >= NOW() - INTERVAL '7 DAYS'
+            GROUP BY 1 
+            ORDER BY 1
+        """)
+        growth_data = cur.fetchall()
+        
+        # 2. Datos de Comandos (Top 5)
+        cur.execute("""
+            SELECT command, COUNT(*) 
+            FROM activity_logs 
+            GROUP BY command 
+            ORDER BY 2 DESC 
+            LIMIT 5
+        """)
+        cmd_data = cur.fetchall()
+        
+        # Crear Gráficos
+        fig, (ax1, ax2) = plt.subplots(1, 2, figsize=(10, 5))
+        
+        # Gráfico 1: Barras Crecimiento
+        if growth_data:
+            dates = [row[0] for row in growth_data]
+            counts = [row[1] for row in growth_data]
+            ax1.bar(dates, counts, color='#F3BA2F') # Color Binance
+            ax1.set_title('Nuevos Usuarios (7 Días)')
+            ax1.tick_params(axis='x', rotation=45)
+        else:
+            ax1.text(0.5, 0.5, "Sin datos suficientes", ha='center')
+
+        # Gráfico 2: Torta Comandos
+        if cmd_data:
+            labels = [row[0] for row in cmd_data]
+            sizes = [row[1] for row in cmd_data]
+            ax2.pie(sizes, labels=labels, autopct='%1.1f%%', startangle=90)
+            ax2.set_title('Comandos Favoritos')
+        else:
+            ax2.text(0.5, 0.5, "Esperando actividad...", ha='center')
+
+        plt.tight_layout()
+        plt.savefig(buf, format='png')
+        buf.seek(0)
+        plt.close()
+        
+        cur.close()
+        conn.close()
+        return buf
+    except Exception as e:
+        logging.error(f"Error Chart: {e}")
+        return None
+
+def get_basic_stats_text():
+    """Texto simple para acompañar la foto."""
+    if not DATABASE_URL: return "Sin DB"
+    try:
+        conn = psycopg2.connect(DATABASE_URL)
+        cur = conn.cursor()
+        cur.execute("SELECT COUNT(*) FROM users")
+        total = cur.fetchone()[0]
+        cur.execute("SELECT COUNT(*) FROM users WHERE last_active >= NOW() - INTERVAL '24 HOURS'")
+        dau = cur.fetchone()[0]
+        cur.close()
+        conn.close()
+        return f"📊 <b>Dashboard Ejecutivo</b>\n👥 Total: {total}\n🔥 Activos 24h: {dau}"
+    except Exception: return "Error DB"
+
+# ==============================================================================
 #  BACKEND PRECIOS
 # ==============================================================================
 def fetch_binance_price():
@@ -340,7 +361,7 @@ def fetch_binance_price():
 
 def fetch_bcv_price():
     url = "http://www.bcv.org.ve/"
-    headers = {"User-Agent": "Mozilla/5.0"}
+    headers = {"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36"}
     rates = {'usd': None, 'eur': None}
     try:
         response = requests.get(url, headers=headers, timeout=20, verify=False)
@@ -382,7 +403,7 @@ async def send_daily_report(context: ContextTypes.DEFAULT_TYPE):
     if not bcv: bcv = fetch_bcv_price()
     if not binance: return
 
-    time_str = datetime.now(TIMEZONE).strftime("%d/%m/%Y %I:%M %p")
+    time_str = datetime.now(TIMEZONE).strftime("%d/%m/%Y %I:%M:%S %p")
     hour = datetime.now(TIMEZONE).hour
     header = "☀️ <b>¡Buenos días! Así abre el mercado:</b>" if hour < 12 else "🌤 <b>Reporte de la Tarde:</b>"
 
@@ -420,7 +441,6 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
         try: referrer_id = int(context.args[0])
         except ValueError: referrer_id = None
     
-    # TRACKING + LOG
     track_user(update.effective_user, referrer_id)
     log_activity(update.effective_user.id, "/start")
     
@@ -450,7 +470,6 @@ async def referidos(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id = update.effective_user.id
     track_user(update.effective_user)
     log_activity(user_id, "/referidos")
-    
     count, rank, top_3 = get_referral_stats(user_id)
     ranking_text = ""
     medals = ["🥇", "🥈", "🥉"]
@@ -466,7 +485,6 @@ async def precio(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id = update.effective_user.id
     track_user(update.effective_user)
     log_activity(user_id, "/precio")
-    
     binance = MARKET_DATA["price"]
     bcv = MARKET_DATA["bcv"]
     time_str = MARKET_DATA["last_updated"]
@@ -493,10 +511,7 @@ async def precio(update: Update, context: ContextTypes.DEFAULT_TYPE):
 async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id = update.effective_user.id
     track_user(update.effective_user)
-    # Log solo si es refresh
-    if update.callback_query.data == 'refresh_price':
-        log_activity(user_id, "btn_refresh")
-    
+    if update.callback_query.data == 'refresh_price': log_activity(user_id, "btn_refresh")
     query = update.callback_query
     await query.answer()
     if query.data == 'refresh_price':
@@ -542,24 +557,17 @@ async def prediccion(update: Update, context: ContextTypes.DEFAULT_TYPE):
             f"💡 <b>Conclusión:</b>\n<i>{msg}</i>\n\n⚠️ <i>No es consejo financiero.</i>")
     await update.message.reply_text(text, parse_mode=ParseMode.HTML)
 
-# --- NUEVO STATS (DASHBOARD) ---
+# --- NUEVO STATS VISUAL ---
 async def stats(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if update.effective_user.id != ADMIN_ID: return
     
-    data = get_advanced_stats()
-    if not data:
-        await update.message.reply_text("❌ Error obteniendo estadísticas.")
-        return
-        
-    text = (
-        f"📊 <b>DASHBOARD DEL JEFE</b>\n\n"
-        f"👥 <b>Total Histórico:</b> {data['total_users']}\n"
-        f"🔥 <b>Activos (24h):</b> {data['dau']}\n"
-        f"📅 <b>Activos (30d):</b> {data['mau']}\n\n"
-        f"📥 <b>Consultas Hoy:</b> {data['requests_today']}\n"
-        f"⭐ <b>Favorito:</b> {data['top_command']}"
-    )
-    await update.message.reply_text(text, parse_mode=ParseMode.HTML)
+    chart = generate_stats_chart() # Generar foto
+    text_data = get_basic_stats_text() # Datos numéricos
+    
+    if chart:
+        await context.bot.send_photo(chat_id=ADMIN_ID, photo=chart, caption=text_data, parse_mode=ParseMode.HTML)
+    else:
+        await update.message.reply_text("❌ Error generando gráfico (faltan datos).")
 
 async def global_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if update.effective_user.id != ADMIN_ID: return
@@ -711,5 +719,5 @@ if __name__ == "__main__":
         app.job_queue.run_daily(send_daily_report, time=time(hour=9, minute=0, tzinfo=TIMEZONE), days=(0, 1, 2, 3, 4, 5, 6))
         app.job_queue.run_daily(send_daily_report, time=time(hour=13, minute=0, tzinfo=TIMEZONE), days=(0, 1, 2, 3, 4, 5, 6))
     
-    print("Bot ANALYTICS V11 iniciando...")
+    print("Bot ANALYTICS V12 (Visual + Todo Integrado) iniciando...")
     app.run_polling()
