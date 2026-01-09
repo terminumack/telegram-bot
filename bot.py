@@ -5,7 +5,7 @@ import psycopg2
 import asyncio
 from bs4 import BeautifulSoup 
 import urllib3
-from datetime import datetime, time
+from datetime import datetime, time, timedelta
 import pytz 
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.constants import ParseMode
@@ -36,7 +36,7 @@ ADMIN_ID = 533888411
 # --- CONFIGURACIÓN ---
 UPDATE_INTERVAL = 120 
 TIMEZONE = pytz.timezone('America/Caracas') 
-FILTER_MIN_USD = 20 # Filtro Dinámico (20$)
+FILTER_MIN_USD = 20
 
 # 🔴 TUS ENLACES 🔴
 LINK_CANAL = "https://t.me/tasabinance"
@@ -65,7 +65,7 @@ MARKET_DATA = {
 }
 
 # ==============================================================================
-#  BASE DE DATOS (POSTGRESQL + ALERTAS)
+#  BASE DE DATOS (ANALYTICS UPGRADE)
 # ==============================================================================
 def init_db():
     if not DATABASE_URL:
@@ -74,16 +74,19 @@ def init_db():
     try:
         conn = psycopg2.connect(DATABASE_URL)
         cur = conn.cursor()
-        # Tabla Usuarios
+        
+        # Tabla Usuarios (Con last_active)
         cur.execute("""
             CREATE TABLE IF NOT EXISTS users (
                 user_id BIGINT PRIMARY KEY,
                 joined_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
                 first_name TEXT,
                 referral_count INTEGER DEFAULT 0,
-                referred_by BIGINT
+                referred_by BIGINT,
+                last_active TIMESTAMP DEFAULT CURRENT_TIMESTAMP
             )
         """)
+        
         # Tabla Alertas
         cur.execute("""
             CREATE TABLE IF NOT EXISTS alerts (
@@ -94,6 +97,17 @@ def init_db():
                 created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
             )
         """)
+        
+        # Tabla Logs de Actividad (NUEVA)
+        cur.execute("""
+            CREATE TABLE IF NOT EXISTS activity_logs (
+                id SERIAL PRIMARY KEY,
+                user_id BIGINT,
+                command TEXT,
+                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+            )
+        """)
+        
         conn.commit()
         cur.close()
         conn.close()
@@ -107,9 +121,12 @@ def migrate_db():
         conn = psycopg2.connect(DATABASE_URL)
         cur = conn.cursor()
         try:
+            # Migraciones Viejas
             cur.execute("ALTER TABLE users ADD COLUMN IF NOT EXISTS first_name TEXT;")
             cur.execute("ALTER TABLE users ADD COLUMN IF NOT EXISTS referral_count INTEGER DEFAULT 0;")
             cur.execute("ALTER TABLE users ADD COLUMN IF NOT EXISTS referred_by BIGINT;")
+            # Migración NUEVA (Analytics)
+            cur.execute("ALTER TABLE users ADD COLUMN IF NOT EXISTS last_active TIMESTAMP DEFAULT CURRENT_TIMESTAMP;")
             conn.commit()
         except Exception: conn.rollback()
         finally:
@@ -118,74 +135,99 @@ def migrate_db():
     except Exception: pass
 
 def track_user(user, referrer_id=None):
+    """Registra usuario nuevo o actualiza existente."""
     if not DATABASE_URL: return 
+    
     user_id = user.id
     first_name = user.first_name[:50] if user.first_name else "Usuario"
+    now = datetime.now()
+
     try:
         conn = psycopg2.connect(DATABASE_URL)
         cur = conn.cursor()
+        
         cur.execute("SELECT user_id FROM users WHERE user_id = %s", (user_id,))
         exists = cur.fetchone()
+        
         if not exists:
+            # NUEVO USUARIO
             valid_referrer = False
             if referrer_id and referrer_id != user_id:
                 cur.execute("SELECT user_id FROM users WHERE user_id = %s", (referrer_id,))
                 if cur.fetchone(): valid_referrer = True
+            
             final_referrer = referrer_id if valid_referrer else None
+            
             cur.execute("""
-                INSERT INTO users (user_id, first_name, referred_by) 
-                VALUES (%s, %s, %s)
-            """, (user_id, first_name, final_referrer))
+                INSERT INTO users (user_id, first_name, referred_by, last_active) 
+                VALUES (%s, %s, %s, %s)
+            """, (user_id, first_name, final_referrer, now))
+            
             if valid_referrer:
                 cur.execute("UPDATE users SET referral_count = referral_count + 1 WHERE user_id = %s", (final_referrer,))
         else:
-            cur.execute("UPDATE users SET first_name = %s WHERE user_id = %s", (first_name, user_id))
+            # USUARIO EXISTENTE (Actualizamos last_active)
+            cur.execute("UPDATE users SET first_name = %s, last_active = %s WHERE user_id = %s", (first_name, now, user_id))
+            
         conn.commit()
         cur.close()
         conn.close()
     except Exception as e: logging.error(f"Error track_user: {e}")
 
-# --- GESTIÓN DE ALERTAS ---
-def add_alert(user_id, target_price, condition):
-    if not DATABASE_URL: return False
+def log_activity(user_id, command):
+    """Guarda cada interacción para estadísticas detalladas."""
+    if not DATABASE_URL: return
     try:
         conn = psycopg2.connect(DATABASE_URL)
         cur = conn.cursor()
-        cur.execute("SELECT COUNT(*) FROM alerts WHERE user_id = %s", (user_id,))
-        count = cur.fetchone()[0]
-        if count >= 3:
-            cur.close()
-            conn.close()
-            return False
-        cur.execute("INSERT INTO alerts (user_id, target_price, condition) VALUES (%s, %s, %s)", 
-                    (user_id, target_price, condition))
+        cur.execute("INSERT INTO activity_logs (user_id, command) VALUES (%s, %s)", (user_id, command))
         conn.commit()
         cur.close()
         conn.close()
-        return True
-    except Exception as e:
-        logging.error(f"Error add_alert: {e}")
-        return False
+    except Exception as e: logging.error(f"Error log_activity: {e}")
 
-def get_triggered_alerts(current_price):
-    if not DATABASE_URL: return []
-    triggered = []
+# --- ESTADÍSTICAS AVANZADAS (DASHBOARD) ---
+def get_advanced_stats():
+    if not DATABASE_URL: return None
+    stats = {}
     try:
         conn = psycopg2.connect(DATABASE_URL)
         cur = conn.cursor()
-        cur.execute("SELECT id, user_id, target_price FROM alerts WHERE condition = 'ABOVE' AND %s >= target_price", (current_price,))
-        above = cur.fetchall()
-        cur.execute("SELECT id, user_id, target_price FROM alerts WHERE condition = 'BELOW' AND %s <= target_price", (current_price,))
-        below = cur.fetchall()
-        triggered = above + below
-        if triggered:
-            ids = tuple([t[0] for t in triggered])
-            cur.execute(f"DELETE FROM alerts WHERE id IN {ids}")
-            conn.commit()
+        
+        # 1. Total Histórico
+        cur.execute("SELECT COUNT(*) FROM users")
+        stats['total_users'] = cur.fetchone()[0]
+        
+        # 2. Activos Hoy (DAU - Últimas 24h)
+        cur.execute("SELECT COUNT(*) FROM users WHERE last_active >= NOW() - INTERVAL '24 HOURS'")
+        stats['dau'] = cur.fetchone()[0]
+        
+        # 3. Activos Mes (MAU - Últimos 30 días)
+        cur.execute("SELECT COUNT(*) FROM users WHERE last_active >= NOW() - INTERVAL '30 DAYS'")
+        stats['mau'] = cur.fetchone()[0]
+        
+        # 4. Total Interacciones Hoy (Volumen de Carga)
+        cur.execute("SELECT COUNT(*) FROM activity_logs WHERE created_at >= NOW() - INTERVAL '24 HOURS'")
+        stats['requests_today'] = cur.fetchone()[0]
+        
+        # 5. Top Comando (El más usado hoy)
+        cur.execute("""
+            SELECT command, COUNT(*) as cnt 
+            FROM activity_logs 
+            WHERE created_at >= NOW() - INTERVAL '24 HOURS' 
+            GROUP BY command 
+            ORDER BY cnt DESC 
+            LIMIT 1
+        """)
+        top = cur.fetchone()
+        stats['top_command'] = f"{top[0]} ({top[1]})" if top else "N/A"
+        
         cur.close()
         conn.close()
-    except Exception as e: logging.error(f"Error checking alerts: {e}")
-    return triggered
+        return stats
+    except Exception as e:
+        logging.error(f"Error stats: {e}")
+        return None
 
 def get_referral_stats(user_id):
     if not DATABASE_URL: return (0, 0, [])
@@ -204,18 +246,6 @@ def get_referral_stats(user_id):
         return (my_count, my_rank, top_3)
     except Exception: return (0, 0, [])
 
-def get_total_users():
-    if not DATABASE_URL: return 0
-    try:
-        conn = psycopg2.connect(DATABASE_URL)
-        cur = conn.cursor()
-        cur.execute("SELECT COUNT(*) FROM users")
-        count = cur.fetchone()[0]
-        cur.close()
-        conn.close()
-        return count
-    except Exception: return 0
-
 def get_all_users_ids():
     if not DATABASE_URL: return []
     try:
@@ -228,22 +258,58 @@ def get_all_users_ids():
         return ids
     except Exception: return []
 
+# --- ALERTAS ---
+def add_alert(user_id, target_price, condition):
+    if not DATABASE_URL: return False
+    try:
+        conn = psycopg2.connect(DATABASE_URL)
+        cur = conn.cursor()
+        cur.execute("SELECT COUNT(*) FROM alerts WHERE user_id = %s", (user_id,))
+        count = cur.fetchone()[0]
+        if count >= 3:
+            cur.close()
+            conn.close()
+            return False
+        cur.execute("INSERT INTO alerts (user_id, target_price, condition) VALUES (%s, %s, %s)", 
+                    (user_id, target_price, condition))
+        conn.commit()
+        cur.close()
+        conn.close()
+        return True
+    except Exception: return False
+
+def get_triggered_alerts(current_price):
+    if not DATABASE_URL: return []
+    triggered = []
+    try:
+        conn = psycopg2.connect(DATABASE_URL)
+        cur = conn.cursor()
+        cur.execute("SELECT id, user_id, target_price FROM alerts WHERE condition = 'ABOVE' AND %s >= target_price", (current_price,))
+        above = cur.fetchall()
+        cur.execute("SELECT id, user_id, target_price FROM alerts WHERE condition = 'BELOW' AND %s <= target_price", (current_price,))
+        below = cur.fetchall()
+        triggered = above + below
+        if triggered:
+            ids = tuple([t[0] for t in triggered])
+            cur.execute(f"DELETE FROM alerts WHERE id IN {ids}")
+            conn.commit()
+        cur.close()
+        conn.close()
+    except Exception: pass
+    return triggered
+
 # ==============================================================================
-#  BACKEND PRECIOS (DINÁMICO 20$)
+#  BACKEND PRECIOS
 # ==============================================================================
 def fetch_binance_price():
     url = "https://p2p.binance.com/bapi/c2c/v2/friendly/c2c/adv/search"
-    headers = {
-        "Content-Type": "application/json",
-        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
-    }
+    headers = {"Content-Type": "application/json", "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"}
     
-    # 🔥 CÁLCULO DINÁMICO (20$) 🔥
     last_known = MARKET_DATA["price"] if MARKET_DATA["price"] else 600
     dynamic_amount = int(last_known * FILTER_MIN_USD)
     
     payload = {
-        "page": 1, "rows": 3, # Top 3
+        "page": 1, "rows": 3, 
         "payTypes": ["PagoMovil", "Banesco", "Mercantil", "Provincial"], 
         "publisherType": "merchant", 
         "transAmount": str(dynamic_amount), 
@@ -253,8 +319,6 @@ def fetch_binance_price():
     try:
         response = requests.post(url, json=payload, headers=headers, timeout=10)
         data = response.json()
-        
-        # Fallbacks
         if not data.get("data"):
             del payload["publisherType"]
             response = requests.post(url, json=payload, headers=headers, timeout=10)
@@ -263,7 +327,7 @@ def fetch_binance_price():
             payload["payTypes"] = ["PagoMovil"]
             response = requests.post(url, json=payload, headers=headers, timeout=10)
             data = response.json()
-        if not data.get("data"): # Fallback Crítico: Quitar monto
+        if not data.get("data"):
             del payload["transAmount"]
             response = requests.post(url, json=payload, headers=headers, timeout=10)
             data = response.json()
@@ -276,7 +340,7 @@ def fetch_binance_price():
 
 def fetch_bcv_price():
     url = "http://www.bcv.org.ve/"
-    headers = {"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36"}
+    headers = {"User-Agent": "Mozilla/5.0"}
     rates = {'usd': None, 'eur': None}
     try:
         response = requests.get(url, headers=headers, timeout=20, verify=False)
@@ -298,26 +362,16 @@ async def update_price_task(context: ContextTypes.DEFAULT_TYPE):
         MARKET_DATA["price"] = new_binance
         MARKET_DATA["history"].append(new_binance)
         if len(MARKET_DATA["history"]) > 30: MARKET_DATA["history"].pop(0)
-        
-        # Alertas
         alerts = get_triggered_alerts(new_binance)
         if alerts:
             for alert in alerts:
-                user_id = alert[1]
-                target = alert[2]
                 try:
-                    await context.bot.send_message(
-                        chat_id=user_id,
-                        text=f"{EMOJI_ALERTA} <b>¡ALERTA DE PRECIO!</b>\n\nEl dólar ha tocado tu objetivo de <b>{target:,.2f} Bs</b>.\n\n{EMOJI_BINANCE} <b>Precio Actual:</b> {new_binance:,.2f} Bs",
-                        parse_mode=ParseMode.HTML
-                    )
+                    await context.bot.send_message(chat_id=alert[1], text=f"{EMOJI_ALERTA} <b>¡ALERTA!</b>\nDólar en meta: <b>{alert[2]:,.2f} Bs</b>\nActual: {new_binance:,.2f} Bs", parse_mode=ParseMode.HTML)
                 except Exception: pass
 
     if new_bcv: MARKET_DATA["bcv"] = new_bcv
-    
     if new_binance or new_bcv:
         now = datetime.now(TIMEZONE)
-        # 🔥 FORMATO CON SEGUNDOS (Anti-Bug) 🔥
         MARKET_DATA["last_updated"] = now.strftime("%d/%m/%Y %I:%M:%S %p")
         logging.info(f"🔄 Actualizado - Bin: {new_binance}")
 
@@ -328,14 +382,12 @@ async def send_daily_report(context: ContextTypes.DEFAULT_TYPE):
     if not bcv: bcv = fetch_bcv_price()
     if not binance: return
 
-    # 🔥 FORMATO CON SEGUNDOS EN REPORTE 🔥
-    time_str = datetime.now(TIMEZONE).strftime("%d/%m/%Y %I:%M:%S %p")
+    time_str = datetime.now(TIMEZONE).strftime("%d/%m/%Y %I:%M %p")
     hour = datetime.now(TIMEZONE).hour
     header = "☀️ <b>¡Buenos días! Así abre el mercado:</b>" if hour < 12 else "🌤 <b>Reporte de la Tarde:</b>"
 
     paypal = binance * 0.90
     amazon = binance * 0.75
-    
     text = f"{header}\n\n{EMOJI_BINANCE} <b>Tasa Binance:</b> {binance:,.2f} Bs\n\n"
     if bcv:
         if bcv.get('usd'):
@@ -346,24 +398,16 @@ async def send_daily_report(context: ContextTypes.DEFAULT_TYPE):
         if bcv.get('eur'): text += f"🇪🇺 <b>BCV (Euro):</b> {bcv['eur']:,.2f} Bs\n"
         text += "\n"
     else: text += "🏛️ <b>BCV:</b> <i>No disponible</i>\n\n"
-        
-    text += f"{EMOJI_PAYPAL} <b>Tasa PayPal:</b> {paypal:,.2f} Bs\n"
-    text += f"{EMOJI_AMAZON} <b>Giftcard Amazon:</b> {amazon:,.2f} Bs\n\n"
-    text += f"{EMOJI_STORE} <i>Actualizado: {time_str}</i>"
+    text += f"{EMOJI_PAYPAL} <b>Tasa PayPal:</b> {paypal:,.2f} Bs\n{EMOJI_AMAZON} <b>Giftcard Amazon:</b> {amazon:,.2f} Bs\n\n{EMOJI_STORE} <i>Actualizado: {time_str}</i>"
 
     keyboard = [[InlineKeyboardButton("🔄 Ver en tiempo real", callback_data='refresh_price')]]
-    
     users = get_all_users_ids()
-    logging.info(f"📢 Iniciando reporte a {len(users)} usuarios...")
-    
     batch_size = 25
     for i in range(0, len(users), batch_size):
         batch = users[i:i + batch_size]
         for user_id in batch:
-            try:
-                await context.bot.send_message(chat_id=user_id, text=text, parse_mode=ParseMode.HTML, reply_markup=InlineKeyboardMarkup(keyboard))
-            except Forbidden: pass 
-            except Exception: pass 
+            try: await context.bot.send_message(chat_id=user_id, text=text, parse_mode=ParseMode.HTML, reply_markup=InlineKeyboardMarkup(keyboard))
+            except Exception: pass
         await asyncio.sleep(1)
 
 # ==============================================================================
@@ -375,8 +419,10 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if context.args:
         try: referrer_id = int(context.args[0])
         except ValueError: referrer_id = None
-            
+    
+    # TRACKING + LOG
     track_user(update.effective_user, referrer_id)
+    log_activity(update.effective_user.id, "/start")
     
     mensaje = (
         f"👋 <b>¡Bienvenido al Monitor P2P Inteligente!</b>\n\n"
@@ -403,6 +449,8 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
 async def referidos(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id = update.effective_user.id
     track_user(update.effective_user)
+    log_activity(user_id, "/referidos")
+    
     count, rank, top_3 = get_referral_stats(user_id)
     ranking_text = ""
     medals = ["🥇", "🥈", "🥉"]
@@ -415,7 +463,10 @@ async def referidos(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text(text, parse_mode=ParseMode.HTML, disable_web_page_preview=True)
 
 async def precio(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    user_id = update.effective_user.id
     track_user(update.effective_user)
+    log_activity(user_id, "/precio")
+    
     binance = MARKET_DATA["price"]
     bcv = MARKET_DATA["bcv"]
     time_str = MARKET_DATA["last_updated"]
@@ -440,7 +491,12 @@ async def precio(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await update.message.reply_text("🔄 Iniciando sistema... intenta en unos segundos.")
 
 async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    user_id = update.effective_user.id
     track_user(update.effective_user)
+    # Log solo si es refresh
+    if update.callback_query.data == 'refresh_price':
+        log_activity(user_id, "btn_refresh")
+    
     query = update.callback_query
     await query.answer()
     if query.data == 'refresh_price':
@@ -469,6 +525,7 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 async def prediccion(update: Update, context: ContextTypes.DEFAULT_TYPE):
     track_user(update.effective_user)
+    log_activity(update.effective_user.id, "/ia")
     history = MARKET_DATA["history"]
     if len(history) < 5:
         await update.message.reply_text("🧠 <b>Calibrando IA...</b>\nRecopilando datos.", parse_mode=ParseMode.HTML)
@@ -485,10 +542,24 @@ async def prediccion(update: Update, context: ContextTypes.DEFAULT_TYPE):
             f"💡 <b>Conclusión:</b>\n<i>{msg}</i>\n\n⚠️ <i>No es consejo financiero.</i>")
     await update.message.reply_text(text, parse_mode=ParseMode.HTML)
 
+# --- NUEVO STATS (DASHBOARD) ---
 async def stats(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    if update.effective_user.id == ADMIN_ID:
-        count = get_total_users()
-        await update.message.reply_text(f"{EMOJI_STATS} <b>ESTADÍSTICAS (DB)</b>\n👥 Usuarios: {count}", parse_mode=ParseMode.HTML)
+    if update.effective_user.id != ADMIN_ID: return
+    
+    data = get_advanced_stats()
+    if not data:
+        await update.message.reply_text("❌ Error obteniendo estadísticas.")
+        return
+        
+    text = (
+        f"📊 <b>DASHBOARD DEL JEFE</b>\n\n"
+        f"👥 <b>Total Histórico:</b> {data['total_users']}\n"
+        f"🔥 <b>Activos (24h):</b> {data['dau']}\n"
+        f"📅 <b>Activos (30d):</b> {data['mau']}\n\n"
+        f"📥 <b>Consultas Hoy:</b> {data['requests_today']}\n"
+        f"⭐ <b>Favorito:</b> {data['top_command']}"
+    )
+    await update.message.reply_text(text, parse_mode=ParseMode.HTML)
 
 async def global_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if update.effective_user.id != ADMIN_ID: return
@@ -517,9 +588,9 @@ async def global_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await asyncio.sleep(1)
     await update.message.reply_text(f"✅ <b>Difusión Completada</b>\n\n📨 Enviados: {enviados}\n❌ Fallidos: {fallidos}", parse_mode=ParseMode.HTML)
 
-# --- LÓGICA DE ALERTAS ---
 async def start_alert(update: Update, context: ContextTypes.DEFAULT_TYPE):
     track_user(update.effective_user)
+    log_activity(update.effective_user.id, "/alerta")
     if context.args:
         try:
             target = float(context.args[0].replace(',', '.'))
@@ -559,7 +630,6 @@ async def process_alert_logic(update: Update, target):
         await update.message.reply_text("⛔ <b>Límite alcanzado</b>\nSolo puedes tener 3 alertas activas al mismo tiempo.", parse_mode=ParseMode.HTML)
     return ConversationHandler.END
 
-# --- CALCULADORA ---
 async def calculate_conversion(update: Update, text_amount, currency_type):
     rate = MARKET_DATA["price"]
     if not rate:
@@ -580,12 +650,14 @@ async def calculate_conversion(update: Update, text_amount, currency_type):
 
 async def start_usdt_calc(update: Update, context: ContextTypes.DEFAULT_TYPE):
     track_user(update.effective_user)
+    log_activity(update.effective_user.id, "/calc")
     if context.args: return await calculate_conversion(update, context.args[0], "USDT")
     await update.message.reply_text("🇺🇸 <b>Calculadora USDT:</b>\n\n¿Cuántos Dólares?\n<i>Escribe el número:</i>", parse_mode=ParseMode.HTML)
     return ESPERANDO_INPUT_USDT
 
 async def start_bs_calc(update: Update, context: ContextTypes.DEFAULT_TYPE):
     track_user(update.effective_user)
+    log_activity(update.effective_user.id, "/calc")
     if context.args: return await calculate_conversion(update, context.args[0], "BS")
     await update.message.reply_text("🇻🇪 <b>Calculadora Bolívares:</b>\n\n¿Cuántos Bs?\n<i>Escribe el número:</i>", parse_mode=ParseMode.HTML)
     return ESPERANDO_INPUT_BS
@@ -607,7 +679,6 @@ if __name__ == "__main__":
     if not TOKEN: exit(1)
     app = ApplicationBuilder().token(TOKEN).build()
     
-    # Manejadores de Conversación
     conv_usdt = ConversationHandler(
         entry_points=[CommandHandler("usdt", start_usdt_calc)],
         states={ESPERANDO_INPUT_USDT: [MessageHandler(filters.TEXT & ~filters.COMMAND, process_usdt_input)]},
@@ -640,5 +711,5 @@ if __name__ == "__main__":
         app.job_queue.run_daily(send_daily_report, time=time(hour=9, minute=0, tzinfo=TIMEZONE), days=(0, 1, 2, 3, 4, 5, 6))
         app.job_queue.run_daily(send_daily_report, time=time(hour=13, minute=0, tzinfo=TIMEZONE), days=(0, 1, 2, 3, 4, 5, 6))
     
-    print("Bot V10 (Todo Integrado + Segundos) iniciando...")
+    print("Bot ANALYTICS V11 iniciando...")
     app.run_polling()
