@@ -70,7 +70,7 @@ MARKET_DATA = {
 GRAPH_CACHE = {"date": None, "photo_id": None}
 
 # ==============================================================================
-#  BASE DE DATOS (FUNCIONES SÍNCRONAS - SE LLAMARÁN CON TO_THREAD)
+#  BASE DE DATOS
 # ==============================================================================
 def init_db():
     if not DATABASE_URL:
@@ -116,6 +116,8 @@ def init_db():
                 bcv_price FLOAT DEFAULT 0
             )
         """)
+        
+        # Nuevas Tablas Data Mining
         cur.execute("""
             CREATE TABLE IF NOT EXISTS price_ticks (
                 id SERIAL PRIMARY KEY,
@@ -161,7 +163,6 @@ def migrate_db():
     except Exception: pass
 
 def track_user(user, referrer_id=None):
-    """Guarda usuario (Bloqueante - Ejecutar en hilo)."""
     if not DATABASE_URL: return 
     user_id = user.id
     first_name = user.first_name[:50] if user.first_name else "Usuario"
@@ -213,7 +214,7 @@ def log_calc(user_id, amount, currency, result):
     except Exception as e: logging.error(f"Error log_calc: {e}")
 
 # ==============================================================================
-#  ANALÍTICAS & GRÁFICOS (PESADOS - SE EJECUTAN EN HILOS)
+#  ANALÍTICAS VISUALES (ADMIN)
 # ==============================================================================
 def generate_stats_chart():
     if not DATABASE_URL: return None
@@ -260,45 +261,64 @@ def generate_stats_chart():
         return buf
     except Exception: return None
 
+# ==============================================================================
+#  GRÁFICO PÚBLICO (BINANCE + BCV)
+# ==============================================================================
 def generate_public_price_chart():
     if not DATABASE_URL: return None
     buf = io.BytesIO()
+    
     try:
         conn = psycopg2.connect(DATABASE_URL)
         cur = conn.cursor()
         cur.execute("""
             SELECT date, (price_sum / NULLIF(count, 0)) as avg_binance, bcv_price 
-            FROM daily_stats ORDER BY date DESC LIMIT 7
+            FROM daily_stats 
+            ORDER BY date DESC LIMIT 7
         """)
         data = cur.fetchall()
+        
         today_date = datetime.now(TIMEZONE).date()
         current_binance = MARKET_DATA["price"]
         current_bcv = MARKET_DATA["bcv"]["usd"] if MARKET_DATA["bcv"] else 0
+        
         has_today = any(d[0] == today_date for d in data)
-        if not has_today and current_binance: data.insert(0, (today_date, current_binance, current_bcv))
+        if not has_today and current_binance:
+             data.insert(0, (today_date, current_binance, current_bcv))
+             
         data.sort(key=lambda x: x[0]) 
+        
         dates = [d[0].strftime('%d/%m') for d in data]
         prices_bin = [d[1] for d in data]
-        prices_bcv = [d[2] if d[2] > 0 else None for d in data] 
+        prices_bcv = [d[2] if d[2] > 0 else None for d in data]
+        
         if not prices_bin: return None
+
         plt.style.use('dark_background')
         fig, ax = plt.subplots(figsize=(8, 5))
         bg_color = '#1e1e1e'
         fig.patch.set_facecolor(bg_color)
         ax.set_facecolor(bg_color)
+        
         ax.plot(dates, prices_bin, color='#F3BA2F', marker='o', linewidth=3, markersize=8, label="Binance")
         ax.plot(dates, prices_bcv, color='#2979FF', marker='s', linewidth=2, markersize=6, linestyle='--', label="BCV")
+        
         ax.set_title('Tendencia Semanal (Binance vs BCV)', color='white', fontsize=14, fontweight='bold', pad=20)
         ax.grid(color='#333333', linestyle='--', linewidth=0.5)
         ax.legend(loc="upper left") 
+        
         for i, price in enumerate(prices_bin):
-            ax.annotate(f"{price:.2f}", (dates[i], prices[i]), textcoords="offset points", xytext=(0,10), ha='center', color='white', fontsize=9)
+            ax.annotate(f"{price:.2f}", (dates[i], prices[i]), 
+                        textcoords="offset points", xytext=(0,10), ha='center', color='white', fontsize=9)
+
         fig.text(0.5, 0.5, 'Telegram: @tasabinance_bot', fontsize=20, color='white', ha='center', va='center', alpha=0.1, rotation=30)
         fig.text(0.95, 0.05, '@tasabinance_bot', fontsize=10, color='gray', ha='right', va='bottom', alpha=0.5)
+
         plt.tight_layout()
         plt.savefig(buf, format='png', facecolor=bg_color)
         buf.seek(0)
         plt.close()
+        
         cur.close()
         conn.close()
         return buf
@@ -321,7 +341,14 @@ def get_detailed_report_text():
         requests_today = cur.fetchone()[0]
         cur.close()
         conn.close()
-        return (f"📊 <b>REPORTE EJECUTIVO</b>\n\n👥 <b>Total Histórico:</b> {total}\n📈 <b>Nuevos Hoy:</b> +{new_today}\n🔥 <b>Activos (24h):</b> {active_24h}\n📥 <b>Consultas Hoy:</b> {requests_today}\n\n<i>Sistema Operativo V24 (Async Turbo).</i> ✅")
+        return (
+            f"📊 <b>REPORTE EJECUTIVO</b>\n\n"
+            f"👥 <b>Total Histórico:</b> {total}\n"
+            f"📈 <b>Nuevos Hoy:</b> +{new_today}\n"
+            f"🔥 <b>Activos (24h):</b> {active_24h}\n"
+            f"📥 <b>Consultas Hoy:</b> {requests_today}\n\n"
+            f"<i>Sistema Operativo V24 (Fix).</i> ✅"
+        )
     except Exception: return "Error."
 
 def get_referral_stats(user_id):
@@ -365,7 +392,7 @@ def get_all_users_ids():
         return ids
     except Exception: return []
 
-# --- ALERTAS (DB) ---
+# --- ALERTAS ---
 def add_alert(user_id, target_price, condition):
     if not DATABASE_URL: return False
     try:
@@ -377,7 +404,8 @@ def add_alert(user_id, target_price, condition):
             cur.close()
             conn.close()
             return False
-        cur.execute("INSERT INTO alerts (user_id, target_price, condition) VALUES (%s, %s, %s)", (user_id, target_price, condition))
+        cur.execute("INSERT INTO alerts (user_id, target_price, condition) VALUES (%s, %s, %s)", 
+                    (user_id, target_price, condition))
         conn.commit()
         cur.close()
         conn.close()
@@ -404,41 +432,24 @@ def get_triggered_alerts(current_price):
     except Exception: pass
     return triggered
 
-def save_mining_data(binance, bcv_val):
-    """Guarda datos diarios y ticks en la BD (Bloqueante)"""
-    if not DATABASE_URL: return
-    try:
-        today = datetime.now(TIMEZONE).date()
-        conn = psycopg2.connect(DATABASE_URL)
-        cur = conn.cursor()
-        # 1. Diario (Promedio + BCV)
-        cur.execute("""
-            INSERT INTO daily_stats (date, price_sum, count, bcv_price) 
-            VALUES (%s, %s, 1, %s)
-            ON CONFLICT (date) DO UPDATE SET 
-                price_sum = daily_stats.price_sum + %s,
-                count = daily_stats.count + 1,
-                bcv_price = GREATEST(daily_stats.bcv_price, %s)
-        """, (today, binance, bcv_val, binance, bcv_val))
-        # 2. Ticks
-        cur.execute("INSERT INTO price_ticks (price_binance, price_bcv) VALUES (%s, %s)", (binance, bcv_val))
-        conn.commit()
-        cur.close()
-        conn.close()
-    except Exception as e: logging.error(f"Error mining: {e}")
-
 # ==============================================================================
 #  BACKEND PRECIOS
 # ==============================================================================
 def fetch_binance_price():
     url = "https://p2p.binance.com/bapi/c2c/v2/friendly/c2c/adv/search"
-    headers = {"Content-Type": "application/json", "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36"}
+    headers = {"Content-Type": "application/json", "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"}
+    
     last_known = MARKET_DATA["price"] if MARKET_DATA["price"] else 600
     dynamic_amount = int(last_known * FILTER_MIN_USD)
+    
     payload = {
-        "page": 1, "rows": 3, "payTypes": ["PagoMovil", "Banesco", "Mercantil", "Provincial"], 
-        "publisherType": "merchant", "transAmount": str(dynamic_amount), "asset": "USDT", "fiat": "VES", "tradeType": "BUY"
+        "page": 1, "rows": 3, 
+        "payTypes": ["PagoMovil", "Banesco", "Mercantil", "Provincial"], 
+        "publisherType": "merchant", 
+        "transAmount": str(dynamic_amount), 
+        "asset": "USDT", "fiat": "VES", "tradeType": "BUY"
     }
+    
     try:
         response = requests.post(url, json=payload, headers=headers, timeout=10)
         data = response.json()
@@ -454,13 +465,16 @@ def fetch_binance_price():
             del payload["transAmount"]
             response = requests.post(url, json=payload, headers=headers, timeout=10)
             data = response.json()
+
         prices = [float(item["adv"]["price"]) for item in data["data"]]
         return sum(prices) / len(prices) if prices else None
-    except Exception: return None
+    except Exception as e:
+        logging.error(f"Error Binance: {e}")
+        return None
 
 def fetch_bcv_price():
     url = "http://www.bcv.org.ve/"
-    headers = {"User-Agent": "Mozilla/5.0"}
+    headers = {"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36"}
     rates = {'usd': None, 'eur': None}
     try:
         response = requests.get(url, headers=headers, timeout=20, verify=False)
@@ -474,28 +488,41 @@ def fetch_bcv_price():
     except Exception: return None
     return None
 
-# --- TAREA ASÍNCRONA (AWAIT TO_THREAD) ---
 async def update_price_task(context: ContextTypes.DEFAULT_TYPE):
-    # 🔥 SOLUCIÓN 1: Ejecutar requests y DB en hilos separados 🔥
-    new_binance = await asyncio.to_thread(fetch_binance_price)
-    new_bcv = await asyncio.to_thread(fetch_bcv_price)
+    new_binance = fetch_binance_price()
+    new_bcv = fetch_bcv_price()
     
     if new_binance:
         MARKET_DATA["price"] = new_binance
         MARKET_DATA["history"].append(new_binance)
         if len(MARKET_DATA["history"]) > 30: MARKET_DATA["history"].pop(0)
-        
-        # Chequeo alertas en hilo
-        alerts = await asyncio.to_thread(get_triggered_alerts, new_binance)
+        alerts = get_triggered_alerts(new_binance)
         if alerts:
             for alert in alerts:
                 try:
                     await context.bot.send_message(chat_id=alert[1], text=f"{EMOJI_ALERTA} <b>¡ALERTA!</b>\nDólar en meta: <b>{alert[2]:,.2f} Bs</b>\nActual: {new_binance:,.2f} Bs", parse_mode=ParseMode.HTML)
                 except Exception: pass
         
-        # Guardado de data mining en hilo
-        bcv_val = new_bcv['usd'] if (new_bcv and new_bcv.get('usd')) else 0
-        await asyncio.to_thread(save_mining_data, new_binance, bcv_val)
+        # --- DATA MINING ---
+        if DATABASE_URL:
+            try:
+                today = datetime.now(TIMEZONE).date()
+                bcv_val = new_bcv['usd'] if (new_bcv and new_bcv.get('usd')) else 0
+                conn = psycopg2.connect(DATABASE_URL)
+                cur = conn.cursor()
+                cur.execute("""
+                    INSERT INTO daily_stats (date, price_sum, count, bcv_price) 
+                    VALUES (%s, %s, 1, %s)
+                    ON CONFLICT (date) DO UPDATE SET 
+                        price_sum = daily_stats.price_sum + %s,
+                        count = daily_stats.count + 1,
+                        bcv_price = GREATEST(daily_stats.bcv_price, %s)
+                """, (today, new_binance, bcv_val, new_binance, bcv_val))
+                cur.execute("INSERT INTO price_ticks (price_binance, price_bcv) VALUES (%s, %s)", (new_binance, bcv_val))
+                conn.commit()
+                cur.close()
+                conn.close()
+            except Exception as e: logging.error(f"Error data mining: {e}")
 
     if new_bcv: MARKET_DATA["bcv"] = new_bcv
     if new_binance or new_bcv:
@@ -503,7 +530,7 @@ async def update_price_task(context: ContextTypes.DEFAULT_TYPE):
         MARKET_DATA["last_updated"] = now.strftime("%d/%m/%Y %I:%M:%S %p")
         logging.info(f"🔄 Actualizado - Bin: {new_binance}")
 
-# --- HELPERS MENSAJE ---
+# --- HELPER MENSAJE ---
 def build_price_message(binance, bcv_data, time_str):
     paypal = binance * 0.90
     amazon = binance * 0.75
@@ -525,11 +552,10 @@ def build_price_message(binance, bcv_data, time_str):
     return text
 
 async def send_daily_report(context: ContextTypes.DEFAULT_TYPE):
-    # Ejecutar fetch en hilo
     binance = MARKET_DATA["price"]
     bcv = MARKET_DATA["bcv"]
-    if not binance: binance = await asyncio.to_thread(fetch_binance_price)
-    if not bcv: bcv = await asyncio.to_thread(fetch_bcv_price)
+    if not binance: binance = fetch_binance_price()
+    if not bcv: bcv = fetch_bcv_price()
     if not binance: return
 
     time_str = datetime.now(TIMEZONE).strftime("%d/%m/%Y %I:%M:%S %p")
@@ -538,12 +564,11 @@ async def send_daily_report(context: ContextTypes.DEFAULT_TYPE):
 
     body = build_price_message(binance, bcv, time_str)
     body = body.replace(f"{EMOJI_STATS} <b>MONITOR DE TASAS</b>\n\n", "")
+    
     text = f"{header}\n\n{body}"
 
     keyboard = [[InlineKeyboardButton("🔄 Ver en tiempo real", callback_data='refresh_price')]]
-    
-    # Obtener usuarios en hilo
-    users = await asyncio.to_thread(get_all_users_ids)
+    users = get_all_users_ids()
     batch_size = 25
     for i in range(0, len(users), batch_size):
         batch = users[i:i + batch_size]
@@ -553,7 +578,7 @@ async def send_daily_report(context: ContextTypes.DEFAULT_TYPE):
         await asyncio.sleep(1)
 
 # ==============================================================================
-#  COMANDOS (AHORA ASÍNCRONOS)
+#  COMANDOS
 # ==============================================================================
 
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -561,11 +586,8 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if context.args:
         try: referrer_id = int(context.args[0])
         except ValueError: referrer_id = None
-    
-    # Ejecutar DB en hilo para no bloquear
-    await asyncio.to_thread(track_user, update.effective_user, referrer_id)
-    await asyncio.to_thread(log_activity, update.effective_user.id, "/start")
-    
+    track_user(update.effective_user, referrer_id)
+    log_activity(update.effective_user.id, "/start")
     mensaje = (
         f"👋 <b>¡Bienvenido al Monitor P2P Inteligente!</b>\n\n"
         f"Soy tu asistente financiero conectado a {EMOJI_BINANCE} <b>Binance P2P</b> y al <b>BCV</b>.\n\n"
@@ -591,8 +613,8 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 async def grafico(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id = update.effective_user.id
-    await asyncio.to_thread(track_user, update.effective_user)
-    await asyncio.to_thread(log_activity, user_id, "/grafico")
+    track_user(update.effective_user)
+    log_activity(user_id, "/grafico")
     
     global GRAPH_CACHE
     today_str = datetime.now(TIMEZONE).date().isoformat()
@@ -604,8 +626,7 @@ async def grafico(update: Update, context: ContextTypes.DEFAULT_TYPE):
         except Exception: GRAPH_CACHE["photo_id"] = None
             
     await update.message.reply_chat_action("upload_photo")
-    # Generar gráfico pesado en hilo
-    img_buf = await asyncio.to_thread(generate_public_price_chart)
+    img_buf = generate_public_price_chart()
     
     if img_buf:
         msg = await update.message.reply_photo(photo=img_buf, caption="📉 <b>Promedio Diario (Semanal)</b>\n\n<i>Precio promedio ponderado del día.</i>", parse_mode=ParseMode.HTML)
@@ -617,12 +638,9 @@ async def grafico(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 async def referidos(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id = update.effective_user.id
-    await asyncio.to_thread(track_user, update.effective_user)
-    await asyncio.to_thread(log_activity, user_id, "/referidos")
-    
-    # DB pesada en hilo
-    count, rank, top_3 = await asyncio.to_thread(get_referral_stats, user_id)
-    
+    track_user(update.effective_user)
+    log_activity(user_id, "/referidos")
+    count, rank, top_3 = get_referral_stats(user_id)
     ranking_text = ""
     medals = ["🥇", "🥈", "🥉"]
     for i, (name, score) in enumerate(top_3):
@@ -635,9 +653,8 @@ async def referidos(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 async def precio(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id = update.effective_user.id
-    await asyncio.to_thread(track_user, update.effective_user)
-    await asyncio.to_thread(log_activity, user_id, "/precio")
-    
+    track_user(update.effective_user)
+    log_activity(user_id, "/precio")
     binance = MARKET_DATA["price"]
     bcv = MARKET_DATA["bcv"]
     time_str = MARKET_DATA["last_updated"]
@@ -651,10 +668,8 @@ async def precio(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id = update.effective_user.id
-    await asyncio.to_thread(track_user, update.effective_user)
-    if update.callback_query.data == 'refresh_price': 
-        await asyncio.to_thread(log_activity, user_id, "btn_refresh")
-    
+    track_user(update.effective_user)
+    if update.callback_query.data == 'refresh_price': log_activity(user_id, "btn_refresh")
     query = update.callback_query
     await query.answer()
     if query.data == 'refresh_price':
@@ -670,8 +685,8 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
             except Exception as e: logging.error(f"Error edit: {e}")
 
 async def prediccion(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    await asyncio.to_thread(track_user, update.effective_user)
-    await asyncio.to_thread(log_activity, update.effective_user.id, "/ia")
+    track_user(update.effective_user)
+    log_activity(update.effective_user.id, "/ia")
     history = MARKET_DATA["history"]
     if len(history) < 5:
         await update.message.reply_text("🧠 <b>Calibrando IA...</b>\nRecopilando datos.", parse_mode=ParseMode.HTML)
@@ -690,9 +705,8 @@ async def prediccion(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 async def stats(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if update.effective_user.id != ADMIN_ID: return
-    # Generar gráficos pesados en hilo
-    chart = await asyncio.to_thread(generate_stats_chart)
-    report = await asyncio.to_thread(get_detailed_report_text)
+    chart = generate_stats_chart() 
+    report = get_detailed_report_text()
     if chart: await context.bot.send_photo(chat_id=ADMIN_ID, photo=chart, caption=report, parse_mode=ParseMode.HTML)
     else: await update.message.reply_text("❌ Error generando gráfico.")
 
@@ -705,7 +719,7 @@ async def global_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not mensaje_final:
         await update.message.reply_text("⚠️ Escribe el mensaje.", parse_mode=ParseMode.HTML)
         return
-    users = await asyncio.to_thread(get_all_users_ids)
+    users = get_all_users_ids()
     if not users:
         await update.message.reply_text("⚠️ No hay usuarios.")
         return
@@ -724,8 +738,8 @@ async def global_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text(f"✅ <b>Difusión Completada</b>\n\n📨 Enviados: {enviados}\n❌ Fallidos: {fallidos}", parse_mode=ParseMode.HTML)
 
 async def start_alert(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    await asyncio.to_thread(track_user, update.effective_user)
-    await asyncio.to_thread(log_activity, update.effective_user.id, "/alerta")
+    track_user(update.effective_user)
+    log_activity(update.effective_user.id, "/alerta")
     if context.args:
         try:
             target = float(context.args[0].replace(',', '.'))
@@ -758,8 +772,7 @@ async def process_alert_logic(update: Update, target):
     else:
         await update.message.reply_text(f"⚠️ El precio actual ya es {current_price}. Define un valor distinto.")
         return
-    # Guardar alerta en hilo
-    success = await asyncio.to_thread(add_alert, update.effective_user.id, target, condition)
+    success = add_alert(update.effective_user.id, target, condition)
     if success:
         await update.message.reply_text(f"✅ {msg}", parse_mode=ParseMode.HTML)
     else:
@@ -775,8 +788,8 @@ async def calculate_conversion(update: Update, text_amount, currency_type):
         clean_text = ''.join(c for c in text_amount if c.isdigit() or c in '.,')
         amount = float(clean_text.replace(',', '.'))
         
-        # Log pesado en hilo
-        await asyncio.to_thread(log_calc, update.effective_user.id, amount, currency_type, 0)
+        # LOG DATA MINING
+        log_calc(update.effective_user.id, amount, currency_type, 0)
         
         if currency_type == "USDT":
             total = amount * rate
@@ -789,15 +802,15 @@ async def calculate_conversion(update: Update, text_amount, currency_type):
     return ConversationHandler.END
 
 async def start_usdt_calc(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    await asyncio.to_thread(track_user, update.effective_user)
-    await asyncio.to_thread(log_activity, update.effective_user.id, "/calc")
+    track_user(update.effective_user)
+    log_activity(update.effective_user.id, "/calc")
     if context.args: return await calculate_conversion(update, context.args[0], "USDT")
     await update.message.reply_text("🇺🇸 <b>Calculadora USDT:</b>\n\n¿Cuántos Dólares?\n<i>Escribe el número:</i>", parse_mode=ParseMode.HTML)
     return ESPERANDO_INPUT_USDT
 
 async def start_bs_calc(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    await asyncio.to_thread(track_user, update.effective_user)
-    await asyncio.to_thread(log_activity, update.effective_user.id, "/calc")
+    track_user(update.effective_user)
+    log_activity(update.effective_user.id, "/calc")
     if context.args: return await calculate_conversion(update, context.args[0], "BS")
     await update.message.reply_text("🇻🇪 <b>Calculadora Bolívares:</b>\n\n¿Cuántos Bs?\n<i>Escribe el número:</i>", parse_mode=ParseMode.HTML)
     return ESPERANDO_INPUT_BS
@@ -817,9 +830,9 @@ async def cancel(update: Update, context: ContextTypes.DEFAULT_TYPE):
 if __name__ == "__main__":
     init_db()
     if not TOKEN: exit(1)
+    
     app = ApplicationBuilder().token(TOKEN).build()
     
-    # Manejadores de Conversación
     conv_usdt = ConversationHandler(
         entry_points=[CommandHandler("usdt", start_usdt_calc)],
         states={ESPERANDO_INPUT_USDT: [MessageHandler(filters.TEXT & ~filters.COMMAND, process_usdt_input)]},
@@ -853,5 +866,5 @@ if __name__ == "__main__":
         app.job_queue.run_daily(send_daily_report, time=time(hour=9, minute=0, tzinfo=TIMEZONE), days=(0, 1, 2, 3, 4, 5, 6))
         app.job_queue.run_daily(send_daily_report, time=time(hour=13, minute=0, tzinfo=TIMEZONE), days=(0, 1, 2, 3, 4, 5, 6))
     
-    print("Bot V24 (Async Turbo + Polling) iniciando...")
+    print("Bot V23 (Corrected Polling + Fix NameError) iniciando...")
     app.run_polling()
