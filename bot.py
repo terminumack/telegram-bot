@@ -79,6 +79,8 @@ def init_db():
     try:
         conn = psycopg2.connect(DATABASE_URL)
         cur = conn.cursor()
+        
+        # Tablas
         cur.execute("""
             CREATE TABLE IF NOT EXISTS users (
                 user_id BIGINT PRIMARY KEY,
@@ -283,8 +285,11 @@ def generate_public_price_chart():
         bg_color = '#1e1e1e'
         fig.patch.set_facecolor(bg_color)
         ax.set_facecolor(bg_color)
-        ax.plot(dates, prices_bin, color='#F3BA2F', marker='o', linewidth=3, markersize=8, label="Binance")
-        ax.plot(dates, prices_bcv, color='#2979FF', marker='s', linewidth=2, markersize=6, linestyle='--', label="BCV")
+        
+        # Fix Bug Anterior: usar prices_bin[i]
+        line1, = ax.plot(dates, prices_bin, color='#F3BA2F', marker='o', linewidth=3, markersize=8, label="Binance")
+        line2, = ax.plot(dates, prices_bcv, color='#2979FF', marker='s', linewidth=2, markersize=6, linestyle='--', label="BCV")
+        
         ax.set_title('Tendencia Semanal (Binance vs BCV)', color='white', fontsize=14, fontweight='bold', pad=20)
         ax.grid(color='#333333', linestyle='--', linewidth=0.5)
         ax.legend(loc="upper left") 
@@ -316,6 +321,11 @@ def get_detailed_report_text():
         active_24h = cur.fetchone()[0]
         cur.execute("SELECT COUNT(*) FROM activity_logs WHERE created_at >= CURRENT_DATE")
         requests_today = cur.fetchone()[0]
+        
+        # 🔥 NUEVO: Contar Alertas Activas 🔥
+        cur.execute("SELECT COUNT(*) FROM alerts")
+        active_alerts = cur.fetchone()[0]
+        
         cur.close()
         conn.close()
         return (
@@ -323,8 +333,9 @@ def get_detailed_report_text():
             f"👥 <b>Total Histórico:</b> {total}\n"
             f"📈 <b>Nuevos Hoy:</b> +{new_today}\n"
             f"🔥 <b>Activos (24h):</b> {active_24h}\n"
+            f"🔔 <b>Alertas Activas:</b> {active_alerts}\n"
             f"📥 <b>Consultas Hoy:</b> {requests_today}\n\n"
-            f"<i>Sistema Operativo V26 (Turbo Fix).</i> ✅"
+            f"<i>Sistema Operativo V27.</i> ✅"
         )
     except Exception: return "Error."
 
@@ -434,7 +445,7 @@ def save_mining_data(binance, bcv_val):
 # ==============================================================================
 def fetch_binance_price():
     url = "https://p2p.binance.com/bapi/c2c/v2/friendly/c2c/adv/search"
-    headers = {"Content-Type": "application/json", "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36"}
+    headers = {"Content-Type": "application/json", "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"}
     last_known = MARKET_DATA["price"] if MARKET_DATA["price"] else 600
     dynamic_amount = int(last_known * FILTER_MIN_USD)
     payload = {
@@ -505,7 +516,7 @@ async def update_price_task(context: ContextTypes.DEFAULT_TYPE):
         MARKET_DATA["last_updated"] = now.strftime("%d/%m/%Y %I:%M:%S %p")
         logging.info(f"🔄 Actualizado - Bin: {new_binance}")
 
-# --- CORRECCIÓN FINAL build_price_message ---
+# --- FUNCIÓN GENERADORA DEL MENSAJE + MARCA DE AGUA TEXTUAL ---
 def build_price_message(binance, bcv_data, time_str):
     paypal = binance * 0.90
     amazon = binance * 0.75
@@ -522,16 +533,17 @@ def build_price_message(binance, bcv_data, time_str):
             else: emoji_brecha = "🟢"
             text += f"📈 <b>Brecha:</b> {brecha:.2f}% {emoji_brecha}\n"
         if bcv_data.get('eur'):
-            # FIX: Usar bcv_data, no bcv
             text += f"🇪🇺 <b>BCV (Euro):</b> {bcv_data['eur']:,.2f} Bs\n"
-        
         text += "\n"
     else:
         text += "🏛️ <b>BCV:</b> <i>No disponible</i>\n\n"
         
     text += f"{EMOJI_PAYPAL} <b>Tasa PayPal:</b> {paypal:,.2f} Bs\n"
     text += f"{EMOJI_AMAZON} <b>Giftcard Amazon:</b> {amazon:,.2f} Bs\n\n"
-    text += f"{EMOJI_STORE} <i>Actualizado: {time_str}</i>"
+    text += f"{EMOJI_STORE} <i>Actualizado: {time_str}</i>\n\n"
+    
+    # 🔥 AQUI ESTÁ EL CAMBIO DE MARKETING 🔥
+    text += "📢 <b>Síguenos:</b> @tasabinance_bot"
     return text
 
 async def send_daily_report(context: ContextTypes.DEFAULT_TYPE):
@@ -552,16 +564,13 @@ async def send_daily_report(context: ContextTypes.DEFAULT_TYPE):
 
     keyboard = [[InlineKeyboardButton("🔄 Ver en tiempo real", callback_data='refresh_price')]]
     users = get_all_users_ids()
-    logging.info(f"📢 Iniciando reporte TURBO a {len(users)} usuarios...")
-    
-    # BATCHING PARALELO (30 usuarios por lote)
-    BATCH_SIZE = 30
-    for i in range(0, len(users), BATCH_SIZE):
-        batch = users[i:i + BATCH_SIZE]
-        await send_batch(context.bot, batch, text, reply_markup)
-        await asyncio.sleep(0.8) # Pausa mínima anti-flood
-    
-    logging.info("✅ Reporte finalizado.")
+    batch_size = 25
+    for i in range(0, len(users), batch_size):
+        batch = users[i:i + batch_size]
+        for user_id in batch:
+            try: await context.bot.send_message(chat_id=user_id, text=text, parse_mode=ParseMode.HTML, reply_markup=InlineKeyboardMarkup(keyboard))
+            except Exception: pass
+        await asyncio.sleep(1)
 
 # ==============================================================================
 #  COMANDOS
@@ -603,15 +612,19 @@ async def grafico(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id = update.effective_user.id
     track_user(update.effective_user)
     log_activity(user_id, "/grafico")
+    
     global GRAPH_CACHE
     today_str = datetime.now(TIMEZONE).date().isoformat()
+    
     if GRAPH_CACHE["date"] == today_str and GRAPH_CACHE["photo_id"]:
         try:
             await update.message.reply_photo(photo=GRAPH_CACHE["photo_id"], caption="📉 <b>Promedio Diario (Semanal)</b>", parse_mode=ParseMode.HTML)
             return
         except Exception: GRAPH_CACHE["photo_id"] = None
+            
     await update.message.reply_chat_action("upload_photo")
     img_buf = generate_public_price_chart()
+    
     if img_buf:
         msg = await update.message.reply_photo(photo=img_buf, caption="📉 <b>Promedio Diario (Semanal)</b>\n\n<i>Precio promedio ponderado del día.</i>", parse_mode=ParseMode.HTML)
         if msg.photo:
@@ -694,7 +707,6 @@ async def stats(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if chart: await context.bot.send_photo(chat_id=ADMIN_ID, photo=chart, caption=report, parse_mode=ParseMode.HTML)
     else: await update.message.reply_text("❌ Error generando gráfico.")
 
-# --- GLOBAL MESSAGE TURBO ---
 async def global_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if update.effective_user.id != ADMIN_ID: return
     mensaje_original = update.message.text_html
@@ -708,16 +720,19 @@ async def global_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not users:
         await update.message.reply_text("⚠️ No hay usuarios.")
         return
-    await update.message.reply_text(f"🚀 Iniciando difusión TURBO a {len(users)} usuarios...")
-    
-    # BATCHING
-    BATCH_SIZE = 30
-    for i in range(0, len(users), BATCH_SIZE):
-        batch = users[i:i + BATCH_SIZE]
-        await send_batch(context.bot, batch, mensaje_final) # Usa la nueva función helper
-        await asyncio.sleep(0.8)
-        
-    await update.message.reply_text(f"✅ <b>Difusión Completada</b>", parse_mode=ParseMode.HTML)
+    await update.message.reply_text(f"🚀 Iniciando difusión rápida a {len(users)} usuarios...")
+    enviados = 0
+    fallidos = 0
+    batch_size = 25
+    for i in range(0, len(users), batch_size):
+        batch = users[i:i + batch_size]
+        for user_id in batch:
+            try:
+                await context.bot.send_message(chat_id=user_id, text=mensaje_final, parse_mode=ParseMode.HTML)
+                enviados += 1
+            except Exception: fallidos += 1
+        await asyncio.sleep(1)
+    await update.message.reply_text(f"✅ <b>Difusión Completada</b>\n\n📨 Enviados: {enviados}\n❌ Fallidos: {fallidos}", parse_mode=ParseMode.HTML)
 
 async def start_alert(update: Update, context: ContextTypes.DEFAULT_TYPE):
     track_user(update.effective_user)
@@ -810,13 +825,8 @@ if __name__ == "__main__":
     init_db()
     if not TOKEN: exit(1)
     
-    # 🔥 AQUI SE ACTIVA EL WEBHOOK 🔥
-    WEBHOOK_URL = os.getenv("WEBHOOK_URL")
-    PORT = int(os.environ.get("PORT", "8080"))
-
     app = ApplicationBuilder().token(TOKEN).build()
     
-    # Manejadores de Conversación
     conv_usdt = ConversationHandler(
         entry_points=[CommandHandler("usdt", start_usdt_calc)],
         states={ESPERANDO_INPUT_USDT: [MessageHandler(filters.TEXT & ~filters.COMMAND, process_usdt_input)]},
@@ -850,14 +860,5 @@ if __name__ == "__main__":
         app.job_queue.run_daily(send_daily_report, time=time(hour=9, minute=0, tzinfo=TIMEZONE), days=(0, 1, 2, 3, 4, 5, 6))
         app.job_queue.run_daily(send_daily_report, time=time(hour=13, minute=0, tzinfo=TIMEZONE), days=(0, 1, 2, 3, 4, 5, 6))
     
-    if WEBHOOK_URL:
-        print(f"🚀 Iniciando modo WEBHOOK en puerto {PORT}")
-        app.run_webhook(
-            listen="0.0.0.0",
-            port=PORT,
-            url_path=TOKEN,
-            webhook_url=f"{WEBHOOK_URL}/{TOKEN}"
-        )
-    else:
-        print("⚠️ Sin WEBHOOK_URL. Iniciando Polling...")
-        app.run_polling()
+    print("Bot V27 (Marketing + Stats + Todo V26) iniciando...")
+    app.run_polling()
