@@ -1,18 +1,3 @@
-# ... imports ...
-
-# --- BLOQUE DE DIAGNÓSTICO (Borrar luego) ---
-import os
-print("--------------------------------------------------")
-print("🔍 REVISANDO VARIABLES DE ENTORNO:")
-print(f"¿Existe WEBHOOK_URL?: {'WEBHOOK_URL' in os.environ}")
-if 'WEBHOOK_URL' in os.environ:
-    print(f"Valor: {os.environ['WEBHOOK_URL']}")
-else:
-    print("❌ LA VARIABLE NO EXISTE EN EL ENTORNO")
-print("--------------------------------------------------")
-
-# ... resto del código ...
-
 import os
 import logging
 import requests
@@ -95,7 +80,6 @@ def init_db():
         conn = psycopg2.connect(DATABASE_URL)
         cur = conn.cursor()
         
-        # Tablas
         cur.execute("""
             CREATE TABLE IF NOT EXISTS users (
                 user_id BIGINT PRIMARY KEY,
@@ -226,7 +210,7 @@ def log_calc(user_id, amount, currency, result):
     except Exception as e: logging.error(f"Error log_calc: {e}")
 
 # ==============================================================================
-#  ANALÍTICAS & GRÁFICOS
+#  ANALÍTICAS
 # ==============================================================================
 def generate_stats_chart():
     if not DATABASE_URL: return None
@@ -300,11 +284,8 @@ def generate_public_price_chart():
         bg_color = '#1e1e1e'
         fig.patch.set_facecolor(bg_color)
         ax.set_facecolor(bg_color)
-        
-        # Fix Bug Anterior: usar prices_bin[i]
-        line1, = ax.plot(dates, prices_bin, color='#F3BA2F', marker='o', linewidth=3, markersize=8, label="Binance")
-        line2, = ax.plot(dates, prices_bcv, color='#2979FF', marker='s', linewidth=2, markersize=6, linestyle='--', label="BCV")
-        
+        ax.plot(dates, prices_bin, color='#F3BA2F', marker='o', linewidth=3, markersize=8, label="Binance")
+        ax.plot(dates, prices_bcv, color='#2979FF', marker='s', linewidth=2, markersize=6, linestyle='--', label="BCV")
         ax.set_title('Tendencia Semanal (Binance vs BCV)', color='white', fontsize=14, fontweight='bold', pad=20)
         ax.grid(color='#333333', linestyle='--', linewidth=0.5)
         ax.legend(loc="upper left") 
@@ -334,13 +315,10 @@ def get_detailed_report_text():
         new_today = cur.fetchone()[0]
         cur.execute("SELECT COUNT(*) FROM users WHERE last_active >= NOW() - INTERVAL '24 HOURS'")
         active_24h = cur.fetchone()[0]
-        cur.execute("SELECT COUNT(*) FROM activity_logs WHERE created_at >= CURRENT_DATE")
-        requests_today = cur.fetchone()[0]
-        
-        # 🔥 NUEVO: Contar Alertas Activas 🔥
         cur.execute("SELECT COUNT(*) FROM alerts")
         active_alerts = cur.fetchone()[0]
-        
+        cur.execute("SELECT COUNT(*) FROM activity_logs WHERE created_at >= CURRENT_DATE")
+        requests_today = cur.fetchone()[0]
         cur.close()
         conn.close()
         return (
@@ -350,7 +328,7 @@ def get_detailed_report_text():
             f"🔥 <b>Activos (24h):</b> {active_24h}\n"
             f"🔔 <b>Alertas Activas:</b> {active_alerts}\n"
             f"📥 <b>Consultas Hoy:</b> {requests_today}\n\n"
-            f"<i>Sistema Operativo V27.</i> ✅"
+            f"<i>Sistema Operativo V29 (Webhook Prod).</i> ✅"
         )
     except Exception: return "Error."
 
@@ -460,7 +438,7 @@ def save_mining_data(binance, bcv_val):
 # ==============================================================================
 def fetch_binance_price():
     url = "https://p2p.binance.com/bapi/c2c/v2/friendly/c2c/adv/search"
-    headers = {"Content-Type": "application/json", "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"}
+    headers = {"Content-Type": "application/json", "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36"}
     last_known = MARKET_DATA["price"] if MARKET_DATA["price"] else 600
     dynamic_amount = int(last_known * FILTER_MIN_USD)
     payload = {
@@ -487,13 +465,11 @@ def fetch_binance_price():
             data = response.json()
         prices = [float(item["adv"]["price"]) for item in data["data"]]
         return sum(prices) / len(prices) if prices else None
-    except Exception as e:
-        logging.error(f"Error Binance: {e}")
-        return None
+    except Exception: return None
 
 def fetch_bcv_price():
     url = "http://www.bcv.org.ve/"
-    headers = {"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36"}
+    headers = {"User-Agent": "Mozilla/5.0"}
     rates = {'usd': None, 'eur': None}
     try:
         response = requests.get(url, headers=headers, timeout=20, verify=False)
@@ -531,34 +507,26 @@ async def update_price_task(context: ContextTypes.DEFAULT_TYPE):
         MARKET_DATA["last_updated"] = now.strftime("%d/%m/%Y %I:%M:%S %p")
         logging.info(f"🔄 Actualizado - Bin: {new_binance}")
 
-# --- FUNCIÓN GENERADORA DEL MENSAJE + MARCA DE AGUA TEXTUAL ---
+# --- FIX COMPLETO BUILD MESSAGE ---
 def build_price_message(binance, bcv_data, time_str):
     paypal = binance * 0.90
     amazon = binance * 0.75
     text = f"{EMOJI_STATS} <b>MONITOR DE TASAS</b>\n\n"
     text += f"{EMOJI_BINANCE} <b>Tasa Binance:</b> {binance:,.2f} Bs\n\n"
-    
     if bcv_data:
         if bcv_data.get('usd'):
             usd_bcv = bcv_data['usd']
             text += f"🏛️ <b>BCV (Dólar):</b> {usd_bcv:,.2f} Bs\n"
             brecha = ((binance - usd_bcv) / usd_bcv) * 100
-            if brecha >= 20: emoji_brecha = "🔴"
-            elif brecha >= 10: emoji_brecha = "🟠"
-            else: emoji_brecha = "🟢"
+            emoji_brecha = "🔴" if brecha >= 20 else "🟠" if brecha >= 10 else "🟢"
             text += f"📈 <b>Brecha:</b> {brecha:.2f}% {emoji_brecha}\n"
-        if bcv_data.get('eur'):
-            text += f"🇪🇺 <b>BCV (Euro):</b> {bcv_data['eur']:,.2f} Bs\n"
+        if bcv_data.get('eur'): text += f"🇪🇺 <b>BCV (Euro):</b> {bcv_data['eur']:,.2f} Bs\n"
         text += "\n"
-    else:
-        text += "🏛️ <b>BCV:</b> <i>No disponible</i>\n\n"
-        
+    else: text += "🏛️ <b>BCV:</b> <i>No disponible</i>\n\n"
     text += f"{EMOJI_PAYPAL} <b>Tasa PayPal:</b> {paypal:,.2f} Bs\n"
     text += f"{EMOJI_AMAZON} <b>Giftcard Amazon:</b> {amazon:,.2f} Bs\n\n"
-    text += f"{EMOJI_STORE} <i>Actualizado: {time_str}</i>\n\n"
-    
-    # 🔥 AQUI ESTÁ EL CAMBIO DE MARKETING 🔥
-    text += "📢 <b>Síguenos:</b> @tasabinance_bot"
+    text += f"{EMOJI_STORE} <i>Actualizado: {time_str}</i>"
+    text += "\n\n📢 <b>Síguenos:</b> @tasabinance_bot" # Marca de agua
     return text
 
 async def send_daily_report(context: ContextTypes.DEFAULT_TYPE):
@@ -574,7 +542,6 @@ async def send_daily_report(context: ContextTypes.DEFAULT_TYPE):
 
     body = build_price_message(binance, bcv, time_str)
     body = body.replace(f"{EMOJI_STATS} <b>MONITOR DE TASAS</b>\n\n", "")
-    
     text = f"{header}\n\n{body}"
 
     keyboard = [[InlineKeyboardButton("🔄 Ver en tiempo real", callback_data='refresh_price')]]
@@ -596,10 +563,8 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if context.args:
         try: referrer_id = int(context.args[0])
         except ValueError: referrer_id = None
-    
     track_user(update.effective_user, referrer_id)
     log_activity(update.effective_user.id, "/start")
-    
     mensaje = (
         f"👋 <b>¡Bienvenido al Monitor P2P Inteligente!</b>\n\n"
         f"Soy tu asistente financiero conectado a {EMOJI_BINANCE} <b>Binance P2P</b> y al <b>BCV</b>.\n\n"
@@ -627,19 +592,15 @@ async def grafico(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id = update.effective_user.id
     track_user(update.effective_user)
     log_activity(user_id, "/grafico")
-    
     global GRAPH_CACHE
     today_str = datetime.now(TIMEZONE).date().isoformat()
-    
     if GRAPH_CACHE["date"] == today_str and GRAPH_CACHE["photo_id"]:
         try:
             await update.message.reply_photo(photo=GRAPH_CACHE["photo_id"], caption="📉 <b>Promedio Diario (Semanal)</b>", parse_mode=ParseMode.HTML)
             return
         except Exception: GRAPH_CACHE["photo_id"] = None
-            
     await update.message.reply_chat_action("upload_photo")
     img_buf = generate_public_price_chart()
-    
     if img_buf:
         msg = await update.message.reply_photo(photo=img_buf, caption="📉 <b>Promedio Diario (Semanal)</b>\n\n<i>Precio promedio ponderado del día.</i>", parse_mode=ParseMode.HTML)
         if msg.photo:
@@ -670,7 +631,6 @@ async def precio(update: Update, context: ContextTypes.DEFAULT_TYPE):
     binance = MARKET_DATA["price"]
     bcv = MARKET_DATA["bcv"]
     time_str = MARKET_DATA["last_updated"]
-    
     if binance:
         text = build_price_message(binance, bcv, time_str)
         keyboard = [[InlineKeyboardButton("🔄 Actualizar Precio", callback_data='refresh_price')]]
@@ -840,8 +800,13 @@ if __name__ == "__main__":
     init_db()
     if not TOKEN: exit(1)
     
+    # 🔥 AQUI SE ACTIVA EL WEBHOOK 🔥
+    WEBHOOK_URL = os.getenv("WEBHOOK_URL")
+    PORT = int(os.environ.get("PORT", "8080"))
+
     app = ApplicationBuilder().token(TOKEN).build()
     
+    # Manejadores de Conversación
     conv_usdt = ConversationHandler(
         entry_points=[CommandHandler("usdt", start_usdt_calc)],
         states={ESPERANDO_INPUT_USDT: [MessageHandler(filters.TEXT & ~filters.COMMAND, process_usdt_input)]},
@@ -875,5 +840,14 @@ if __name__ == "__main__":
         app.job_queue.run_daily(send_daily_report, time=time(hour=9, minute=0, tzinfo=TIMEZONE), days=(0, 1, 2, 3, 4, 5, 6))
         app.job_queue.run_daily(send_daily_report, time=time(hour=13, minute=0, tzinfo=TIMEZONE), days=(0, 1, 2, 3, 4, 5, 6))
     
-    print("Bot V27 (Marketing + Stats + Todo V26) iniciando...")
-    app.run_polling()
+    if WEBHOOK_URL:
+        print(f"🚀 Iniciando modo WEBHOOK en puerto {PORT}")
+        app.run_webhook(
+            listen="0.0.0.0",
+            port=PORT,
+            url_path=TOKEN,
+            webhook_url=f"{WEBHOOK_URL}/{TOKEN}"
+        )
+    else:
+        print("⚠️ Sin WEBHOOK_URL. Iniciando Polling...")
+        app.run_polling()
