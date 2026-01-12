@@ -1,3 +1,18 @@
+# ... imports ...
+
+# --- BLOQUE DE DIAGNÓSTICO (Borrar luego) ---
+import os
+print("--------------------------------------------------")
+print("🔍 REVISANDO VARIABLES DE ENTORNO:")
+print(f"¿Existe WEBHOOK_URL?: {'WEBHOOK_URL' in os.environ}")
+if 'WEBHOOK_URL' in os.environ:
+    print(f"Valor: {os.environ['WEBHOOK_URL']}")
+else:
+    print("❌ LA VARIABLE NO EXISTE EN EL ENTORNO")
+print("--------------------------------------------------")
+
+# ... resto del código ...
+
 import os
 import logging
 import requests
