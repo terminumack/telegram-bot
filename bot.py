@@ -80,6 +80,7 @@ def init_db():
         conn = psycopg2.connect(DATABASE_URL)
         cur = conn.cursor()
         
+        # Tablas Existentes
         cur.execute("""
             CREATE TABLE IF NOT EXISTS users (
                 user_id BIGINT PRIMARY KEY,
@@ -133,6 +134,17 @@ def init_db():
                 created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
             )
         """)
+        
+        # 🔥 NUEVA TABLA: Votos Diarios de Sentimiento 🔥
+        cur.execute("""
+            CREATE TABLE IF NOT EXISTS daily_votes (
+                user_id BIGINT,
+                vote_date DATE,
+                vote_type TEXT, -- 'UP' o 'DOWN'
+                PRIMARY KEY (user_id, vote_date)
+            )
+        """)
+
         conn.commit()
         cur.close()
         conn.close()
@@ -209,8 +221,58 @@ def log_calc(user_id, amount, currency, result):
         conn.close()
     except Exception as e: logging.error(f"Error log_calc: {e}")
 
+# --- SISTEMA DE VOTOS ---
+def cast_vote(user_id, vote_type):
+    if not DATABASE_URL: return False
+    today = datetime.now(TIMEZONE).date()
+    try:
+        conn = psycopg2.connect(DATABASE_URL)
+        cur = conn.cursor()
+        # Insertar voto (ignorando si ya votó hoy gracias a la PK compuesta)
+        cur.execute("""
+            INSERT INTO daily_votes (user_id, vote_date, vote_type)
+            VALUES (%s, %s, %s)
+            ON CONFLICT (user_id, vote_date) DO NOTHING
+        """, (user_id, today, vote_type))
+        rows = cur.rowcount
+        conn.commit()
+        cur.close()
+        conn.close()
+        return rows > 0 # Retorna True si el voto fue nuevo
+    except Exception as e:
+        logging.error(f"Error voting: {e}")
+        return False
+
+def get_vote_results():
+    if not DATABASE_URL: return (0, 0)
+    today = datetime.now(TIMEZONE).date()
+    try:
+        conn = psycopg2.connect(DATABASE_URL)
+        cur = conn.cursor()
+        cur.execute("SELECT vote_type, COUNT(*) FROM daily_votes WHERE vote_date = %s GROUP BY vote_type", (today,))
+        results = dict(cur.fetchall())
+        up = results.get('UP', 0)
+        down = results.get('DOWN', 0)
+        cur.close()
+        conn.close()
+        return (up, down)
+    except Exception: return (0, 0)
+
+def has_user_voted(user_id):
+    if not DATABASE_URL: return False
+    today = datetime.now(TIMEZONE).date()
+    try:
+        conn = psycopg2.connect(DATABASE_URL)
+        cur = conn.cursor()
+        cur.execute("SELECT 1 FROM daily_votes WHERE user_id = %s AND vote_date = %s", (user_id, today))
+        voted = cur.fetchone() is not None
+        cur.close()
+        conn.close()
+        return voted
+    except Exception: return False
+
 # ==============================================================================
-#  ANALÍTICAS
+#  ANALÍTICAS VISUALES (ADMIN)
 # ==============================================================================
 def generate_stats_chart():
     if not DATABASE_URL: return None
@@ -257,6 +319,9 @@ def generate_stats_chart():
         return buf
     except Exception: return None
 
+# ==============================================================================
+#  GRÁFICO PÚBLICO (BINANCE + BCV)
+# ==============================================================================
 def generate_public_price_chart():
     if not DATABASE_URL: return None
     buf = io.BytesIO()
@@ -328,7 +393,7 @@ def get_detailed_report_text():
             f"🔥 <b>Activos (24h):</b> {active_24h}\n"
             f"🔔 <b>Alertas Activas:</b> {active_alerts}\n"
             f"📥 <b>Consultas Hoy:</b> {requests_today}\n\n"
-            f"<i>Sistema Operativo V29 (Webhook Prod).</i> ✅"
+            f"<i>Sistema Operativo V30.</i> ✅"
         )
     except Exception: return "Error."
 
@@ -507,8 +572,36 @@ async def update_price_task(context: ContextTypes.DEFAULT_TYPE):
         MARKET_DATA["last_updated"] = now.strftime("%d/%m/%Y %I:%M:%S %p")
         logging.info(f"🔄 Actualizado - Bin: {new_binance}")
 
-# --- FIX COMPLETO BUILD MESSAGE ---
-def build_price_message(binance, bcv_data, time_str):
+# --- BUILDER CON BOTONES DE VOTACIÓN ---
+def get_sentiment_keyboard(user_id):
+    # Si ya votó, mostrar resultados y botón Actualizar
+    if has_user_voted(user_id):
+        up, down = get_vote_results()
+        total = up + down
+        if total > 0:
+            up_pct = int((up / total) * 100)
+            down_pct = int((down / total) * 100)
+            # Barras gráficas (cada cuadro = 10%)
+            bars_up = "🟦" * (up_pct // 10)
+            bars_down = "🟥" * (down_pct // 10)
+            
+            text_result = f"📊 <b>Tendencia:</b>\n🚀 {bars_up} {up_pct}%\n📉 {bars_down} {down_pct}%"
+            # Ojo: No podemos retornar texto aquí, solo botones.
+            # El texto se incrustará en el mensaje.
+        
+        return [[InlineKeyboardButton("🔄 Actualizar Precio", callback_data='refresh_price')]]
+
+    else:
+        # Si NO ha votado, mostrar opciones
+        return [
+            [
+                InlineKeyboardButton("🚀 Subirá", callback_data='vote_up'),
+                InlineKeyboardButton("📉 Bajará", callback_data='vote_down')
+            ],
+            [InlineKeyboardButton("🔄 Actualizar Precio", callback_data='refresh_price')]
+        ]
+
+def build_price_message(binance, bcv_data, time_str, user_id=None):
     paypal = binance * 0.90
     amazon = binance * 0.75
     text = f"{EMOJI_STATS} <b>MONITOR DE TASAS</b>\n\n"
@@ -525,11 +618,25 @@ def build_price_message(binance, bcv_data, time_str):
     else: text += "🏛️ <b>BCV:</b> <i>No disponible</i>\n\n"
     text += f"{EMOJI_PAYPAL} <b>Tasa PayPal:</b> {paypal:,.2f} Bs\n"
     text += f"{EMOJI_AMAZON} <b>Giftcard Amazon:</b> {amazon:,.2f} Bs\n\n"
-    text += f"{EMOJI_STORE} <i>Actualizado: {time_str}</i>"
-    text += "\n\n📢 <b>Síguenos:</b> @tasabinance_bot" # Marca de agua
+    text += f"{EMOJI_STORE} <i>Actualizado: {time_str}</i>\n\n"
+    
+    # Inyectar resultados de encuesta si ya votó
+    if user_id and has_user_voted(user_id):
+        up, down = get_vote_results()
+        total = up + down
+        if total > 0:
+            up_pct = int((up / total) * 100)
+            down_pct = int((down / total) * 100)
+            text += f"📊 <b>Comunidad ({total} votos):</b>\n🚀 {up_pct}% | 📉 {down_pct}%\n\n"
+    elif user_id:
+        text += "🗳️ <b>¿Qué crees que pasará hoy?</b> 👇\n\n"
+        
+    text += "📢 <b>Síguenos:</b> @tasabinance_bot"
     return text
 
 async def send_daily_report(context: ContextTypes.DEFAULT_TYPE):
+    # Nota: En reporte masivo no personalizamos por usuario (muy pesado)
+    # Enviamos solo con botón de actualizar para que al darle clic voten.
     binance = MARKET_DATA["price"]
     bcv = MARKET_DATA["bcv"]
     if not binance: binance = fetch_binance_price()
@@ -631,30 +738,50 @@ async def precio(update: Update, context: ContextTypes.DEFAULT_TYPE):
     binance = MARKET_DATA["price"]
     bcv = MARKET_DATA["bcv"]
     time_str = MARKET_DATA["last_updated"]
+    
     if binance:
-        text = build_price_message(binance, bcv, time_str)
-        keyboard = [[InlineKeyboardButton("🔄 Actualizar Precio", callback_data='refresh_price')]]
+        # Aquí pasamos el user_id para personalizar los botones (voto)
+        text = build_price_message(binance, bcv, time_str, user_id)
+        keyboard = get_sentiment_keyboard(user_id) # Botones dinámicos
+        
         await update.message.reply_text(text, parse_mode=ParseMode.HTML, reply_markup=InlineKeyboardMarkup(keyboard))
     else:
         await update.message.reply_text("🔄 Iniciando sistema... intenta en unos segundos.")
 
 async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id = update.effective_user.id
-    track_user(update.effective_user)
-    if update.callback_query.data == 'refresh_price': log_activity(user_id, "btn_refresh")
     query = update.callback_query
-    await query.answer()
-    if query.data == 'refresh_price':
+    data = query.data
+    
+    track_user(update.effective_user)
+    
+    # --- LOGICA DE VOTO ---
+    if data in ['vote_up', 'vote_down']:
+        vote_type = 'UP' if data == 'vote_up' else 'DOWN'
+        if cast_vote(user_id, vote_type):
+            log_activity(user_id, f"vote_{vote_type.lower()}")
+            await query.answer("✅ ¡Voto registrado!")
+        else:
+            await query.answer("⚠️ Ya votaste hoy.")
+            
+        # Refrescar mensaje inmediatamente para mostrar resultados
+        data = 'refresh_price'
+
+    if data == 'refresh_price':
+        log_activity(user_id, "btn_refresh")
         binance = MARKET_DATA["price"]
         bcv = MARKET_DATA["bcv"]
         time_str = MARKET_DATA["last_updated"]
+        
         if binance:
-            text = build_price_message(binance, bcv, time_str)
+            text = build_price_message(binance, bcv, time_str, user_id)
+            keyboard = get_sentiment_keyboard(user_id)
             try:
-                keyboard = [[InlineKeyboardButton("🔄 Actualizar Precio", callback_data='refresh_price')]]
                 await query.edit_message_text(text=text, parse_mode=ParseMode.HTML, reply_markup=InlineKeyboardMarkup(keyboard))
             except BadRequest: pass
             except Exception as e: logging.error(f"Error edit: {e}")
+        
+    await query.answer()
 
 async def prediccion(update: Update, context: ContextTypes.DEFAULT_TYPE):
     track_user(update.effective_user)
@@ -759,7 +886,6 @@ async def calculate_conversion(update: Update, text_amount, currency_type):
     try:
         clean_text = ''.join(c for c in text_amount if c.isdigit() or c in '.,')
         amount = float(clean_text.replace(',', '.'))
-        log_calc(update.effective_user.id, amount, currency_type, 0)
         if currency_type == "USDT":
             total = amount * rate
             await update.message.reply_text(f"🇺🇸 {amount:,.2f} USDT son:\n🇻🇪 <b>{total:,.2f} Bolívares</b>\n<i>(Tasa: {rate:,.2f})</i>", parse_mode=ParseMode.HTML)
