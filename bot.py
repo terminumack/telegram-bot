@@ -324,7 +324,7 @@ def get_detailed_report_text():
             f"📈 <b>Nuevos Hoy:</b> +{new_today}\n"
             f"🔥 <b>Activos (24h):</b> {active_24h}\n"
             f"📥 <b>Consultas Hoy:</b> {requests_today}\n\n"
-            f"<i>Sistema Operativo V25 (Turbo Broadcast).</i> ✅"
+            f"<i>Sistema Operativo V26 (Turbo Fix).</i> ✅"
         )
     except Exception: return "Error."
 
@@ -505,42 +505,34 @@ async def update_price_task(context: ContextTypes.DEFAULT_TYPE):
         MARKET_DATA["last_updated"] = now.strftime("%d/%m/%Y %I:%M:%S %p")
         logging.info(f"🔄 Actualizado - Bin: {new_binance}")
 
+# --- CORRECCIÓN FINAL build_price_message ---
 def build_price_message(binance, bcv_data, time_str):
     paypal = binance * 0.90
     amazon = binance * 0.75
     text = f"{EMOJI_STATS} <b>MONITOR DE TASAS</b>\n\n"
     text += f"{EMOJI_BINANCE} <b>Tasa Binance:</b> {binance:,.2f} Bs\n\n"
+    
     if bcv_data:
         if bcv_data.get('usd'):
             usd_bcv = bcv_data['usd']
             text += f"🏛️ <b>BCV (Dólar):</b> {usd_bcv:,.2f} Bs\n"
             brecha = ((binance - usd_bcv) / usd_bcv) * 100
-            emoji_brecha = "🔴" if brecha >= 20 else "🟠" if brecha >= 10 else "🟢"
+            if brecha >= 20: emoji_brecha = "🔴"
+            elif brecha >= 10: emoji_brecha = "🟠"
+            else: emoji_brecha = "🟢"
             text += f"📈 <b>Brecha:</b> {brecha:.2f}% {emoji_brecha}\n"
-        if bcv.get('eur'): text += f"🇪🇺 <b>BCV (Euro):</b> {bcv_data['eur']:,.2f} Bs\n"
+        if bcv_data.get('eur'):
+            # FIX: Usar bcv_data, no bcv
+            text += f"🇪🇺 <b>BCV (Euro):</b> {bcv_data['eur']:,.2f} Bs\n"
+        
         text += "\n"
-    else: text += "🏛️ <b>BCV:</b> <i>No disponible</i>\n\n"
+    else:
+        text += "🏛️ <b>BCV:</b> <i>No disponible</i>\n\n"
+        
     text += f"{EMOJI_PAYPAL} <b>Tasa PayPal:</b> {paypal:,.2f} Bs\n"
     text += f"{EMOJI_AMAZON} <b>Giftcard Amazon:</b> {amazon:,.2f} Bs\n\n"
     text += f"{EMOJI_STORE} <i>Actualizado: {time_str}</i>"
     return text
-
-# --- 🔥 FUNCIÓN DE ENVÍO PARALELO (TURBO) 🔥 ---
-async def send_batch(bot, user_ids, text, keyboard=None):
-    """Envía un lote de mensajes en paralelo usando asyncio.gather"""
-    tasks = []
-    for uid in user_ids:
-        tasks.append(
-            bot.send_message(
-                chat_id=uid, 
-                text=text, 
-                parse_mode=ParseMode.HTML, 
-                reply_markup=keyboard,
-                disable_notification=True # Clave para velocidad
-            )
-        )
-    # return_exceptions=True evita que un bloqueo detenga el lote
-    await asyncio.gather(*tasks, return_exceptions=True)
 
 async def send_daily_report(context: ContextTypes.DEFAULT_TYPE):
     binance = MARKET_DATA["price"]
@@ -555,11 +547,10 @@ async def send_daily_report(context: ContextTypes.DEFAULT_TYPE):
 
     body = build_price_message(binance, bcv, time_str)
     body = body.replace(f"{EMOJI_STATS} <b>MONITOR DE TASAS</b>\n\n", "")
+    
     text = f"{header}\n\n{body}"
 
     keyboard = [[InlineKeyboardButton("🔄 Ver en tiempo real", callback_data='refresh_price')]]
-    reply_markup = InlineKeyboardMarkup(keyboard)
-    
     users = get_all_users_ids()
     logging.info(f"📢 Iniciando reporte TURBO a {len(users)} usuarios...")
     
@@ -581,8 +572,10 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if context.args:
         try: referrer_id = int(context.args[0])
         except ValueError: referrer_id = None
+    
     track_user(update.effective_user, referrer_id)
     log_activity(update.effective_user.id, "/start")
+    
     mensaje = (
         f"👋 <b>¡Bienvenido al Monitor P2P Inteligente!</b>\n\n"
         f"Soy tu asistente financiero conectado a {EMOJI_BINANCE} <b>Binance P2P</b> y al <b>BCV</b>.\n\n"
@@ -649,6 +642,7 @@ async def precio(update: Update, context: ContextTypes.DEFAULT_TYPE):
     binance = MARKET_DATA["price"]
     bcv = MARKET_DATA["bcv"]
     time_str = MARKET_DATA["last_updated"]
+    
     if binance:
         text = build_price_message(binance, bcv, time_str)
         keyboard = [[InlineKeyboardButton("🔄 Actualizar Precio", callback_data='refresh_price')]]
@@ -856,7 +850,6 @@ if __name__ == "__main__":
         app.job_queue.run_daily(send_daily_report, time=time(hour=9, minute=0, tzinfo=TIMEZONE), days=(0, 1, 2, 3, 4, 5, 6))
         app.job_queue.run_daily(send_daily_report, time=time(hour=13, minute=0, tzinfo=TIMEZONE), days=(0, 1, 2, 3, 4, 5, 6))
     
-    # LOGICA HIBRIDA
     if WEBHOOK_URL:
         print(f"🚀 Iniciando modo WEBHOOK en puerto {PORT}")
         app.run_webhook(
