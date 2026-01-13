@@ -10,7 +10,7 @@ matplotlib.use('Agg')
 import matplotlib.pyplot as plt
 from bs4 import BeautifulSoup 
 import urllib3
-from urllib.parse import quote 
+from urllib.parse import quote
 from datetime import datetime, time, timedelta
 import pytz 
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
@@ -381,9 +381,8 @@ def generate_public_price_chart():
         prices_bcv = [d[2] if d[2] > 0 else None for d in data]
         if not prices_bin: return None
 
-        # CONFIGURACIÓN VERTICAL (STORY)
         plt.style.use('dark_background')
-        fig, ax = plt.subplots(figsize=(6, 8)) # Relación 3:4 (Mejor para móvil)
+        fig, ax = plt.subplots(figsize=(6, 8)) 
         bg_color = '#1e1e1e'
         fig.patch.set_facecolor(bg_color)
         ax.set_facecolor(bg_color)
@@ -396,13 +395,11 @@ def generate_public_price_chart():
         ax.grid(color='#333333', linestyle='--', linewidth=0.5)
         ax.legend(loc="upper center", bbox_to_anchor=(0.5, 1.05), ncol=2, frameon=False, fontsize=11)
         
-        # ETIQUETAS BINANCE (ARRIBA)
         for i, price in enumerate(prices_bin):
             ax.annotate(f"{price:.2f}", (dates[i], prices_bin[i]), 
                         textcoords="offset points", xytext=(0,15), ha='center', 
                         color='white', fontsize=11, fontweight='bold')
         
-        # ETIQUETAS BCV (DEBAJO)
         for i, price in enumerate(prices_bcv):
             if price: 
                 ax.annotate(f"{price:.2f}", (dates[i], prices_bcv[i]), 
@@ -452,7 +449,7 @@ def get_detailed_report_text():
             f"🔥 <b>Activos (24h):</b> {active_24h}\n"
             f"🔔 <b>Alertas Activas:</b> {active_alerts}\n"
             f"📥 <b>Consultas Hoy:</b> {requests_today}\n\n"
-            f"<i>Sistema Operativo V34.</i> ✅"
+            f"<i>Sistema Operativo V36 (Fase 3 UX Final).</i> ✅"
         )
     except Exception: return "Error."
 
@@ -631,33 +628,13 @@ async def update_price_task(context: ContextTypes.DEFAULT_TYPE):
         MARKET_DATA["last_updated"] = now.strftime("%d/%m/%Y %I:%M:%S %p")
         logging.info(f"🔄 Actualizado - Bin: {new_binance}")
 
-# --- BUILDER CON BOTONES DE VOTACIÓN REORDENADOS ---
-def get_sentiment_keyboard(user_id):
-    if has_user_voted(user_id):
-        up, down = get_vote_results()
-        total = up + down
-        share_text = quote(f"🔥 Dólar en {MARKET_DATA['price']:.2f} Bs. Revisa la tasa real aquí:")
-        share_url = f"https://t.me/share/url?url=https://t.me/tasabinance_bot&text={share_text}"
-        
-        # AQUÍ ESTÁ EL CAMBIO: PRIMERO ACTUALIZAR, LUEGO COMPARTIR
-        return [
-            [InlineKeyboardButton("🔄 Actualizar Precio", callback_data='refresh_price')],
-            [InlineKeyboardButton("📤 Compartir con Amigos", url=share_url)]
-        ]
-    else:
-        return [
-            [
-                InlineKeyboardButton("🚀 Subirá", callback_data='vote_up'),
-                InlineKeyboardButton("📉 Bajará", callback_data='vote_down')
-            ],
-            [InlineKeyboardButton("🔄 Actualizar Precio", callback_data='refresh_price')]
-        ]
-
+# --- FUNCIÓN GENERADORA DEL MENSAJE (REORDENADA) ---
 def build_price_message(binance, bcv_data, time_str, user_id=None, requests_count=0):
     paypal = binance * 0.90
     amazon = binance * 0.75
     text = f"{EMOJI_STATS} <b>MONITOR DE TASAS</b>\n\n"
     text += f"{EMOJI_BINANCE} <b>Tasa Binance:</b> {binance:,.2f} Bs\n\n"
+    
     if bcv_data:
         if bcv_data.get('usd'):
             usd_bcv = bcv_data['usd']
@@ -665,29 +642,32 @@ def build_price_message(binance, bcv_data, time_str, user_id=None, requests_coun
             brecha = ((binance - usd_bcv) / usd_bcv) * 100
             emoji_brecha = "🔴" if brecha >= 20 else "🟠" if brecha >= 10 else "🟢"
             text += f"📈 <b>Brecha:</b> {brecha:.2f}% {emoji_brecha}\n"
-        if bcv_data.get('eur'): text += f"🇪🇺 <b>BCV (Euro):</b> {bcv_data['eur']:,.2f} Bs\n"
+        if bcv_data.get('eur'):
+            text += f"🇪🇺 <b>BCV (Euro):</b> {bcv_data['eur']:,.2f} Bs\n"
         text += "\n"
-    else: text += "🏛️ <b>BCV:</b> <i>No disponible</i>\n\n"
+    else:
+        text += "🏛️ <b>BCV:</b> <i>No disponible</i>\n\n"
+        
     text += f"{EMOJI_PAYPAL} <b>Tasa PayPal:</b> {paypal:,.2f} Bs\n"
     text += f"{EMOJI_AMAZON} <b>Giftcard Amazon:</b> {amazon:,.2f} Bs\n\n"
-    text += f"{EMOJI_STORE} <i>Actualizado: {time_str}</i>\n"
     
-    if requests_count > 100:
-        text += f"👁 <b>{requests_count:,}</b> consultas hoy\n\n"
-    else:
-        text += "\n"
-
-    # TERMÓMETRO
+    # 🔥 AQUI SE MOVIERON: Comunidad antes, Footer al final 🔥
     if user_id and has_user_voted(user_id):
         up, down = get_vote_results()
         total = up + down
         if total > 0:
             up_pct = int((up / total) * 100)
             down_pct = int((down / total) * 100)
-            text += f"🌡️ <b>Termómetro de la Comunidad:</b>\n🚀 {up_pct}% | 📉 {down_pct}%\n\n"
+            text += f"🗣️ <b>¿Qué dice la comunidad?</b>\n🚀 {up_pct}% <b>Alcista</b> | 📉 {down_pct}% <b>Bajista</b>\n\n"
     elif user_id:
-        text += "🌡️ <b>Termómetro: ¿Qué pasará hoy?</b> 👇\n\n"
-        
+        text += "🗣️ <b>¿Qué dice la comunidad?</b> 👇\n\n"
+
+    # Footer (Hora + Consultas + Link)
+    text += f"{EMOJI_STORE} <i>Actualizado: {time_str}</i>\n"
+    if requests_count > 100:
+        text += f"👁 <b>{requests_count:,}</b> consultas hoy\n\n"
+    else:
+        text += "\n"
     text += "📢 <b>Síguenos:</b> @tasabinance_bot"
     return text
 
