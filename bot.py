@@ -168,6 +168,42 @@ def migrate_db():
             conn.close()
     except Exception: pass
 
+# --- 🔥 FUNCIÓN DE RECUPERACIÓN DE ESTADO 🔥 ---
+def recover_last_state():
+    """Recupera el último precio guardado en BD si la RAM está vacía."""
+    if not DATABASE_URL: return
+    try:
+        conn = psycopg2.connect(DATABASE_URL)
+        cur = conn.cursor()
+        # Buscamos el último tick registrado
+        cur.execute("SELECT price_binance, price_bcv, recorded_at FROM price_ticks ORDER BY id DESC LIMIT 1")
+        row = cur.fetchone()
+        
+        if row:
+            binance_db, bcv_db, date_db = row
+            
+            # Restaurar Binance
+            if binance_db:
+                MARKET_DATA["price"] = binance_db
+                MARKET_DATA["history"].append(binance_db) # Para que la IA tenga al menos 1 dato
+            
+            # Restaurar BCV (Solo USD porque es lo que guardamos en ticks por ahora)
+            if bcv_db:
+                # Mantenemos estructura de diccionario
+                MARKET_DATA["bcv"] = {'usd': bcv_db, 'eur': None} 
+            
+            # Restaurar fecha
+            # Convertimos a string bonito
+            fecha_bonita = date_db.astimezone(TIMEZONE).strftime("%d/%m/%Y %I:%M:%S %p")
+            MARKET_DATA["last_updated"] = fecha_bonita
+            
+            logging.info(f"💾 ESTADO RECUPERADO DE BD: Bin={binance_db} | BCV={bcv_db}")
+        
+        cur.close()
+        conn.close()
+    except Exception as e:
+        logging.error(f"❌ Error recuperando estado: {e}")
+
 def track_user(user, referrer_id=None):
     if not DATABASE_URL: return 
     user_id = user.id
@@ -377,24 +413,40 @@ def generate_public_price_chart():
         prices_bin = [d[1] for d in data]
         prices_bcv = [d[2] if d[2] > 0 else None for d in data]
         if not prices_bin: return None
+
         plt.style.use('dark_background')
         fig, ax = plt.subplots(figsize=(6, 8)) 
         bg_color = '#1e1e1e'
         fig.patch.set_facecolor(bg_color)
         ax.set_facecolor(bg_color)
+        
         ax.plot(dates, prices_bin, color='#F3BA2F', marker='o', linewidth=4, markersize=10, label="Binance")
         ax.plot(dates, prices_bcv, color='#2979FF', marker='s', linewidth=2, markersize=8, linestyle='--', label="BCV")
+        
         ax.set_title('TASA BINANCE VZLA', color='#F3BA2F', fontsize=18, fontweight='bold', pad=25)
         ax.set_xlabel('Últimos 7 Días', color='white', fontsize=12)
         ax.grid(color='#333333', linestyle='--', linewidth=0.5)
         ax.legend(loc="upper center", bbox_to_anchor=(0.5, 1.05), ncol=2, frameon=False, fontsize=11)
+        
         for i, price in enumerate(prices_bin):
-            ax.annotate(f"{price:.2f}", (dates[i], prices_bin[i]), textcoords="offset points", xytext=(0,15), ha='center', color='white', fontsize=11, fontweight='bold')
+            ax.annotate(f"{price:.2f}", (dates[i], prices_bin[i]), 
+                        textcoords="offset points", xytext=(0,15), ha='center', 
+                        color='white', fontsize=11, fontweight='bold')
+        
         for i, price in enumerate(prices_bcv):
             if price: 
-                ax.annotate(f"{price:.2f}", (dates[i], prices_bcv[i]), textcoords="offset points", xytext=(0,-20), ha='center', color='#2979FF', fontsize=10, fontweight='bold')
-        fig.text(0.5, 0.5, '@tasabinance_bot', fontsize=28, color='white', ha='center', va='center', alpha=0.08, rotation=45, fontweight='bold')
-        fig.text(0.5, 0.03, '¡Úsalo Gratis en Telegram!', fontsize=12, color='#F3BA2F', ha='center', va='bottom', fontweight='bold')
+                ax.annotate(f"{price:.2f}", (dates[i], prices_bcv[i]), 
+                            textcoords="offset points", xytext=(0,-20), ha='center', 
+                            color='#2979FF', fontsize=10, fontweight='bold')
+
+        fig.text(0.5, 0.5, '@tasabinance_bot', 
+                 fontsize=28, color='white', 
+                 ha='center', va='center', alpha=0.08, rotation=45, fontweight='bold')
+                 
+        fig.text(0.5, 0.03, '¡Úsalo Gratis en Telegram!', 
+                 fontsize=12, color='#F3BA2F', 
+                 ha='center', va='bottom', fontweight='bold')
+
         plt.tight_layout()
         plt.savefig(buf, format='png', facecolor=bg_color, dpi=100)
         buf.seek(0)
@@ -430,7 +482,7 @@ def get_detailed_report_text():
             f"🔥 <b>Activos (24h):</b> {active_24h}\n"
             f"🔔 <b>Alertas Activas:</b> {active_alerts}\n"
             f"📥 <b>Consultas Hoy:</b> {requests_today}\n\n"
-            f"<i>Sistema Operativo V37 (Fix BCV).</i> ✅"
+            f"<i>Sistema Operativo V38 (Persistencia Anti-Reinicio).</i> ✅"
         )
     except Exception: return "Error."
 
@@ -569,18 +621,14 @@ def fetch_binance_price():
         return sum(prices) / len(prices) if prices else None
     except Exception: return None
 
-# 🔥 FIX BCV: User-Agent + Logging + Error Handling 🔥
 def fetch_bcv_price():
     url = "http://www.bcv.org.ve/"
     headers = {
-        # Usamos el mismo User-Agent moderno de Binance para evitar bloqueo
         "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
     }
     rates = {'usd': None, 'eur': None}
     try:
-        # Aumentamos timeout a 30s
         response = requests.get(url, headers=headers, timeout=30, verify=False)
-        
         if response.status_code == 200:
             soup = BeautifulSoup(response.content, 'html.parser')
             dolar_div = soup.find('div', id='dolar')
@@ -589,8 +637,6 @@ def fetch_bcv_price():
             euro_div = soup.find('div', id='euro')
             if euro_div: 
                 rates['eur'] = float(euro_div.find('strong').text.strip().replace(',', '.'))
-            
-            # Log de éxito
             if rates['usd']:
                 logging.info(f"✅ BCV ENCONTRADO: {rates['usd']} Bs")
             return rates if (rates['usd'] or rates['eur']) else None
@@ -630,10 +676,8 @@ def get_sentiment_keyboard(user_id):
     if has_user_voted(user_id):
         up, down = get_vote_results()
         total = up + down
-        
         share_text = quote(f"🔥 Dólar en {MARKET_DATA['price']:.2f} Bs. Revisa la tasa real aquí:")
         share_url = f"https://t.me/share/url?url=https://t.me/tasabinance_bot&text={share_text}"
-        
         return [
             [InlineKeyboardButton("🔄 Actualizar Precio", callback_data='refresh_price')],
             [InlineKeyboardButton("📤 Compartir con Amigos", url=share_url)]
@@ -659,9 +703,13 @@ def build_price_message(binance, bcv_data, time_str, user_id=None, requests_coun
             brecha = ((binance - usd_bcv) / usd_bcv) * 100
             emoji_brecha = "🔴" if brecha >= 20 else "🟠" if brecha >= 10 else "🟢"
             text += f"📈 <b>Brecha:</b> {brecha:.2f}% {emoji_brecha}\n"
-        if bcv_data.get('eur'): text += f"🇪🇺 <b>BCV (Euro):</b> {bcv_data['eur']:,.2f} Bs\n"
+        if bcv_data.get('eur'):
+            text += f"🇪🇺 <b>BCV (Euro):</b> {bcv_data['eur']:,.2f} Bs\n"
         text += "\n"
-    else: text += "🏛️ <b>BCV:</b> <i>No disponible</i>\n\n"
+    else:
+        text += "🏛️ <b>BCV:</b> <i>No disponible</i>\n\n"
+    text += f"{EMOJI_PAYPAL} <b>Tasa PayPal:</b> {paypal:,.2f} Bs\n"
+    text += f"{EMOJI_AMAZON} <b>Giftcard Amazon:</b> {amazon:,.2f} Bs\n\n"
     
     # TERMÓMETRO (AL MEDIO)
     if user_id and has_user_voted(user_id):
@@ -675,13 +723,11 @@ def build_price_message(binance, bcv_data, time_str, user_id=None, requests_coun
         text += "🗣️ <b>¿Qué dice la comunidad?</b> 👇\n\n"
 
     # RESTO
-    text += f"{EMOJI_PAYPAL} <b>Tasa PayPal:</b> {paypal:,.2f} Bs\n"
-    text += f"{EMOJI_AMAZON} <b>Giftcard Amazon:</b> {amazon:,.2f} Bs\n\n"
     text += f"{EMOJI_STORE} <i>Actualizado: {time_str}</i>\n"
-    
-    if requests_count > 100: text += f"👁 <b>{requests_count:,}</b> consultas hoy\n\n"
-    else: text += "\n"
-    
+    if requests_count > 100:
+        text += f"👁 <b>{requests_count:,}</b> consultas hoy\n\n"
+    else:
+        text += "\n"
     text += "📢 <b>Síguenos:</b> @tasabinance_bot"
     return text
 
@@ -991,7 +1037,7 @@ async def cancel(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text("Cancelado.")
     return ConversationHandler.END
 
-# --- ERROR HANDLER GLOBAL ---
+# --- ERROR HANDLER GLOBAL (SEGURIDAD) ---
 async def error_handler(update: object, context: ContextTypes.DEFAULT_TYPE) -> None:
     logging.error(msg="Exception while handling an update:", exc_info=context.error)
 
