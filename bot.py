@@ -10,7 +10,7 @@ matplotlib.use('Agg')
 import matplotlib.pyplot as plt
 from bs4 import BeautifulSoup 
 import urllib3
-from urllib.parse import quote
+from urllib.parse import quote 
 from datetime import datetime, time, timedelta
 import pytz 
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
@@ -402,9 +402,9 @@ def generate_public_price_chart():
                         textcoords="offset points", xytext=(0,15), ha='center', 
                         color='white', fontsize=11, fontweight='bold')
         
-        # 🔥 ETIQUETAS BCV (NUEVO: DEBAJO) 🔥
+        # ETIQUETAS BCV (DEBAJO)
         for i, price in enumerate(prices_bcv):
-            if price: # Solo si hay dato BCV
+            if price: 
                 ax.annotate(f"{price:.2f}", (dates[i], prices_bcv[i]), 
                             textcoords="offset points", xytext=(0,-20), ha='center', 
                             color='#2979FF', fontsize=10, fontweight='bold')
@@ -421,7 +421,6 @@ def generate_public_price_chart():
         plt.savefig(buf, format='png', facecolor=bg_color, dpi=100)
         buf.seek(0)
         plt.close()
-        
         cur.close()
         conn.close()
         return buf
@@ -453,7 +452,7 @@ def get_detailed_report_text():
             f"🔥 <b>Activos (24h):</b> {active_24h}\n"
             f"🔔 <b>Alertas Activas:</b> {active_alerts}\n"
             f"📥 <b>Consultas Hoy:</b> {requests_today}\n\n"
-            f"<i>Sistema Operativo V33 (Fase 3: Viral).</i> ✅"
+            f"<i>Sistema Operativo V34.</i> ✅"
         )
     except Exception: return "Error."
 
@@ -632,18 +631,18 @@ async def update_price_task(context: ContextTypes.DEFAULT_TYPE):
         MARKET_DATA["last_updated"] = now.strftime("%d/%m/%Y %I:%M:%S %p")
         logging.info(f"🔄 Actualizado - Bin: {new_binance}")
 
-# --- BUILDER CON NUEVAS FUNCIONES SOCIALES ---
+# --- BUILDER CON BOTONES DE VOTACIÓN REORDENADOS ---
 def get_sentiment_keyboard(user_id):
     if has_user_voted(user_id):
         up, down = get_vote_results()
         total = up + down
-        
         share_text = quote(f"🔥 Dólar en {MARKET_DATA['price']:.2f} Bs. Revisa la tasa real aquí:")
         share_url = f"https://t.me/share/url?url=https://t.me/tasabinance_bot&text={share_text}"
         
+        # AQUÍ ESTÁ EL CAMBIO: PRIMERO ACTUALIZAR, LUEGO COMPARTIR
         return [
-            [InlineKeyboardButton("🔄 Actualizar Precio", callback_data='refresh_price')]
-            [InlineKeyboardButton("📤 Compartir con Amigos", url=share_url)],
+            [InlineKeyboardButton("🔄 Actualizar Precio", callback_data='refresh_price')],
+            [InlineKeyboardButton("📤 Compartir con Amigos", url=share_url)]
         ]
     else:
         return [
@@ -701,33 +700,16 @@ async def send_daily_report(context: ContextTypes.DEFAULT_TYPE):
 
     time_str = datetime.now(TIMEZONE).strftime("%d/%m/%Y %I:%M:%S %p")
     hour = datetime.now(TIMEZONE).hour
-    
-    yesterday_close = await asyncio.to_thread(get_yesterday_close)
-    variation = 0
-    if yesterday_close:
-        variation = ((binance - yesterday_close) / yesterday_close) * 100
-        
-    if hour < 12: 
-        msg_header = "☀️ <b>¡Buenos días!</b>"
-        if abs(variation) < 0.5: msg_header += " Mercado tranquilo ☕"
-        elif variation > 1.5: msg_header += " ¡Amaneció movido! ⚠️"
-        else: msg_header += " Así abre el mercado:"
-    else: 
-        msg_header = "🌤 <b>Reporte de la Tarde:</b>"
-        up, down = await asyncio.to_thread(get_vote_results)
-        total = up + down
-        if total > 50: 
-            winner = "ALCISTA 🚀" if up > down else "BAJISTA 📉"
-            msg_header += f"\n📊 La comunidad votó: <b>{winner}</b>"
+    header = "☀️ <b>¡Buenos días! Así abre el mercado:</b>" if hour < 12 else "🌤 <b>Reporte de la Tarde:</b>"
 
     body = build_price_message(binance, bcv, time_str)
     body = body.replace(f"{EMOJI_STATS} <b>MONITOR DE TASAS</b>\n\n", "")
-    text = f"{msg_header}\n\n{body}"
+    text = f"{header}\n\n{body}"
 
-    # Botón compartir en reporte también
+    # Botón compartir en reporte también (Mismo orden)
     share_text = quote(f"🔥 Dólar en {binance:.2f} Bs. Revisa la tasa real aquí:")
     share_url = f"https://t.me/share/url?url=https://t.me/tasabinance_bot&text={share_text}"
-    keyboard = [[InlineKeyboardButton("📤 Compartir", url=share_url)], [InlineKeyboardButton("🔄 Ver en tiempo real", callback_data='refresh_price')]]
+    keyboard = [[InlineKeyboardButton("🔄 Ver en tiempo real", callback_data='refresh_price')], [InlineKeyboardButton("📤 Compartir", url=share_url)]]
     
     users = await asyncio.to_thread(get_all_users_ids)
     batch_size = 30
@@ -787,21 +769,17 @@ async def grafico(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id = update.effective_user.id
     await asyncio.to_thread(track_user, update.effective_user)
     await asyncio.to_thread(log_activity, user_id, "/grafico")
-    
     global GRAPH_CACHE
     today_str = datetime.now(TIMEZONE).date().isoformat()
-    
     if GRAPH_CACHE["date"] == today_str and GRAPH_CACHE["photo_id"]:
         try:
             await update.message.reply_photo(photo=GRAPH_CACHE["photo_id"], caption="📉 <b>Promedio Diario (Semanal)</b>\n\n📲 <i>¡Compártelo en tus estados!</i>", parse_mode=ParseMode.HTML)
             return
         except Exception: GRAPH_CACHE["photo_id"] = None
-            
     await update.message.reply_chat_action("upload_photo")
     img_buf = await asyncio.to_thread(generate_public_price_chart)
-    
     if img_buf:
-        msg = await update.message.reply_photo(photo=img_buf, caption="📉 <b>Promedio Diario (Semanal)</b>\n\n📲 <i>¡Compártelo en tus estados!</i>", parse_mode=ParseMode.HTML)
+        msg = await update.message.reply_photo(photo=img_buf, caption="📉 <b>Promedio Diario (Semanal)</b>\n\n<i>Precio promedio ponderado del día.</i>", parse_mode=ParseMode.HTML)
         if msg.photo:
             GRAPH_CACHE["date"] = today_str
             GRAPH_CACHE["photo_id"] = msg.photo[-1].file_id
@@ -853,7 +831,6 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     data = query.data
     
     # --- LOGICA DE VOTO FIX UX ---
-    # Si vota, guardamos, avisamos y forzamos el refresh para que el mensaje cambie
     if data in ['vote_up', 'vote_down']:
         vote_type = 'UP' if data == 'vote_up' else 'DOWN'
         if await asyncio.to_thread(cast_vote, user_id, vote_type):
@@ -862,7 +839,6 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         else:
             await query.answer("⚠️ Ya votaste hoy.")
         
-        # CAMBIO CLAVE: Sobrescribimos 'data' para que entre al bloque de refresh
         data = 'refresh_price'
 
     if data == 'refresh_price':
@@ -874,15 +850,12 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         if binance:
             req_count = await asyncio.to_thread(get_daily_requests_count)
             text = build_price_message(binance, bcv, time_str, user_id, req_count)
-            
-            # Al llamar a get_sentiment_keyboard AHORA, detectará el voto y mostrará resultados
             keyboard = get_sentiment_keyboard(user_id)
             try:
                 await query.edit_message_text(text=text, parse_mode=ParseMode.HTML, reply_markup=InlineKeyboardMarkup(keyboard))
             except BadRequest: pass
             except Exception as e: logging.error(f"Error edit: {e}")
             
-    # Solo respondemos si no fue voto (porque el voto ya respondió arriba)
     try: await query.answer()
     except: pass
 
