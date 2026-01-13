@@ -633,8 +633,10 @@ def get_sentiment_keyboard(user_id):
     if has_user_voted(user_id):
         up, down = get_vote_results()
         total = up + down
+        
         share_text = quote(f"🔥 Dólar en {MARKET_DATA['price']:.2f} Bs. Revisa la tasa real aquí:")
         share_url = f"https://t.me/share/url?url=https://t.me/tasabinance_bot&text={share_text}"
+        
         return [
             [InlineKeyboardButton("🔄 Actualizar Precio", callback_data='refresh_price')],
             [InlineKeyboardButton("📤 Compartir con Amigos", url=share_url)]
@@ -671,9 +673,9 @@ def build_price_message(binance, bcv_data, time_str, user_id=None, requests_coun
         if total > 0:
             up_pct = int((up / total) * 100)
             down_pct = int((down / total) * 100)
-            text += f"🗣️ <b>¿Qué dice la comunidad?</b>\n🚀 {up_pct}% <b>Alcista</b> | 📉 {down_pct}% <b>Bajista</b>\n\n"
+            text += f"🌡️ <b>Termómetro de la Comunidad:</b>\n🚀 {up_pct}% | 📉 {down_pct}%\n\n"
     elif user_id:
-        text += "🗣️ <b>¿Qué dice la comunidad?</b> 👇\n\n"
+        text += "🌡️ <b>Termómetro: ¿Qué pasará hoy?</b> 👇\n\n"
 
     # RESTO
     text += f"{EMOJI_PAYPAL} <b>Tasa PayPal:</b> {paypal:,.2f} Bs\n"
@@ -705,23 +707,52 @@ async def send_daily_report(context: ContextTypes.DEFAULT_TYPE):
     share_url = f"https://t.me/share/url?url=https://t.me/tasabinance_bot&text={share_text}"
     keyboard = [[InlineKeyboardButton("🔄 Ver en tiempo real", callback_data='refresh_price')], [InlineKeyboardButton("📤 Compartir", url=share_url)]]
     
+    # 2️⃣ FUNCIÓN DE ENVÍO EN SEGUNDO PLANO (FIRE-AND-FORGET)
+    asyncio.create_task(background_broadcast(context.application, text, ADMIN_ID))
+
+# --- NUEVA FUNCIÓN: BACKGROUND BROADCAST ---
+async def background_broadcast(app, mensaje, admin_id):
     users = await asyncio.to_thread(get_all_users_ids)
-    batch_size = 30
+    enviados = 0
+    fallidos = 0
+    batch_size = 25
+    
+    # Notificar inicio al admin
+    logging.info(f"📢 Iniciando difusión background a {len(users)} usuarios...")
+
     for i in range(0, len(users), batch_size):
         batch = users[i:i + batch_size]
         tasks = []
         for user_id in batch:
             tasks.append(
-                context.bot.send_message(
-                    chat_id=user_id, 
-                    text=text, 
-                    parse_mode=ParseMode.HTML, 
-                    reply_markup=InlineKeyboardMarkup(keyboard),
+                app.bot.send_message(
+                    chat_id=user_id,
+                    text=mensaje,
+                    parse_mode=ParseMode.HTML,
                     disable_notification=True
                 )
             )
-        await asyncio.gather(*tasks, return_exceptions=True)
-        await asyncio.sleep(0.8)
+        
+        # Ejecutar lote en paralelo
+        results = await asyncio.gather(*tasks, return_exceptions=True)
+        
+        for res in results:
+            if isinstance(res, Exception):
+                fallidos += 1
+            else:
+                enviados += 1
+        
+        await asyncio.sleep(0.8) # Respetar límites
+
+    # 📬 Reporte FINAL al admin
+    try:
+        await app.bot.send_message(
+            chat_id=admin_id,
+            text=f"✅ <b>Difusión Completada</b>\n\n📨 Enviados: {enviados}\n❌ Fallidos: {fallidos}",
+            parse_mode=ParseMode.HTML
+        )
+    except Exception as e:
+        logging.error(f"Error enviando reporte final: {e}")
 
 # ==============================================================================
 #  COMANDOS
@@ -748,7 +779,7 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
         f"{EMOJI_STATS} <b>/grafico</b> → Tendencia Semanal (Promedio).\n"
         f"🧠 <b>/ia</b> → Predicción de Tendencia.\n"
         f"{EMOJI_ALERTA} <b>/alerta</b> → Avísame si sube o baja.\n"
-        f"🏆 <b>/referidos</b> → ¡Gana $10 USDT!\n\n"
+        f"🎁 <b>/referidos</b> → ¡Invita y Gana!\n\n"
         f"🧮 <b>CALCULADORA (Toca abajo):</b>\n"
         f"• <b>/usdt</b> → Dólares a Bs.\n"
         f"• <b>/bs</b> → Bs a Dólares."
@@ -780,17 +811,11 @@ async def grafico(update: Update, context: ContextTypes.DEFAULT_TYPE):
     else:
         await update.message.reply_text("📉 Recopilando datos históricos. Vuelve pronto.")
 
-# 🔥 COMANDO REFERIDOS ACTUALIZADO FASE 3 (TICKETS) 🔥
 async def referidos(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id = update.effective_user.id
     await asyncio.to_thread(track_user, update.effective_user)
     await asyncio.to_thread(log_activity, user_id, "/referidos")
     count, rank, top_3 = await asyncio.to_thread(get_referral_stats, user_id)
-    
-    # LÓGICA DE TICKETS
-    tickets = count // 5
-    missing_for_next = 5 - (count % 5)
-
     ranking_text = ""
     medals = ["🥇", "🥈", "🥉"]
     for i, (name, score) in enumerate(top_3):
@@ -798,29 +823,7 @@ async def referidos(update: Update, context: ContextTypes.DEFAULT_TYPE):
         clean_name = name.split()[0] if name else "Usuario"
         ranking_text += f"{medal} <b>{clean_name}</b> — {score} refs\n"
     invite_link = f"https://t.me/{context.bot.username}?start={user_id}"
-    
-    text = (
-        f"🎁 <b>PROGRAMA DE REFERIDOS (PREMIOS + SORTEO)</b>\n\n"
-        f"¡Gana dinero real invitando a tus amigos!\n"
-        f"📅 <b>Corte:</b> Día 30 de cada mes.\n\n"
-        f"🏆 <b>PREMIOS MENSUALES:</b>\n"
-        f"🥇 1er Lugar: <b>$10 USDT</b>\n"
-        f"🥈 2do Lugar: <b>$5 USDT</b>\n"
-        f"🥉 3er Lugar: <b>$5 USDT</b>\n\n"
-        f"🎟 <b>SORTEO EXTRA:</b>\n"
-        f"Ganas <b>1 Ticket</b> por cada 5 amigos invitados.\n\n"
-        f"👤 <b>TUS ESTADÍSTICAS:</b>\n"
-        f"👥 Invitados: <b>{count}</b>\n"
-        f"🎫 <b>Tickets Acumulados:</b> {tickets}\n"
-        f"💡 <i>Te faltan {missing_for_next} referidos para otro ticket.</i>\n\n"
-        f"🏆 Tu Rango Global: <b>#{rank}</b>\n\n"
-        f"🔗 <b>TU ENLACE ÚNICO:</b>\n"
-        f"<code>{invite_link}</code>\n"
-        f"<i>(Toca para copiar)</i>\n\n"
-        f"📊 <b>TOP 3 LÍDERES:</b>\n"
-        f"{ranking_text}\n"
-        f"👇 <b>¡Compártelo ahora!</b>"
-    )
+    text = (f"🎁 <b>PROGRAMA DE REFERIDOS (PREMIOS USDT)</b>\n\n¡Gana dinero real invitando a tus amigos!\n📅 <b>Corte y Pago:</b> Día 30 de cada mes.\n\n🏆 <b>PREMIOS MENSUALES:</b>\n🥇 1er Lugar: <b>$10 USDT</b>\n🥈 2do Lugar: <b>$5 USDT</b>\n🥉 3er Lugar: <b>$5 USDT</b>\n\n👤 <b>TUS ESTADÍSTICAS:</b>\n👥 Invitados: <b>{count}</b>\n🏆 Tu Rango: <b>#{rank}</b>\n\n🔗 <b>TU ENLACE ÚNICO:</b>\n<code>{invite_link}</code>\n<i>(Toca para copiar y compartir)</i>\n\n📊 <b>TOP 3 LÍDERES:</b>\n{ranking_text}\n👇 <b>¡Compártelo ahora!</b>")
     await update.message.reply_text(text, parse_mode=ParseMode.HTML, disable_web_page_preview=True)
 
 async def precio(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -852,7 +855,7 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
     data = query.data
     
-    # --- LOGICA DE VOTO ---
+    # --- LOGICA DE VOTO FIX UX ---
     if data in ['vote_up', 'vote_down']:
         vote_type = 'UP' if data == 'vote_up' else 'DOWN'
         if await asyncio.to_thread(cast_vote, user_id, vote_type):
@@ -860,6 +863,7 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
             await query.answer("✅ ¡Voto registrado!")
         else:
             await query.answer("⚠️ Ya votaste hoy.")
+        
         data = 'refresh_price'
 
     if data == 'refresh_price':
@@ -906,6 +910,7 @@ async def stats(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if chart: await context.bot.send_photo(chat_id=ADMIN_ID, photo=chart, caption=report, parse_mode=ParseMode.HTML)
     else: await update.message.reply_text("❌ Error generando gráfico.")
 
+# --- 2️⃣ COMANDO /GLOBAL (FIRE-AND-FORGET) ---
 async def global_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if update.effective_user.id != ADMIN_ID: return
     mensaje_original = update.message.text_html
@@ -915,22 +920,21 @@ async def global_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not mensaje_final:
         await update.message.reply_text("⚠️ Escribe el mensaje.", parse_mode=ParseMode.HTML)
         return
-    users = await asyncio.to_thread(get_all_users_ids)
-    if not users:
-        await update.message.reply_text("⚠️ No hay usuarios.")
-        return
-    await update.message.reply_text(f"🚀 Iniciando difusión rápida a {len(users)} usuarios...")
-    enviados = 0
-    fallidos = 0
-    batch_size = 25
-    for i in range(0, len(users), batch_size):
-        batch = users[i:i + batch_size]
-        tasks = []
-        for user_id in batch:
-            tasks.append(context.bot.send_message(chat_id=user_id, text=mensaje_final, parse_mode=ParseMode.HTML))
-        await asyncio.gather(*tasks, return_exceptions=True)
-        await asyncio.sleep(0.8)
-    await update.message.reply_text(f"✅ <b>Difusión Completada</b>\n\n📨 Enviados: {enviados}\n❌ Fallidos: {fallidos}", parse_mode=ParseMode.HTML)
+    
+    # RESPUESTA INMEDIATA AL ADMIN
+    await update.message.reply_text(
+        "🚀 <b>Difusión iniciada en segundo plano.</b>\nEl bot seguirá funcionando normal. Te avisaré al terminar.", 
+        parse_mode=ParseMode.HTML
+    )
+    
+    # LANZAR TAREA EN PARALELO (NO BLOQUEA)
+    asyncio.create_task(
+        background_broadcast(
+            context.application,
+            mensaje_final,
+            ADMIN_ID
+        )
+    )
 
 async def start_alert(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await asyncio.to_thread(track_user, update.effective_user)
