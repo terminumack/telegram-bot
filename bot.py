@@ -358,7 +358,6 @@ def generate_stats_chart():
 def generate_public_price_chart():
     if not DATABASE_URL: return None
     buf = io.BytesIO()
-    
     try:
         conn = psycopg2.connect(DATABASE_URL)
         cur = conn.cursor()
@@ -367,7 +366,6 @@ def generate_public_price_chart():
             FROM daily_stats ORDER BY date DESC LIMIT 7
         """)
         data = cur.fetchall()
-        
         today_date = datetime.now(TIMEZONE).date()
         current_binance = MARKET_DATA["price"]
         current_bcv = MARKET_DATA["bcv"]["usd"] if MARKET_DATA["bcv"] else 0
@@ -375,45 +373,28 @@ def generate_public_price_chart():
         if not has_today and current_binance:
              data.insert(0, (today_date, current_binance, current_bcv))
         data.sort(key=lambda x: x[0]) 
-        
         dates = [d[0].strftime('%d/%m') for d in data]
         prices_bin = [d[1] for d in data]
         prices_bcv = [d[2] if d[2] > 0 else None for d in data]
         if not prices_bin: return None
-
         plt.style.use('dark_background')
         fig, ax = plt.subplots(figsize=(6, 8)) 
         bg_color = '#1e1e1e'
         fig.patch.set_facecolor(bg_color)
         ax.set_facecolor(bg_color)
-        
         ax.plot(dates, prices_bin, color='#F3BA2F', marker='o', linewidth=4, markersize=10, label="Binance")
         ax.plot(dates, prices_bcv, color='#2979FF', marker='s', linewidth=2, markersize=8, linestyle='--', label="BCV")
-        
         ax.set_title('TASA BINANCE VZLA', color='#F3BA2F', fontsize=18, fontweight='bold', pad=25)
         ax.set_xlabel('Últimos 7 Días', color='white', fontsize=12)
         ax.grid(color='#333333', linestyle='--', linewidth=0.5)
         ax.legend(loc="upper center", bbox_to_anchor=(0.5, 1.05), ncol=2, frameon=False, fontsize=11)
-        
         for i, price in enumerate(prices_bin):
-            ax.annotate(f"{price:.2f}", (dates[i], prices_bin[i]), 
-                        textcoords="offset points", xytext=(0,15), ha='center', 
-                        color='white', fontsize=11, fontweight='bold')
-        
+            ax.annotate(f"{price:.2f}", (dates[i], prices_bin[i]), textcoords="offset points", xytext=(0,15), ha='center', color='white', fontsize=11, fontweight='bold')
         for i, price in enumerate(prices_bcv):
             if price: 
-                ax.annotate(f"{price:.2f}", (dates[i], prices_bcv[i]), 
-                            textcoords="offset points", xytext=(0,-20), ha='center', 
-                            color='#2979FF', fontsize=10, fontweight='bold')
-
-        fig.text(0.5, 0.5, '@tasabinance_bot', 
-                 fontsize=28, color='white', 
-                 ha='center', va='center', alpha=0.08, rotation=45, fontweight='bold')
-                 
-        fig.text(0.5, 0.03, '¡Úsalo Gratis en Telegram!', 
-                 fontsize=12, color='#F3BA2F', 
-                 ha='center', va='bottom', fontweight='bold')
-
+                ax.annotate(f"{price:.2f}", (dates[i], prices_bcv[i]), textcoords="offset points", xytext=(0,-20), ha='center', color='#2979FF', fontsize=10, fontweight='bold')
+        fig.text(0.5, 0.5, '@tasabinance_bot', fontsize=28, color='white', ha='center', va='center', alpha=0.08, rotation=45, fontweight='bold')
+        fig.text(0.5, 0.03, '¡Úsalo Gratis en Telegram!', fontsize=12, color='#F3BA2F', ha='center', va='bottom', fontweight='bold')
         plt.tight_layout()
         plt.savefig(buf, format='png', facecolor=bg_color, dpi=100)
         buf.seek(0)
@@ -449,7 +430,7 @@ def get_detailed_report_text():
             f"🔥 <b>Activos (24h):</b> {active_24h}\n"
             f"🔔 <b>Alertas Activas:</b> {active_alerts}\n"
             f"📥 <b>Consultas Hoy:</b> {requests_today}\n\n"
-            f"<i>Sistema Operativo V37 (Tickets).</i> ✅"
+            f"<i>Sistema Operativo V37 (Fix BCV).</i> ✅"
         )
     except Exception: return "Error."
 
@@ -559,7 +540,7 @@ def save_mining_data(binance, bcv_val):
 # ==============================================================================
 def fetch_binance_price():
     url = "https://p2p.binance.com/bapi/c2c/v2/friendly/c2c/adv/search"
-    headers = {"Content-Type": "application/json", "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36"}
+    headers = {"Content-Type": "application/json", "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"}
     last_known = MARKET_DATA["price"] if MARKET_DATA["price"] else 600
     dynamic_amount = int(last_known * FILTER_MIN_USD)
     payload = {
@@ -588,21 +569,37 @@ def fetch_binance_price():
         return sum(prices) / len(prices) if prices else None
     except Exception: return None
 
+# 🔥 FIX BCV: User-Agent + Logging + Error Handling 🔥
 def fetch_bcv_price():
     url = "http://www.bcv.org.ve/"
-    headers = {"User-Agent": "Mozilla/5.0"}
+    headers = {
+        # Usamos el mismo User-Agent moderno de Binance para evitar bloqueo
+        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
+    }
     rates = {'usd': None, 'eur': None}
     try:
-        response = requests.get(url, headers=headers, timeout=20, verify=False)
+        # Aumentamos timeout a 30s
+        response = requests.get(url, headers=headers, timeout=30, verify=False)
+        
         if response.status_code == 200:
             soup = BeautifulSoup(response.content, 'html.parser')
             dolar_div = soup.find('div', id='dolar')
-            if dolar_div: rates['usd'] = float(dolar_div.find('strong').text.strip().replace(',', '.'))
+            if dolar_div: 
+                rates['usd'] = float(dolar_div.find('strong').text.strip().replace(',', '.'))
             euro_div = soup.find('div', id='euro')
-            if euro_div: rates['eur'] = float(euro_div.find('strong').text.strip().replace(',', '.'))
+            if euro_div: 
+                rates['eur'] = float(euro_div.find('strong').text.strip().replace(',', '.'))
+            
+            # Log de éxito
+            if rates['usd']:
+                logging.info(f"✅ BCV ENCONTRADO: {rates['usd']} Bs")
             return rates if (rates['usd'] or rates['eur']) else None
-    except Exception: return None
-    return None
+        else:
+            logging.error(f"❌ BCV Error HTTP: {response.status_code}")
+            return None
+    except Exception as e: 
+        logging.error(f"❌ BCV Exception: {e}")
+        return None
 
 async def update_price_task(context: ContextTypes.DEFAULT_TYPE):
     new_binance = await asyncio.to_thread(fetch_binance_price)
@@ -673,9 +670,9 @@ def build_price_message(binance, bcv_data, time_str, user_id=None, requests_coun
         if total > 0:
             up_pct = int((up / total) * 100)
             down_pct = int((down / total) * 100)
-            text += f"🌡️ <b>Termómetro de la Comunidad:</b>\n🚀 {up_pct}% | 📉 {down_pct}%\n\n"
+            text += f"🗣️ <b>¿Qué dice la comunidad?</b>\n🚀 {up_pct}% <b>Alcista</b> | 📉 {down_pct}% <b>Bajista</b>\n\n"
     elif user_id:
-        text += "🌡️ <b>Termómetro: ¿Qué pasará hoy?</b> 👇\n\n"
+        text += "🗣️ <b>¿Qué dice la comunidad?</b> 👇\n\n"
 
     # RESTO
     text += f"{EMOJI_PAYPAL} <b>Tasa PayPal:</b> {paypal:,.2f} Bs\n"
@@ -707,52 +704,23 @@ async def send_daily_report(context: ContextTypes.DEFAULT_TYPE):
     share_url = f"https://t.me/share/url?url=https://t.me/tasabinance_bot&text={share_text}"
     keyboard = [[InlineKeyboardButton("🔄 Ver en tiempo real", callback_data='refresh_price')], [InlineKeyboardButton("📤 Compartir", url=share_url)]]
     
-    # 2️⃣ FUNCIÓN DE ENVÍO EN SEGUNDO PLANO (FIRE-AND-FORGET)
-    asyncio.create_task(background_broadcast(context.application, text, ADMIN_ID))
-
-# --- NUEVA FUNCIÓN: BACKGROUND BROADCAST ---
-async def background_broadcast(app, mensaje, admin_id):
     users = await asyncio.to_thread(get_all_users_ids)
-    enviados = 0
-    fallidos = 0
-    batch_size = 25
-    
-    # Notificar inicio al admin
-    logging.info(f"📢 Iniciando difusión background a {len(users)} usuarios...")
-
+    batch_size = 30
     for i in range(0, len(users), batch_size):
         batch = users[i:i + batch_size]
         tasks = []
         for user_id in batch:
             tasks.append(
-                app.bot.send_message(
-                    chat_id=user_id,
-                    text=mensaje,
-                    parse_mode=ParseMode.HTML,
+                context.bot.send_message(
+                    chat_id=user_id, 
+                    text=text, 
+                    parse_mode=ParseMode.HTML, 
+                    reply_markup=InlineKeyboardMarkup(keyboard),
                     disable_notification=True
                 )
             )
-        
-        # Ejecutar lote en paralelo
-        results = await asyncio.gather(*tasks, return_exceptions=True)
-        
-        for res in results:
-            if isinstance(res, Exception):
-                fallidos += 1
-            else:
-                enviados += 1
-        
-        await asyncio.sleep(0.8) # Respetar límites
-
-    # 📬 Reporte FINAL al admin
-    try:
-        await app.bot.send_message(
-            chat_id=admin_id,
-            text=f"✅ <b>Difusión Completada</b>\n\n📨 Enviados: {enviados}\n❌ Fallidos: {fallidos}",
-            parse_mode=ParseMode.HTML
-        )
-    except Exception as e:
-        logging.error(f"Error enviando reporte final: {e}")
+        await asyncio.gather(*tasks, return_exceptions=True)
+        await asyncio.sleep(0.8)
 
 # ==============================================================================
 #  COMANDOS
@@ -910,7 +878,6 @@ async def stats(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if chart: await context.bot.send_photo(chat_id=ADMIN_ID, photo=chart, caption=report, parse_mode=ParseMode.HTML)
     else: await update.message.reply_text("❌ Error generando gráfico.")
 
-# --- 2️⃣ COMANDO /GLOBAL (FIRE-AND-FORGET) ---
 async def global_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if update.effective_user.id != ADMIN_ID: return
     mensaje_original = update.message.text_html
@@ -920,21 +887,22 @@ async def global_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not mensaje_final:
         await update.message.reply_text("⚠️ Escribe el mensaje.", parse_mode=ParseMode.HTML)
         return
-    
-    # RESPUESTA INMEDIATA AL ADMIN
-    await update.message.reply_text(
-        "🚀 <b>Difusión iniciada en segundo plano.</b>\nEl bot seguirá funcionando normal. Te avisaré al terminar.", 
-        parse_mode=ParseMode.HTML
-    )
-    
-    # LANZAR TAREA EN PARALELO (NO BLOQUEA)
-    asyncio.create_task(
-        background_broadcast(
-            context.application,
-            mensaje_final,
-            ADMIN_ID
-        )
-    )
+    users = await asyncio.to_thread(get_all_users_ids)
+    if not users:
+        await update.message.reply_text("⚠️ No hay usuarios.")
+        return
+    await update.message.reply_text(f"🚀 Iniciando difusión rápida a {len(users)} usuarios...")
+    enviados = 0
+    fallidos = 0
+    batch_size = 25
+    for i in range(0, len(users), batch_size):
+        batch = users[i:i + batch_size]
+        tasks = []
+        for user_id in batch:
+            tasks.append(context.bot.send_message(chat_id=user_id, text=mensaje_final, parse_mode=ParseMode.HTML))
+        await asyncio.gather(*tasks, return_exceptions=True)
+        await asyncio.sleep(0.8)
+    await update.message.reply_text(f"✅ <b>Difusión Completada</b>\n\n📨 Enviados: {enviados}\n❌ Fallidos: {fallidos}", parse_mode=ParseMode.HTML)
 
 async def start_alert(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await asyncio.to_thread(track_user, update.effective_user)
@@ -1023,7 +991,7 @@ async def cancel(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text("Cancelado.")
     return ConversationHandler.END
 
-# --- ERROR HANDLER GLOBAL (SEGURIDAD) ---
+# --- ERROR HANDLER GLOBAL ---
 async def error_handler(update: object, context: ContextTypes.DEFAULT_TYPE) -> None:
     logging.error(msg="Exception while handling an update:", exc_info=context.error)
 
