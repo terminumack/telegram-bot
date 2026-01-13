@@ -642,8 +642,8 @@ def get_sentiment_keyboard(user_id):
         share_url = f"https://t.me/share/url?url=https://t.me/tasabinance_bot&text={share_text}"
         
         return [
-            [InlineKeyboardButton("📤 Compartir con Amigos", url=share_url)],
             [InlineKeyboardButton("🔄 Actualizar Precio", callback_data='refresh_price')]
+            [InlineKeyboardButton("📤 Compartir con Amigos", url=share_url)],
         ]
     else:
         return [
