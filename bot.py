@@ -628,13 +628,34 @@ async def update_price_task(context: ContextTypes.DEFAULT_TYPE):
         MARKET_DATA["last_updated"] = now.strftime("%d/%m/%Y %I:%M:%S %p")
         logging.info(f"🔄 Actualizado - Bin: {new_binance}")
 
-# --- FUNCIÓN GENERADORA DEL MENSAJE (REORDENADA) ---
+# --- BUILDER CON NUEVAS FUNCIONES SOCIALES ---
+# AQUI SE DEFINE LA FUNCIÓN QUE FALTABA
+def get_sentiment_keyboard(user_id):
+    if has_user_voted(user_id):
+        up, down = get_vote_results()
+        total = up + down
+        
+        share_text = quote(f"🔥 Dólar en {MARKET_DATA['price']:.2f} Bs. Revisa la tasa real aquí:")
+        share_url = f"https://t.me/share/url?url=https://t.me/tasabinance_bot&text={share_text}"
+        
+        return [
+            [InlineKeyboardButton("🔄 Actualizar Precio", callback_data='refresh_price')],
+            [InlineKeyboardButton("📤 Compartir con Amigos", url=share_url)]
+        ]
+    else:
+        return [
+            [
+                InlineKeyboardButton("🚀 Subirá", callback_data='vote_up'),
+                InlineKeyboardButton("📉 Bajará", callback_data='vote_down')
+            ],
+            [InlineKeyboardButton("🔄 Actualizar Precio", callback_data='refresh_price')]
+        ]
+
 def build_price_message(binance, bcv_data, time_str, user_id=None, requests_count=0):
     paypal = binance * 0.90
     amazon = binance * 0.75
     text = f"{EMOJI_STATS} <b>MONITOR DE TASAS</b>\n\n"
     text += f"{EMOJI_BINANCE} <b>Tasa Binance:</b> {binance:,.2f} Bs\n\n"
-    
     if bcv_data:
         if bcv_data.get('usd'):
             usd_bcv = bcv_data['usd']
@@ -651,7 +672,7 @@ def build_price_message(binance, bcv_data, time_str, user_id=None, requests_coun
     text += f"{EMOJI_PAYPAL} <b>Tasa PayPal:</b> {paypal:,.2f} Bs\n"
     text += f"{EMOJI_AMAZON} <b>Giftcard Amazon:</b> {amazon:,.2f} Bs\n\n"
     
-    # 🔥 AQUI SE MOVIERON: Comunidad antes, Footer al final 🔥
+    # TERMÓMETRO
     if user_id and has_user_voted(user_id):
         up, down = get_vote_results()
         total = up + down
