@@ -396,10 +396,18 @@ def generate_public_price_chart():
         ax.grid(color='#333333', linestyle='--', linewidth=0.5)
         ax.legend(loc="upper center", bbox_to_anchor=(0.5, 1.05), ncol=2, frameon=False, fontsize=11)
         
+        # ETIQUETAS BINANCE (ARRIBA)
         for i, price in enumerate(prices_bin):
             ax.annotate(f"{price:.2f}", (dates[i], prices_bin[i]), 
                         textcoords="offset points", xytext=(0,15), ha='center', 
                         color='white', fontsize=11, fontweight='bold')
+        
+        # 🔥 ETIQUETAS BCV (NUEVO: DEBAJO) 🔥
+        for i, price in enumerate(prices_bcv):
+            if price: # Solo si hay dato BCV
+                ax.annotate(f"{price:.2f}", (dates[i], prices_bcv[i]), 
+                            textcoords="offset points", xytext=(0,-20), ha='center', 
+                            color='#2979FF', fontsize=10, fontweight='bold')
 
         fig.text(0.5, 0.5, '@tasabinance_bot', 
                  fontsize=28, color='white', 
@@ -413,6 +421,7 @@ def generate_public_price_chart():
         plt.savefig(buf, format='png', facecolor=bg_color, dpi=100)
         buf.seek(0)
         plt.close()
+        
         cur.close()
         conn.close()
         return buf
@@ -444,7 +453,7 @@ def get_detailed_report_text():
             f"🔥 <b>Activos (24h):</b> {active_24h}\n"
             f"🔔 <b>Alertas Activas:</b> {active_alerts}\n"
             f"📥 <b>Consultas Hoy:</b> {requests_today}\n\n"
-            f"<i>Sistema Operativo V34 (UX Fix).</i> ✅"
+            f"<i>Sistema Operativo V33 (Fase 3: Viral).</i> ✅"
         )
     except Exception: return "Error."
 
@@ -778,15 +787,19 @@ async def grafico(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id = update.effective_user.id
     await asyncio.to_thread(track_user, update.effective_user)
     await asyncio.to_thread(log_activity, user_id, "/grafico")
+    
     global GRAPH_CACHE
     today_str = datetime.now(TIMEZONE).date().isoformat()
+    
     if GRAPH_CACHE["date"] == today_str and GRAPH_CACHE["photo_id"]:
         try:
             await update.message.reply_photo(photo=GRAPH_CACHE["photo_id"], caption="📉 <b>Promedio Diario (Semanal)</b>\n\n📲 <i>¡Compártelo en tus estados!</i>", parse_mode=ParseMode.HTML)
             return
         except Exception: GRAPH_CACHE["photo_id"] = None
+            
     await update.message.reply_chat_action("upload_photo")
     img_buf = await asyncio.to_thread(generate_public_price_chart)
+    
     if img_buf:
         msg = await update.message.reply_photo(photo=img_buf, caption="📉 <b>Promedio Diario (Semanal)</b>\n\n📲 <i>¡Compártelo en tus estados!</i>", parse_mode=ParseMode.HTML)
         if msg.photo:
@@ -1012,6 +1025,10 @@ async def cancel(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text("Cancelado.")
     return ConversationHandler.END
 
+# --- ERROR HANDLER GLOBAL (SEGURIDAD) ---
+async def error_handler(update: object, context: ContextTypes.DEFAULT_TYPE) -> None:
+    logging.error(msg="Exception while handling an update:", exc_info=context.error)
+
 if __name__ == "__main__":
     init_db()
     if not TOKEN: exit(1)
@@ -1021,6 +1038,8 @@ if __name__ == "__main__":
     PORT = int(os.environ.get("PORT", "8080"))
 
     app = ApplicationBuilder().token(TOKEN).build()
+    
+    app.add_error_handler(error_handler)
     
     # Manejadores de Conversación
     conv_usdt = ConversationHandler(
