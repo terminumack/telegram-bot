@@ -4,11 +4,13 @@ import requests
 import psycopg2 
 import asyncio
 import io 
+import random
 import matplotlib
 matplotlib.use('Agg') 
 import matplotlib.pyplot as plt
 from bs4 import BeautifulSoup 
 import urllib3
+from urllib.parse import quote
 from datetime import datetime, time, timedelta
 import pytz 
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
@@ -80,7 +82,6 @@ def init_db():
         conn = psycopg2.connect(DATABASE_URL)
         cur = conn.cursor()
         
-        # Tablas
         cur.execute("""
             CREATE TABLE IF NOT EXISTS users (
                 user_id BIGINT PRIMARY KEY,
@@ -218,7 +219,47 @@ def log_calc(user_id, amount, currency, result):
         conn.close()
     except Exception as e: logging.error(f"Error log_calc: {e}")
 
-# --- SISTEMA DE VOTOS ---
+def get_user_loyalty(user_id):
+    if not DATABASE_URL: return (0, 0)
+    try:
+        conn = psycopg2.connect(DATABASE_URL)
+        cur = conn.cursor()
+        cur.execute("SELECT joined_at, referral_count FROM users WHERE user_id = %s", (user_id,))
+        res = cur.fetchone()
+        cur.close()
+        conn.close()
+        if res:
+            days = (datetime.now() - res[0]).days
+            refs = res[1]
+            return (days, refs)
+        return (0, 0)
+    except Exception: return (0, 0)
+
+# --- SOCIAL PROOF & VOTOS ---
+def get_daily_requests_count():
+    if not DATABASE_URL: return 0
+    try:
+        conn = psycopg2.connect(DATABASE_URL)
+        cur = conn.cursor()
+        cur.execute("SELECT COUNT(*) FROM activity_logs WHERE created_at >= CURRENT_DATE")
+        count = cur.fetchone()[0]
+        cur.close()
+        conn.close()
+        return count
+    except Exception: return 0
+
+def get_yesterday_close():
+    if not DATABASE_URL: return None
+    try:
+        conn = psycopg2.connect(DATABASE_URL)
+        cur = conn.cursor()
+        cur.execute("SELECT (price_sum / NULLIF(count, 0)) FROM daily_stats WHERE date = CURRENT_DATE - 1")
+        res = cur.fetchone()
+        cur.close()
+        conn.close()
+        return res[0] if res else None
+    except Exception: return None
+
 def cast_vote(user_id, vote_type):
     if not DATABASE_URL: return False
     today = datetime.now(TIMEZONE).date()
@@ -266,7 +307,7 @@ def has_user_voted(user_id):
     except Exception: return False
 
 # ==============================================================================
-#  ANALÍTICAS
+#  ANALÍTICAS VISUALES (DASHBOARD)
 # ==============================================================================
 def generate_stats_chart():
     if not DATABASE_URL: return None
@@ -313,9 +354,11 @@ def generate_stats_chart():
         return buf
     except Exception: return None
 
+# --- NUEVO GRÁFICO VERTICAL (STORY MODE) ---
 def generate_public_price_chart():
     if not DATABASE_URL: return None
     buf = io.BytesIO()
+    
     try:
         conn = psycopg2.connect(DATABASE_URL)
         cur = conn.cursor()
@@ -324,6 +367,7 @@ def generate_public_price_chart():
             FROM daily_stats ORDER BY date DESC LIMIT 7
         """)
         data = cur.fetchall()
+        
         today_date = datetime.now(TIMEZONE).date()
         current_binance = MARKET_DATA["price"]
         current_bcv = MARKET_DATA["bcv"]["usd"] if MARKET_DATA["bcv"] else 0
@@ -331,26 +375,42 @@ def generate_public_price_chart():
         if not has_today and current_binance:
              data.insert(0, (today_date, current_binance, current_bcv))
         data.sort(key=lambda x: x[0]) 
+        
         dates = [d[0].strftime('%d/%m') for d in data]
         prices_bin = [d[1] for d in data]
         prices_bcv = [d[2] if d[2] > 0 else None for d in data]
         if not prices_bin: return None
+
+        # CONFIGURACIÓN VERTICAL (STORY)
         plt.style.use('dark_background')
-        fig, ax = plt.subplots(figsize=(8, 5))
+        fig, ax = plt.subplots(figsize=(6, 8)) # Relación 3:4 (Mejor para móvil)
         bg_color = '#1e1e1e'
         fig.patch.set_facecolor(bg_color)
         ax.set_facecolor(bg_color)
-        ax.plot(dates, prices_bin, color='#F3BA2F', marker='o', linewidth=3, markersize=8, label="Binance")
-        ax.plot(dates, prices_bcv, color='#2979FF', marker='s', linewidth=2, markersize=6, linestyle='--', label="BCV")
-        ax.set_title('Tendencia Semanal (Binance vs BCV)', color='white', fontsize=14, fontweight='bold', pad=20)
+        
+        ax.plot(dates, prices_bin, color='#F3BA2F', marker='o', linewidth=4, markersize=10, label="Binance")
+        ax.plot(dates, prices_bcv, color='#2979FF', marker='s', linewidth=2, markersize=8, linestyle='--', label="BCV")
+        
+        ax.set_title('TASA BINANCE VZLA', color='#F3BA2F', fontsize=18, fontweight='bold', pad=25)
+        ax.set_xlabel('Últimos 7 Días', color='white', fontsize=12)
         ax.grid(color='#333333', linestyle='--', linewidth=0.5)
-        ax.legend(loc="upper left") 
+        ax.legend(loc="upper center", bbox_to_anchor=(0.5, 1.05), ncol=2, frameon=False, fontsize=11)
+        
         for i, price in enumerate(prices_bin):
-            ax.annotate(f"{price:.2f}", (dates[i], prices_bin[i]), textcoords="offset points", xytext=(0,10), ha='center', color='white', fontsize=9)
-        fig.text(0.5, 0.5, 'Telegram: @tasabinance_bot', fontsize=20, color='white', ha='center', va='center', alpha=0.1, rotation=30)
-        fig.text(0.95, 0.05, '@tasabinance_bot', fontsize=10, color='gray', ha='right', va='bottom', alpha=0.5)
+            ax.annotate(f"{price:.2f}", (dates[i], prices_bin[i]), 
+                        textcoords="offset points", xytext=(0,15), ha='center', 
+                        color='white', fontsize=11, fontweight='bold')
+
+        fig.text(0.5, 0.5, '@tasabinance_bot', 
+                 fontsize=28, color='white', 
+                 ha='center', va='center', alpha=0.08, rotation=45, fontweight='bold')
+                 
+        fig.text(0.5, 0.03, '¡Úsalo Gratis en Telegram!', 
+                 fontsize=12, color='#F3BA2F', 
+                 ha='center', va='bottom', fontweight='bold')
+
         plt.tight_layout()
-        plt.savefig(buf, format='png', facecolor=bg_color)
+        plt.savefig(buf, format='png', facecolor=bg_color, dpi=100)
         buf.seek(0)
         plt.close()
         cur.close()
@@ -384,7 +444,7 @@ def get_detailed_report_text():
             f"🔥 <b>Activos (24h):</b> {active_24h}\n"
             f"🔔 <b>Alertas Activas:</b> {active_alerts}\n"
             f"📥 <b>Consultas Hoy:</b> {requests_today}\n\n"
-            f"<i>Sistema Operativo V31.</i> ✅"
+            f"<i>Sistema Operativo V34 (UX Fix).</i> ✅"
         )
     except Exception: return "Error."
 
@@ -540,14 +600,14 @@ def fetch_bcv_price():
     return None
 
 async def update_price_task(context: ContextTypes.DEFAULT_TYPE):
-    new_binance = fetch_binance_price()
-    new_bcv = fetch_bcv_price()
+    new_binance = await asyncio.to_thread(fetch_binance_price)
+    new_bcv = await asyncio.to_thread(fetch_bcv_price)
     
     if new_binance:
         MARKET_DATA["price"] = new_binance
         MARKET_DATA["history"].append(new_binance)
         if len(MARKET_DATA["history"]) > 30: MARKET_DATA["history"].pop(0)
-        alerts = get_triggered_alerts(new_binance)
+        alerts = await asyncio.to_thread(get_triggered_alerts, new_binance)
         if alerts:
             for alert in alerts:
                 try:
@@ -555,7 +615,7 @@ async def update_price_task(context: ContextTypes.DEFAULT_TYPE):
                 except Exception: pass
         
         bcv_val = new_bcv['usd'] if (new_bcv and new_bcv.get('usd')) else 0
-        save_mining_data(new_binance, bcv_val)
+        await asyncio.to_thread(save_mining_data, new_binance, bcv_val)
 
     if new_bcv: MARKET_DATA["bcv"] = new_bcv
     if new_binance or new_bcv:
@@ -563,12 +623,19 @@ async def update_price_task(context: ContextTypes.DEFAULT_TYPE):
         MARKET_DATA["last_updated"] = now.strftime("%d/%m/%Y %I:%M:%S %p")
         logging.info(f"🔄 Actualizado - Bin: {new_binance}")
 
-# --- BUILDER CON BOTONES DE VOTACIÓN ---
+# --- BUILDER CON NUEVAS FUNCIONES SOCIALES ---
 def get_sentiment_keyboard(user_id):
     if has_user_voted(user_id):
         up, down = get_vote_results()
         total = up + down
-        return [[InlineKeyboardButton("🔄 Actualizar Precio", callback_data='refresh_price')]]
+        
+        share_text = quote(f"🔥 Dólar en {MARKET_DATA['price']:.2f} Bs. Revisa la tasa real aquí:")
+        share_url = f"https://t.me/share/url?url=https://t.me/tasabinance_bot&text={share_text}"
+        
+        return [
+            [InlineKeyboardButton("📤 Compartir con Amigos", url=share_url)],
+            [InlineKeyboardButton("🔄 Actualizar Precio", callback_data='refresh_price')]
+        ]
     else:
         return [
             [
@@ -578,7 +645,7 @@ def get_sentiment_keyboard(user_id):
             [InlineKeyboardButton("🔄 Actualizar Precio", callback_data='refresh_price')]
         ]
 
-def build_price_message(binance, bcv_data, time_str, user_id=None):
+def build_price_message(binance, bcv_data, time_str, user_id=None, requests_count=0):
     paypal = binance * 0.90
     amazon = binance * 0.75
     text = f"{EMOJI_STATS} <b>MONITOR DE TASAS</b>\n\n"
@@ -595,9 +662,14 @@ def build_price_message(binance, bcv_data, time_str, user_id=None):
     else: text += "🏛️ <b>BCV:</b> <i>No disponible</i>\n\n"
     text += f"{EMOJI_PAYPAL} <b>Tasa PayPal:</b> {paypal:,.2f} Bs\n"
     text += f"{EMOJI_AMAZON} <b>Giftcard Amazon:</b> {amazon:,.2f} Bs\n\n"
-    text += f"{EMOJI_STORE} <i>Actualizado: {time_str}</i>\n\n"
+    text += f"{EMOJI_STORE} <i>Actualizado: {time_str}</i>\n"
     
-    # 🔥 TERMÓMETRO DE LA COMUNIDAD 🔥
+    if requests_count > 100:
+        text += f"👁 <b>{requests_count:,}</b> consultas hoy\n\n"
+    else:
+        text += "\n"
+
+    # TERMÓMETRO
     if user_id and has_user_voted(user_id):
         up, down = get_vote_results()
         total = up + down
@@ -614,28 +686,57 @@ def build_price_message(binance, bcv_data, time_str, user_id=None):
 async def send_daily_report(context: ContextTypes.DEFAULT_TYPE):
     binance = MARKET_DATA["price"]
     bcv = MARKET_DATA["bcv"]
-    if not binance: binance = fetch_binance_price()
-    if not bcv: bcv = fetch_bcv_price()
+    if not binance: binance = await asyncio.to_thread(fetch_binance_price)
+    if not bcv: bcv = await asyncio.to_thread(fetch_bcv_price)
     if not binance: return
 
     time_str = datetime.now(TIMEZONE).strftime("%d/%m/%Y %I:%M:%S %p")
     hour = datetime.now(TIMEZONE).hour
-    header = "☀️ <b>¡Buenos días! Así abre el mercado:</b>" if hour < 12 else "🌤 <b>Reporte de la Tarde:</b>"
+    
+    yesterday_close = await asyncio.to_thread(get_yesterday_close)
+    variation = 0
+    if yesterday_close:
+        variation = ((binance - yesterday_close) / yesterday_close) * 100
+        
+    if hour < 12: 
+        msg_header = "☀️ <b>¡Buenos días!</b>"
+        if abs(variation) < 0.5: msg_header += " Mercado tranquilo ☕"
+        elif variation > 1.5: msg_header += " ¡Amaneció movido! ⚠️"
+        else: msg_header += " Así abre el mercado:"
+    else: 
+        msg_header = "🌤 <b>Reporte de la Tarde:</b>"
+        up, down = await asyncio.to_thread(get_vote_results)
+        total = up + down
+        if total > 50: 
+            winner = "ALCISTA 🚀" if up > down else "BAJISTA 📉"
+            msg_header += f"\n📊 La comunidad votó: <b>{winner}</b>"
 
     body = build_price_message(binance, bcv, time_str)
     body = body.replace(f"{EMOJI_STATS} <b>MONITOR DE TASAS</b>\n\n", "")
-    text = f"{header}\n\n{body}"
+    text = f"{msg_header}\n\n{body}"
 
-    # En reportes masivos no hay voto personalizado
-    keyboard = [[InlineKeyboardButton("🔄 Ver en tiempo real", callback_data='refresh_price')]]
-    users = get_all_users_ids()
-    batch_size = 25
+    # Botón compartir en reporte también
+    share_text = quote(f"🔥 Dólar en {binance:.2f} Bs. Revisa la tasa real aquí:")
+    share_url = f"https://t.me/share/url?url=https://t.me/tasabinance_bot&text={share_text}"
+    keyboard = [[InlineKeyboardButton("📤 Compartir", url=share_url)], [InlineKeyboardButton("🔄 Ver en tiempo real", callback_data='refresh_price')]]
+    
+    users = await asyncio.to_thread(get_all_users_ids)
+    batch_size = 30
     for i in range(0, len(users), batch_size):
         batch = users[i:i + batch_size]
+        tasks = []
         for user_id in batch:
-            try: await context.bot.send_message(chat_id=user_id, text=text, parse_mode=ParseMode.HTML, reply_markup=InlineKeyboardMarkup(keyboard))
-            except Exception: pass
-        await asyncio.sleep(1)
+            tasks.append(
+                context.bot.send_message(
+                    chat_id=user_id, 
+                    text=text, 
+                    parse_mode=ParseMode.HTML, 
+                    reply_markup=InlineKeyboardMarkup(keyboard),
+                    disable_notification=True
+                )
+            )
+        await asyncio.gather(*tasks, return_exceptions=True)
+        await asyncio.sleep(0.8)
 
 # ==============================================================================
 #  COMANDOS
@@ -646,8 +747,10 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if context.args:
         try: referrer_id = int(context.args[0])
         except ValueError: referrer_id = None
-    track_user(update.effective_user, referrer_id)
-    log_activity(update.effective_user.id, "/start")
+    
+    await asyncio.to_thread(track_user, update.effective_user, referrer_id)
+    await asyncio.to_thread(log_activity, update.effective_user.id, "/start")
+    
     mensaje = (
         f"👋 <b>¡Bienvenido al Monitor P2P Inteligente!</b>\n\n"
         f"Soy tu asistente financiero conectado a {EMOJI_BINANCE} <b>Binance P2P</b> y al <b>BCV</b>.\n\n"
@@ -673,19 +776,19 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 async def grafico(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id = update.effective_user.id
-    track_user(update.effective_user)
-    log_activity(user_id, "/grafico")
+    await asyncio.to_thread(track_user, update.effective_user)
+    await asyncio.to_thread(log_activity, user_id, "/grafico")
     global GRAPH_CACHE
     today_str = datetime.now(TIMEZONE).date().isoformat()
     if GRAPH_CACHE["date"] == today_str and GRAPH_CACHE["photo_id"]:
         try:
-            await update.message.reply_photo(photo=GRAPH_CACHE["photo_id"], caption="📉 <b>Promedio Diario (Semanal)</b>", parse_mode=ParseMode.HTML)
+            await update.message.reply_photo(photo=GRAPH_CACHE["photo_id"], caption="📉 <b>Promedio Diario (Semanal)</b>\n\n📲 <i>¡Compártelo en tus estados!</i>", parse_mode=ParseMode.HTML)
             return
         except Exception: GRAPH_CACHE["photo_id"] = None
     await update.message.reply_chat_action("upload_photo")
-    img_buf = generate_public_price_chart()
+    img_buf = await asyncio.to_thread(generate_public_price_chart)
     if img_buf:
-        msg = await update.message.reply_photo(photo=img_buf, caption="📉 <b>Promedio Diario (Semanal)</b>\n\n<i>Precio promedio ponderado del día.</i>", parse_mode=ParseMode.HTML)
+        msg = await update.message.reply_photo(photo=img_buf, caption="📉 <b>Promedio Diario (Semanal)</b>\n\n📲 <i>¡Compártelo en tus estados!</i>", parse_mode=ParseMode.HTML)
         if msg.photo:
             GRAPH_CACHE["date"] = today_str
             GRAPH_CACHE["photo_id"] = msg.photo[-1].file_id
@@ -694,9 +797,9 @@ async def grafico(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 async def referidos(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id = update.effective_user.id
-    track_user(update.effective_user)
-    log_activity(user_id, "/referidos")
-    count, rank, top_3 = get_referral_stats(user_id)
+    await asyncio.to_thread(track_user, update.effective_user)
+    await asyncio.to_thread(log_activity, user_id, "/referidos")
+    count, rank, top_3 = await asyncio.to_thread(get_referral_stats, user_id)
     ranking_text = ""
     medals = ["🥇", "🥈", "🥉"]
     for i, (name, score) in enumerate(top_3):
@@ -709,53 +812,70 @@ async def referidos(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 async def precio(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id = update.effective_user.id
-    track_user(update.effective_user)
-    log_activity(user_id, "/precio")
+    await asyncio.to_thread(track_user, update.effective_user)
+    await asyncio.to_thread(log_activity, user_id, "/precio")
     binance = MARKET_DATA["price"]
     bcv = MARKET_DATA["bcv"]
     time_str = MARKET_DATA["last_updated"]
     
     if binance:
-        text = build_price_message(binance, bcv, time_str, user_id)
+        req_count = await asyncio.to_thread(get_daily_requests_count)
+        text = build_price_message(binance, bcv, time_str, user_id, req_count)
         keyboard = get_sentiment_keyboard(user_id)
+        
+        # SMART NUDGE (REFERIDOS)
+        if random.random() < 0.2:
+            days, refs = await asyncio.to_thread(get_user_loyalty, user_id)
+            if days > 3 and refs == 0:
+                text += "\n\n🎁 <i>¡Gana $10 USDT invitando amigos! Toca /referidos</i>"
+
         await update.message.reply_text(text, parse_mode=ParseMode.HTML, reply_markup=InlineKeyboardMarkup(keyboard))
     else:
         await update.message.reply_text("🔄 Iniciando sistema... intenta en unos segundos.")
 
 async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id = update.effective_user.id
-    track_user(update.effective_user)
-    if update.callback_query.data == 'refresh_price': log_activity(user_id, "btn_refresh")
+    await asyncio.to_thread(track_user, update.effective_user)
     query = update.callback_query
+    data = query.data
     
-    # --- LOGICA DE VOTO ---
-    if query.data in ['vote_up', 'vote_down']:
-        vote_type = 'UP' if query.data == 'vote_up' else 'DOWN'
-        if cast_vote(user_id, vote_type):
-            log_activity(user_id, f"vote_{vote_type.lower()}")
+    # --- LOGICA DE VOTO FIX UX ---
+    # Si vota, guardamos, avisamos y forzamos el refresh para que el mensaje cambie
+    if data in ['vote_up', 'vote_down']:
+        vote_type = 'UP' if data == 'vote_up' else 'DOWN'
+        if await asyncio.to_thread(cast_vote, user_id, vote_type):
+            await asyncio.to_thread(log_activity, user_id, f"vote_{vote_type.lower()}")
             await query.answer("✅ ¡Voto registrado!")
         else:
             await query.answer("⚠️ Ya votaste hoy.")
-        # Refrescar para mostrar resultado
-        query.data = 'refresh_price'
+        
+        # CAMBIO CLAVE: Sobrescribimos 'data' para que entre al bloque de refresh
+        data = 'refresh_price'
 
-    if query.data == 'refresh_price':
+    if data == 'refresh_price':
+        await asyncio.to_thread(log_activity, user_id, "btn_refresh")
         binance = MARKET_DATA["price"]
         bcv = MARKET_DATA["bcv"]
         time_str = MARKET_DATA["last_updated"]
+        
         if binance:
-            text = build_price_message(binance, bcv, time_str, user_id)
+            req_count = await asyncio.to_thread(get_daily_requests_count)
+            text = build_price_message(binance, bcv, time_str, user_id, req_count)
+            
+            # Al llamar a get_sentiment_keyboard AHORA, detectará el voto y mostrará resultados
             keyboard = get_sentiment_keyboard(user_id)
             try:
                 await query.edit_message_text(text=text, parse_mode=ParseMode.HTML, reply_markup=InlineKeyboardMarkup(keyboard))
             except BadRequest: pass
             except Exception as e: logging.error(f"Error edit: {e}")
             
-    await query.answer()
+    # Solo respondemos si no fue voto (porque el voto ya respondió arriba)
+    try: await query.answer()
+    except: pass
 
 async def prediccion(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    track_user(update.effective_user)
-    log_activity(update.effective_user.id, "/ia")
+    await asyncio.to_thread(track_user, update.effective_user)
+    await asyncio.to_thread(log_activity, update.effective_user.id, "/ia")
     history = MARKET_DATA["history"]
     if len(history) < 5:
         await update.message.reply_text("🧠 <b>Calibrando IA...</b>\nRecopilando datos.", parse_mode=ParseMode.HTML)
@@ -774,8 +894,8 @@ async def prediccion(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 async def stats(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if update.effective_user.id != ADMIN_ID: return
-    chart = generate_stats_chart() 
-    report = get_detailed_report_text()
+    chart = await asyncio.to_thread(generate_stats_chart)
+    report = await asyncio.to_thread(get_detailed_report_text)
     if chart: await context.bot.send_photo(chat_id=ADMIN_ID, photo=chart, caption=report, parse_mode=ParseMode.HTML)
     else: await update.message.reply_text("❌ Error generando gráfico.")
 
@@ -788,7 +908,7 @@ async def global_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not mensaje_final:
         await update.message.reply_text("⚠️ Escribe el mensaje.", parse_mode=ParseMode.HTML)
         return
-    users = get_all_users_ids()
+    users = await asyncio.to_thread(get_all_users_ids)
     if not users:
         await update.message.reply_text("⚠️ No hay usuarios.")
         return
@@ -798,17 +918,16 @@ async def global_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
     batch_size = 25
     for i in range(0, len(users), batch_size):
         batch = users[i:i + batch_size]
+        tasks = []
         for user_id in batch:
-            try:
-                await context.bot.send_message(chat_id=user_id, text=mensaje_final, parse_mode=ParseMode.HTML)
-                enviados += 1
-            except Exception: fallidos += 1
-        await asyncio.sleep(1)
+            tasks.append(context.bot.send_message(chat_id=user_id, text=mensaje_final, parse_mode=ParseMode.HTML))
+        await asyncio.gather(*tasks, return_exceptions=True)
+        await asyncio.sleep(0.8)
     await update.message.reply_text(f"✅ <b>Difusión Completada</b>\n\n📨 Enviados: {enviados}\n❌ Fallidos: {fallidos}", parse_mode=ParseMode.HTML)
 
 async def start_alert(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    track_user(update.effective_user)
-    log_activity(update.effective_user.id, "/alerta")
+    await asyncio.to_thread(track_user, update.effective_user)
+    await asyncio.to_thread(log_activity, update.effective_user.id, "/alerta")
     if context.args:
         try:
             target = float(context.args[0].replace(',', '.'))
@@ -841,7 +960,7 @@ async def process_alert_logic(update: Update, target):
     else:
         await update.message.reply_text(f"⚠️ El precio actual ya es {current_price}. Define un valor distinto.")
         return
-    success = add_alert(update.effective_user.id, target, condition)
+    success = await asyncio.to_thread(add_alert, update.effective_user.id, target, condition)
     if success:
         await update.message.reply_text(f"✅ {msg}", parse_mode=ParseMode.HTML)
     else:
@@ -856,7 +975,7 @@ async def calculate_conversion(update: Update, text_amount, currency_type):
     try:
         clean_text = ''.join(c for c in text_amount if c.isdigit() or c in '.,')
         amount = float(clean_text.replace(',', '.'))
-        log_calc(update.effective_user.id, amount, currency_type, 0)
+        await asyncio.to_thread(log_calc, update.effective_user.id, amount, currency_type, 0)
         if currency_type == "USDT":
             total = amount * rate
             await update.message.reply_text(f"🇺🇸 {amount:,.2f} USDT son:\n🇻🇪 <b>{total:,.2f} Bolívares</b>\n<i>(Tasa: {rate:,.2f})</i>", parse_mode=ParseMode.HTML)
@@ -868,15 +987,15 @@ async def calculate_conversion(update: Update, text_amount, currency_type):
     return ConversationHandler.END
 
 async def start_usdt_calc(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    track_user(update.effective_user)
-    log_activity(update.effective_user.id, "/calc")
+    await asyncio.to_thread(track_user, update.effective_user)
+    await asyncio.to_thread(log_activity, update.effective_user.id, "/calc")
     if context.args: return await calculate_conversion(update, context.args[0], "USDT")
     await update.message.reply_text("🇺🇸 <b>Calculadora USDT:</b>\n\n¿Cuántos Dólares?\n<i>Escribe el número:</i>", parse_mode=ParseMode.HTML)
     return ESPERANDO_INPUT_USDT
 
 async def start_bs_calc(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    track_user(update.effective_user)
-    log_activity(update.effective_user.id, "/calc")
+    await asyncio.to_thread(track_user, update.effective_user)
+    await asyncio.to_thread(log_activity, update.effective_user.id, "/calc")
     if context.args: return await calculate_conversion(update, context.args[0], "BS")
     await update.message.reply_text("🇻🇪 <b>Calculadora Bolívares:</b>\n\n¿Cuántos Bs?\n<i>Escribe el número:</i>", parse_mode=ParseMode.HTML)
     return ESPERANDO_INPUT_BS
