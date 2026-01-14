@@ -13,14 +13,15 @@ import urllib3
 from urllib.parse import quote
 from datetime import datetime, time, timedelta
 import pytz 
-from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
+from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup, ChatMember
 from telegram.constants import ParseMode
 from telegram.error import Forbidden, BadRequest
 from telegram.ext import (
     ApplicationBuilder, 
     CommandHandler, 
     CallbackQueryHandler, 
-    MessageHandler,     
+    MessageHandler,
+    ChatMemberHandler,
     filters,            
     ConversationHandler,
     ContextTypes
@@ -89,7 +90,9 @@ def init_db():
                 first_name TEXT,
                 referral_count INTEGER DEFAULT 0,
                 referred_by BIGINT,
-                last_active TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+                last_active TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                status TEXT DEFAULT 'active',
+                source TEXT 
             )
         """)
         cur.execute("""
@@ -160,6 +163,10 @@ def migrate_db():
             cur.execute("ALTER TABLE users ADD COLUMN IF NOT EXISTS referral_count INTEGER DEFAULT 0;")
             cur.execute("ALTER TABLE users ADD COLUMN IF NOT EXISTS referred_by BIGINT;")
             cur.execute("ALTER TABLE users ADD COLUMN IF NOT EXISTS last_active TIMESTAMP DEFAULT CURRENT_TIMESTAMP;")
+            cur.execute("ALTER TABLE users ADD COLUMN IF NOT EXISTS status TEXT DEFAULT 'active';")
+            # 🔥 Migración CAMPAIGNS 🔥
+            cur.execute("ALTER TABLE users ADD COLUMN IF NOT EXISTS source TEXT;")
+            
             cur.execute("ALTER TABLE daily_stats ADD COLUMN IF NOT EXISTS bcv_price FLOAT DEFAULT 0;")
             conn.commit()
         except Exception: conn.rollback()
@@ -168,35 +175,25 @@ def migrate_db():
             conn.close()
     except Exception: pass
 
-# --- 🔥 FUNCIÓN DE RECUPERACIÓN DE ESTADO 🔥 ---
+# --- FUNCIÓN PARA RECUPERAR PRECIO ---
 def recover_last_state():
-    """Recupera el último precio guardado en BD si la RAM está vacía."""
     if not DATABASE_URL: return
     try:
         conn = psycopg2.connect(DATABASE_URL)
         cur = conn.cursor()
-        # Buscamos el último tick registrado
         cur.execute("SELECT price_binance, price_bcv, recorded_at FROM price_ticks ORDER BY id DESC LIMIT 1")
         row = cur.fetchone()
         
         if row:
             binance_db, bcv_db, date_db = row
-            
-            # Restaurar Binance
             if binance_db:
                 MARKET_DATA["price"] = binance_db
-                MARKET_DATA["history"].append(binance_db) # Para que la IA tenga al menos 1 dato
-            
-            # Restaurar BCV (Solo USD porque es lo que guardamos en ticks por ahora)
+                MARKET_DATA["history"].append(binance_db)
             if bcv_db:
-                # Mantenemos estructura de diccionario
                 MARKET_DATA["bcv"] = {'usd': bcv_db, 'eur': None} 
             
-            # Restaurar fecha
-            # Convertimos a string bonito
             fecha_bonita = date_db.astimezone(TIMEZONE).strftime("%d/%m/%Y %I:%M:%S %p")
             MARKET_DATA["last_updated"] = fecha_bonita
-            
             logging.info(f"💾 ESTADO RECUPERADO DE BD: Bin={binance_db} | BCV={bcv_db}")
         
         cur.close()
@@ -204,7 +201,8 @@ def recover_last_state():
     except Exception as e:
         logging.error(f"❌ Error recuperando estado: {e}")
 
-def track_user(user, referrer_id=None):
+def track_user(user, referrer_id=None, source=None):
+    """Guarda usuario, procesa referidos y campañas."""
     if not DATABASE_URL: return 
     user_id = user.id
     first_name = user.first_name[:50] if user.first_name else "Usuario"
@@ -215,23 +213,57 @@ def track_user(user, referrer_id=None):
         cur.execute("SELECT user_id FROM users WHERE user_id = %s", (user_id,))
         exists = cur.fetchone()
         if not exists:
+            # --- USUARIO NUEVO ---
             valid_referrer = False
+            final_referrer = None
+            
+            # Si es número, es referido
             if referrer_id and referrer_id != user_id:
                 cur.execute("SELECT user_id FROM users WHERE user_id = %s", (referrer_id,))
-                if cur.fetchone(): valid_referrer = True
-            final_referrer = referrer_id if valid_referrer else None
+                if cur.fetchone(): 
+                    valid_referrer = True
+                    final_referrer = referrer_id
+
+            # Insertar con Fuente (Source) si existe
             cur.execute("""
-                INSERT INTO users (user_id, first_name, referred_by, last_active) 
-                VALUES (%s, %s, %s, %s)
-            """, (user_id, first_name, final_referrer, now))
+                INSERT INTO users (user_id, first_name, referred_by, last_active, status, source) 
+                VALUES (%s, %s, %s, %s, 'active', %s)
+            """, (user_id, first_name, final_referrer, now, source))
+            
             if valid_referrer:
                 cur.execute("UPDATE users SET referral_count = referral_count + 1 WHERE user_id = %s", (final_referrer,))
+                logging.info(f"➕ Referido sumado a {final_referrer}")
+            
+            if source:
+                logging.info(f"📢 Nuevo usuario de campaña: {source}")
+
         else:
-            cur.execute("UPDATE users SET first_name = %s, last_active = %s WHERE user_id = %s", (first_name, now, user_id))
+            # Update status to active
+            cur.execute("UPDATE users SET first_name = %s, last_active = %s, status = 'active' WHERE user_id = %s", (first_name, now, user_id))
+        
         conn.commit()
         cur.close()
         conn.close()
     except Exception as e: logging.error(f"Error track_user: {e}")
+
+# --- DETECTOR DE BLOQUEOS ---
+async def track_my_chat_member(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if not update.my_chat_member or not DATABASE_URL: return
+    user_id = update.my_chat_member.from_user.id
+    new_status = update.my_chat_member.new_chat_member.status
+    db_status = 'active'
+    if new_status in [ChatMember.KICKED, ChatMember.LEFT]:
+        db_status = 'blocked'
+    elif new_status == ChatMember.MEMBER:
+        db_status = 'active'
+    try:
+        conn = psycopg2.connect(DATABASE_URL)
+        cur = conn.cursor()
+        cur.execute("UPDATE users SET status = %s WHERE user_id = %s", (db_status, user_id))
+        conn.commit()
+        cur.close()
+        conn.close()
+    except Exception as e: logging.error(f"Error tracking chat member: {e}")
 
 def log_activity(user_id, command):
     if not DATABASE_URL: return
@@ -271,7 +303,6 @@ def get_user_loyalty(user_id):
         return (0, 0)
     except Exception: return (0, 0)
 
-# --- SOCIAL PROOF & VOTOS ---
 def get_daily_requests_count():
     if not DATABASE_URL: return 0
     try:
@@ -465,6 +496,11 @@ def get_detailed_report_text():
         cur = conn.cursor()
         cur.execute("SELECT COUNT(*) FROM users")
         total = cur.fetchone()[0]
+        cur.execute("SELECT COUNT(*) FROM users WHERE status = 'blocked'")
+        blocked = cur.fetchone()[0]
+        active_real = total - blocked
+        churn_rate = (blocked / total * 100) if total > 0 else 0
+        
         cur.execute("SELECT COUNT(*) FROM users WHERE joined_at >= CURRENT_DATE")
         new_today = cur.fetchone()[0]
         cur.execute("SELECT COUNT(*) FROM users WHERE last_active >= NOW() - INTERVAL '24 HOURS'")
@@ -473,18 +509,45 @@ def get_detailed_report_text():
         active_alerts = cur.fetchone()[0]
         cur.execute("SELECT COUNT(*) FROM activity_logs WHERE created_at >= CURRENT_DATE")
         requests_today = cur.fetchone()[0]
+        
+        # 🔥 NUEVO: TOP CAMPAÑAS 🔥
+        cur.execute("SELECT source, COUNT(*) FROM users WHERE source IS NOT NULL GROUP BY source ORDER BY 2 DESC LIMIT 3")
+        top_sources = cur.fetchall()
+
+        # 🔥 NUEVO: TOP COMANDOS 🔥
+        cur.execute("SELECT command, COUNT(*) FROM activity_logs GROUP BY command ORDER BY 2 DESC")
+        top_commands = cur.fetchall()
+        
         cur.close()
         conn.close()
-        return (
+        
+        text = (
             f"📊 <b>REPORTE EJECUTIVO</b>\n\n"
             f"👥 <b>Total Histórico:</b> {total}\n"
+            f"✅ <b>Usuarios Reales:</b> {active_real}\n"
+            f"🚫 <b>Bloqueados:</b> {blocked} ({churn_rate:.2f}%)\n"
+            f"--------------------------\n"
             f"📈 <b>Nuevos Hoy:</b> +{new_today}\n"
             f"🔥 <b>Activos (24h):</b> {active_24h}\n"
             f"🔔 <b>Alertas Activas:</b> {active_alerts}\n"
-            f"📥 <b>Consultas Hoy:</b> {requests_today}\n\n"
-            f"<i>Sistema Operativo V38 (Persistencia Anti-Reinicio).</i> ✅"
+            f"📥 <b>Consultas Hoy:</b> {requests_today}\n"
         )
-    except Exception: return "Error."
+        
+        if top_sources:
+            text += "\n🎯 <b>Top Campañas:</b>\n"
+            for src, cnt in top_sources:
+                text += f"• {src}: {cnt}\n"
+        
+        if top_commands:
+            text += "\n🤖 <b>Comandos Totales:</b>\n"
+            for cmd, cnt in top_commands:
+                text += f"• {cmd}: {cnt}\n"
+
+        text += f"\n<i>Sistema Operativo V41 (Full Stats).</i> ✅"
+        return text
+    except Exception as e: 
+        logging.error(f"Error detailed report: {e}")
+        return "Error calculando métricas."
 
 def get_referral_stats(user_id):
     if not DATABASE_URL: return (0, 0, [])
@@ -592,7 +655,7 @@ def save_mining_data(binance, bcv_val):
 # ==============================================================================
 def fetch_binance_price():
     url = "https://p2p.binance.com/bapi/c2c/v2/friendly/c2c/adv/search"
-    headers = {"Content-Type": "application/json", "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"}
+    headers = {"Content-Type": "application/json", "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36"}
     last_known = MARKET_DATA["price"] if MARKET_DATA["price"] else 600
     dynamic_amount = int(last_known * FILTER_MIN_USD)
     payload = {
@@ -623,29 +686,21 @@ def fetch_binance_price():
 
 def fetch_bcv_price():
     url = "http://www.bcv.org.ve/"
-    headers = {
-        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
-    }
+    headers = {"User-Agent": "Mozilla/5.0"}
     rates = {'usd': None, 'eur': None}
     try:
-        response = requests.get(url, headers=headers, timeout=30, verify=False)
+        response = requests.get(url, headers=headers, timeout=20, verify=False)
         if response.status_code == 200:
             soup = BeautifulSoup(response.content, 'html.parser')
             dolar_div = soup.find('div', id='dolar')
-            if dolar_div: 
-                rates['usd'] = float(dolar_div.find('strong').text.strip().replace(',', '.'))
+            if dolar_div: rates['usd'] = float(dolar_div.find('strong').text.strip().replace(',', '.'))
             euro_div = soup.find('div', id='euro')
-            if euro_div: 
-                rates['eur'] = float(euro_div.find('strong').text.strip().replace(',', '.'))
+            if euro_div: rates['eur'] = float(euro_div.find('strong').text.strip().replace(',', '.'))
             if rates['usd']:
                 logging.info(f"✅ BCV ENCONTRADO: {rates['usd']} Bs")
             return rates if (rates['usd'] or rates['eur']) else None
-        else:
-            logging.error(f"❌ BCV Error HTTP: {response.status_code}")
-            return None
-    except Exception as e: 
-        logging.error(f"❌ BCV Exception: {e}")
-        return None
+    except Exception: return None
+    return None
 
 async def update_price_task(context: ContextTypes.DEFAULT_TYPE):
     new_binance = await asyncio.to_thread(fetch_binance_price)
@@ -676,8 +731,10 @@ def get_sentiment_keyboard(user_id):
     if has_user_voted(user_id):
         up, down = get_vote_results()
         total = up + down
+        
         share_text = quote(f"🔥 Dólar en {MARKET_DATA['price']:.2f} Bs. Revisa la tasa real aquí:")
         share_url = f"https://t.me/share/url?url=https://t.me/tasabinance_bot&text={share_text}"
+        
         return [
             [InlineKeyboardButton("🔄 Actualizar Precio", callback_data='refresh_price')],
             [InlineKeyboardButton("📤 Compartir con Amigos", url=share_url)]
@@ -708,6 +765,7 @@ def build_price_message(binance, bcv_data, time_str, user_id=None, requests_coun
         text += "\n"
     else:
         text += "🏛️ <b>BCV:</b> <i>No disponible</i>\n\n"
+        
     text += f"{EMOJI_PAYPAL} <b>Tasa PayPal:</b> {paypal:,.2f} Bs\n"
     text += f"{EMOJI_AMAZON} <b>Giftcard Amazon:</b> {amazon:,.2f} Bs\n\n"
     
@@ -746,6 +804,7 @@ async def send_daily_report(context: ContextTypes.DEFAULT_TYPE):
     body = body.replace(f"{EMOJI_STATS} <b>MONITOR DE TASAS</b>\n\n", "")
     text = f"{header}\n\n{body}"
 
+    # Botón compartir en reporte también (Mismo orden)
     share_text = quote(f"🔥 Dólar en {binance:.2f} Bs. Revisa la tasa real aquí:")
     share_url = f"https://t.me/share/url?url=https://t.me/tasabinance_bot&text={share_text}"
     keyboard = [[InlineKeyboardButton("🔄 Ver en tiempo real", callback_data='refresh_price')], [InlineKeyboardButton("📤 Compartir", url=share_url)]]
@@ -847,18 +906,14 @@ async def precio(update: Update, context: ContextTypes.DEFAULT_TYPE):
     binance = MARKET_DATA["price"]
     bcv = MARKET_DATA["bcv"]
     time_str = MARKET_DATA["last_updated"]
-    
     if binance:
         req_count = await asyncio.to_thread(get_daily_requests_count)
         text = build_price_message(binance, bcv, time_str, user_id, req_count)
         keyboard = get_sentiment_keyboard(user_id)
-        
-        # SMART NUDGE (REFERIDOS)
         if random.random() < 0.2:
             days, refs = await asyncio.to_thread(get_user_loyalty, user_id)
             if days > 3 and refs == 0:
                 text += "\n\n🎁 <i>¡Gana $10 USDT invitando amigos! Toca /referidos</i>"
-
         await update.message.reply_text(text, parse_mode=ParseMode.HTML, reply_markup=InlineKeyboardMarkup(keyboard))
     else:
         await update.message.reply_text("🔄 Iniciando sistema... intenta en unos segundos.")
@@ -868,8 +923,6 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await asyncio.to_thread(track_user, update.effective_user)
     query = update.callback_query
     data = query.data
-    
-    # --- LOGICA DE VOTO FIX UX ---
     if data in ['vote_up', 'vote_down']:
         vote_type = 'UP' if data == 'vote_up' else 'DOWN'
         if await asyncio.to_thread(cast_vote, user_id, vote_type):
@@ -877,15 +930,12 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
             await query.answer("✅ ¡Voto registrado!")
         else:
             await query.answer("⚠️ Ya votaste hoy.")
-        
         data = 'refresh_price'
-
     if data == 'refresh_price':
         await asyncio.to_thread(log_activity, user_id, "btn_refresh")
         binance = MARKET_DATA["price"]
         bcv = MARKET_DATA["bcv"]
         time_str = MARKET_DATA["last_updated"]
-        
         if binance:
             req_count = await asyncio.to_thread(get_daily_requests_count)
             text = build_price_message(binance, bcv, time_str, user_id, req_count)
@@ -894,7 +944,6 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 await query.edit_message_text(text=text, parse_mode=ParseMode.HTML, reply_markup=InlineKeyboardMarkup(keyboard))
             except BadRequest: pass
             except Exception as e: logging.error(f"Error edit: {e}")
-            
     try: await query.answer()
     except: pass
 
