@@ -38,7 +38,7 @@ logging.basicConfig(
 
 TOKEN = os.getenv("TOKEN")
 DATABASE_URL = os.getenv("DATABASE_URL")
-ADMIN_ID = 533888411 
+ADMIN_ID = int(os.getenv("ADMIN_ID", "533888411"))
 
 # --- CONFIGURACIÓN ---
 UPDATE_INTERVAL = 120 
@@ -83,6 +83,7 @@ def init_db():
         conn = psycopg2.connect(DATABASE_URL)
         cur = conn.cursor()
         
+        # Tablas existentes
         cur.execute("""
             CREATE TABLE IF NOT EXISTS users (
                 user_id BIGINT PRIMARY KEY,
@@ -146,6 +147,17 @@ def init_db():
                 PRIMARY KEY (user_id, vote_date)
             )
         """)
+
+        # 🔥 NUEVA TABLA: COLA DE MENSAJES (WORKER QUEUE) 🔥
+        cur.execute("""
+            CREATE TABLE IF NOT EXISTS broadcast_queue (
+                id SERIAL PRIMARY KEY,
+                message TEXT,
+                status TEXT DEFAULT 'pending', -- pending, processing, done
+                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+            )
+        """)
+
         conn.commit()
         cur.close()
         conn.close()
@@ -173,6 +185,7 @@ def migrate_db():
             conn.close()
     except Exception: pass
 
+# --- FUNCIONES DE DB ---
 def track_user(user, referrer_id=None, source=None):
     if not DATABASE_URL: return 
     user_id = user.id
@@ -506,7 +519,7 @@ def get_detailed_report_text():
             for cmd, cnt in top_commands:
                 text += f"• {cmd}: {cnt}\n"
 
-        text += f"\n<i>Sistema Operativo V44 (UX Boost).</i> ✅"
+        text += f"\n<i>Sistema Operativo V46 (Worker Queue).</i> ✅"
         return text
     except Exception as e: 
         logging.error(f"Error detailed report: {e}")
@@ -647,12 +660,17 @@ def fetch_binance_price():
         return sum(prices) / len(prices) if prices else None
     except Exception: return None
 
+# 🔥 FIX BCV: User-Agent + Logging + Error Handling 🔥
 def fetch_bcv_price():
     url = "http://www.bcv.org.ve/"
-    headers = {"User-Agent": "Mozilla/5.0"}
+    headers = {
+        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
+    }
     rates = {'usd': None, 'eur': None}
     try:
-        response = requests.get(url, headers=headers, timeout=20, verify=False)
+        # Aumentamos timeout a 30s
+        response = requests.get(url, headers=headers, timeout=30, verify=False)
+        
         if response.status_code == 200:
             soup = BeautifulSoup(response.content, 'html.parser')
             dolar_div = soup.find('div', id='dolar')
@@ -661,6 +679,8 @@ def fetch_bcv_price():
             euro_div = soup.find('div', id='euro')
             if euro_div: 
                 rates['eur'] = float(euro_div.find('strong').text.strip().replace(',', '.'))
+            
+            # Log de éxito
             if rates['usd']:
                 logging.info(f"✅ BCV ENCONTRADO: {rates['usd']} Bs")
             return rates if (rates['usd'] or rates['eur']) else None
@@ -735,6 +755,9 @@ def build_price_message(binance, bcv_data, time_str, user_id=None, requests_coun
     else:
         text += "🏛️ <b>BCV:</b> <i>No disponible</i>\n\n"
     
+    text += f"{EMOJI_PAYPAL} <b>Tasa PayPal:</b> {paypal:,.2f} Bs\n"
+    text += f"{EMOJI_AMAZON} <b>Giftcard Amazon:</b> {amazon:,.2f} Bs\n\n"
+    
     # TERMÓMETRO (AL MEDIO)
     if user_id and has_user_voted(user_id):
         up, down = get_vote_results()
@@ -747,10 +770,7 @@ def build_price_message(binance, bcv_data, time_str, user_id=None, requests_coun
         text += "🗣️ <b>¿Qué dice la comunidad?</b> 👇\n\n"
 
     # RESTO
-    text += f"{EMOJI_PAYPAL} <b>Tasa PayPal:</b> {paypal:,.2f} Bs\n"
-    text += f"{EMOJI_AMAZON} <b>Giftcard Amazon:</b> {amazon:,.2f} Bs\n\n"
     text += f"{EMOJI_STORE} <i>Actualizado: {time_str}</i>\n"
-    
     if requests_count > 100:
         text += f"👁 <b>{requests_count:,}</b> consultas hoy\n\n"
     else:
@@ -760,6 +780,7 @@ def build_price_message(binance, bcv_data, time_str, user_id=None, requests_coun
     return text
 
 async def send_daily_report(context: ContextTypes.DEFAULT_TYPE):
+    # En reportes automáticos, usamos la COLA en lugar de enviar directo
     binance = MARKET_DATA["price"]
     bcv = MARKET_DATA["bcv"]
     if not binance: binance = await asyncio.to_thread(fetch_binance_price)
@@ -773,28 +794,22 @@ async def send_daily_report(context: ContextTypes.DEFAULT_TYPE):
     body = build_price_message(binance, bcv, time_str)
     body = body.replace(f"{EMOJI_STATS} <b>MONITOR DE TASAS</b>\n\n", "")
     text = f"{header}\n\n{body}"
-
-    share_text = quote(f"🔥 Dólar en {binance:.2f} Bs. Revisa la tasa real aquí:")
-    share_url = f"https://t.me/share/url?url=https://t.me/tasabinance_bot&text={share_text}"
-    keyboard = [[InlineKeyboardButton("🔄 Ver en tiempo real", callback_data='refresh_price')], [InlineKeyboardButton("📤 Compartir", url=share_url)]]
     
-    users = await asyncio.to_thread(get_all_users_ids)
-    batch_size = 30
-    for i in range(0, len(users), batch_size):
-        batch = users[i:i + batch_size]
-        tasks = []
-        for user_id in batch:
-            tasks.append(
-                context.bot.send_message(
-                    chat_id=user_id, 
-                    text=text, 
-                    parse_mode=ParseMode.HTML, 
-                    reply_markup=InlineKeyboardMarkup(keyboard),
-                    disable_notification=True
-                )
-            )
-        await asyncio.gather(*tasks, return_exceptions=True)
-        await asyncio.sleep(0.8)
+    # 🔥 ENVIAR A LA COLA DE TRABAJO (Worker) 🔥
+    await asyncio.to_thread(queue_broadcast, text)
+    logging.info("✅ Reporte diario enviado a la cola del Worker.")
+
+# --- FUNCIÓN QUEUE BROADCAST ---
+def queue_broadcast(message):
+    if not DATABASE_URL: return
+    try:
+        conn = psycopg2.connect(DATABASE_URL)
+        cur = conn.cursor()
+        cur.execute("INSERT INTO broadcast_queue (message, status) VALUES (%s, 'pending')", (message,))
+        conn.commit()
+        cur.close()
+        conn.close()
+    except Exception as e: logging.error(f"Error queueing broadcast: {e}")
 
 # ==============================================================================
 #  COMANDOS
@@ -840,13 +855,13 @@ async def grafico(update: Update, context: ContextTypes.DEFAULT_TYPE):
     today_str = datetime.now(TIMEZONE).date().isoformat()
     if GRAPH_CACHE["date"] == today_str and GRAPH_CACHE["photo_id"]:
         try:
-            await update.message.reply_photo(photo=GRAPH_CACHE["photo_id"], caption="📉 <b>Promedio Diario (Semanal) TasaBinance/BCV</b>\n\n📲 <i>¡Compártelo en tus estados!</i>\n\n@tasabinance_bot", parse_mode=ParseMode.HTML)
+            await update.message.reply_photo(photo=GRAPH_CACHE["photo_id"], caption="📉 <b>Promedio Diario (Semanal)</b>\n\n📲 <i>¡Compártelo en tus estados!</i>", parse_mode=ParseMode.HTML)
             return
         except Exception: GRAPH_CACHE["photo_id"] = None
     await update.message.reply_chat_action("upload_photo")
     img_buf = await asyncio.to_thread(generate_public_price_chart)
     if img_buf:
-        msg = await update.message.reply_photo(photo=img_buf, caption="📉 <b>Promedio Diario (Semanal)</b>\n\n📲 <i>¡Compártelo en tus estados!</i>\n\n@tasabinance_bot", parse_mode=ParseMode.HTML)
+        msg = await update.message.reply_photo(photo=img_buf, caption="📉 <b>Promedio Diario (Semanal)</b>\n\n<i>Precio promedio ponderado del día.</i>", parse_mode=ParseMode.HTML)
         if msg.photo:
             GRAPH_CACHE["date"] = today_str
             GRAPH_CACHE["photo_id"] = msg.photo[-1].file_id
@@ -865,14 +880,8 @@ async def referidos(update: Update, context: ContextTypes.DEFAULT_TYPE):
         clean_name = name.split()[0] if name else "Usuario"
         ranking_text += f"{medal} <b>{clean_name}</b> — {score} refs\n"
     invite_link = f"https://t.me/{context.bot.username}?start={user_id}"
-    
-    # BOTÓN DE COMPARTIR DIRECTO
-    share_msg = quote(f"🎁 ¡Gana 10 USDT con este bot! Entra aquí y participa:\n\n{invite_link}")
-    share_url = f"https://t.me/share/url?url={share_msg}"
-    keyboard = [[InlineKeyboardButton("📤 Comparte y Gana $10", url=share_url)]]
-
     text = (f"🎁 <b>PROGRAMA DE REFERIDOS (PREMIOS USDT)</b>\n\n¡Gana dinero real invitando a tus amigos!\n📅 <b>Corte y Pago:</b> Día 30 de cada mes.\n\n🏆 <b>PREMIOS MENSUALES:</b>\n🥇 1er Lugar: <b>$10 USDT</b>\n🥈 2do Lugar: <b>$5 USDT</b>\n🥉 3er Lugar: <b>$5 USDT</b>\n\n👤 <b>TUS ESTADÍSTICAS:</b>\n👥 Invitados: <b>{count}</b>\n🏆 Tu Rango: <b>#{rank}</b>\n\n🔗 <b>TU ENLACE ÚNICO:</b>\n<code>{invite_link}</code>\n<i>(Toca para copiar y compartir)</i>\n\n📊 <b>TOP 3 LÍDERES:</b>\n{ranking_text}\n👇 <b>¡Compártelo ahora!</b>")
-    await update.message.reply_text(text, parse_mode=ParseMode.HTML, disable_web_page_preview=True, reply_markup=InlineKeyboardMarkup(keyboard))
+    await update.message.reply_text(text, parse_mode=ParseMode.HTML, disable_web_page_preview=True)
 
 async def precio(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id = update.effective_user.id
@@ -958,6 +967,7 @@ async def stats(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if chart: await context.bot.send_photo(chat_id=ADMIN_ID, photo=chart, caption=report, parse_mode=ParseMode.HTML)
     else: await update.message.reply_text("❌ Error generando gráfico.")
 
+# --- GLOBAL MESSAGE: SOLO ENCOLA, NO ENVÍA DIRECTO ---
 async def global_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if update.effective_user.id != ADMIN_ID: return
     mensaje_original = update.message.text_html
@@ -967,22 +977,11 @@ async def global_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not mensaje_final:
         await update.message.reply_text("⚠️ Escribe el mensaje.", parse_mode=ParseMode.HTML)
         return
-    users = await asyncio.to_thread(get_all_users_ids)
-    if not users:
-        await update.message.reply_text("⚠️ No hay usuarios.")
-        return
-    await update.message.reply_text(f"🚀 Iniciando difusión rápida a {len(users)} usuarios...")
-    enviados = 0
-    fallidos = 0
-    batch_size = 25
-    for i in range(0, len(users), batch_size):
-        batch = users[i:i + batch_size]
-        tasks = []
-        for user_id in batch:
-            tasks.append(context.bot.send_message(chat_id=user_id, text=mensaje_final, parse_mode=ParseMode.HTML))
-        await asyncio.gather(*tasks, return_exceptions=True)
-        await asyncio.sleep(0.8)
-    await update.message.reply_text(f"✅ <b>Difusión Completada</b>\n\n📨 Enviados: {enviados}\n❌ Fallidos: {fallidos}", parse_mode=ParseMode.HTML)
+    
+    # 🔥 CAMBIO CLAVE: GUARDAR EN COLA 🔥
+    await asyncio.to_thread(queue_broadcast, mensaje_final)
+    
+    await update.message.reply_text(f"✅ <b>Mensaje puesto en cola.</b>\nEl Worker lo enviará en breve.", parse_mode=ParseMode.HTML)
 
 async def start_alert(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await asyncio.to_thread(track_user, update.effective_user)
