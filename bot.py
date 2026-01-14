@@ -164,9 +164,7 @@ def migrate_db():
             cur.execute("ALTER TABLE users ADD COLUMN IF NOT EXISTS referred_by BIGINT;")
             cur.execute("ALTER TABLE users ADD COLUMN IF NOT EXISTS last_active TIMESTAMP DEFAULT CURRENT_TIMESTAMP;")
             cur.execute("ALTER TABLE users ADD COLUMN IF NOT EXISTS status TEXT DEFAULT 'active';")
-            # 🔥 Migración CAMPAIGNS 🔥
             cur.execute("ALTER TABLE users ADD COLUMN IF NOT EXISTS source TEXT;")
-            
             cur.execute("ALTER TABLE daily_stats ADD COLUMN IF NOT EXISTS bcv_price FLOAT DEFAULT 0;")
             conn.commit()
         except Exception: conn.rollback()
@@ -175,7 +173,6 @@ def migrate_db():
             conn.close()
     except Exception: pass
 
-# --- FUNCIÓN PARA RECUPERAR PRECIO ---
 def recover_last_state():
     if not DATABASE_URL: return
     try:
@@ -202,7 +199,6 @@ def recover_last_state():
         logging.error(f"❌ Error recuperando estado: {e}")
 
 def track_user(user, referrer_id=None, source=None):
-    """Guarda usuario, procesa referidos y campañas."""
     if not DATABASE_URL: return 
     user_id = user.id
     first_name = user.first_name[:50] if user.first_name else "Usuario"
@@ -213,18 +209,14 @@ def track_user(user, referrer_id=None, source=None):
         cur.execute("SELECT user_id FROM users WHERE user_id = %s", (user_id,))
         exists = cur.fetchone()
         if not exists:
-            # --- USUARIO NUEVO ---
             valid_referrer = False
             final_referrer = None
-            
-            # Si es número, es referido
             if referrer_id and referrer_id != user_id:
                 cur.execute("SELECT user_id FROM users WHERE user_id = %s", (referrer_id,))
                 if cur.fetchone(): 
                     valid_referrer = True
                     final_referrer = referrer_id
 
-            # Insertar con Fuente (Source) si existe
             cur.execute("""
                 INSERT INTO users (user_id, first_name, referred_by, last_active, status, source) 
                 VALUES (%s, %s, %s, %s, 'active', %s)
@@ -232,21 +224,13 @@ def track_user(user, referrer_id=None, source=None):
             
             if valid_referrer:
                 cur.execute("UPDATE users SET referral_count = referral_count + 1 WHERE user_id = %s", (final_referrer,))
-                logging.info(f"➕ Referido sumado a {final_referrer}")
-            
-            if source:
-                logging.info(f"📢 Nuevo usuario de campaña: {source}")
-
         else:
-            # Update status to active
             cur.execute("UPDATE users SET first_name = %s, last_active = %s, status = 'active' WHERE user_id = %s", (first_name, now, user_id))
-        
         conn.commit()
         cur.close()
         conn.close()
     except Exception as e: logging.error(f"Error track_user: {e}")
 
-# --- DETECTOR DE BLOQUEOS ---
 async def track_my_chat_member(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not update.my_chat_member or not DATABASE_URL: return
     user_id = update.my_chat_member.from_user.id
@@ -510,13 +494,17 @@ def get_detailed_report_text():
         cur.execute("SELECT COUNT(*) FROM activity_logs WHERE created_at >= CURRENT_DATE")
         requests_today = cur.fetchone()[0]
         
-        # 🔥 NUEVO: TOP CAMPAÑAS 🔥
         cur.execute("SELECT source, COUNT(*) FROM users WHERE source IS NOT NULL GROUP BY source ORDER BY 2 DESC LIMIT 3")
         top_sources = cur.fetchall()
 
-        # 🔥 NUEVO: TOP COMANDOS 🔥
         cur.execute("SELECT command, COUNT(*) FROM activity_logs GROUP BY command ORDER BY 2 DESC")
         top_commands = cur.fetchall()
+
+        # 🔥 NUEVO: RANKING REFERIDOS 🔥
+        cur.execute("SELECT COUNT(*) FROM users WHERE referred_by IS NOT NULL")
+        total_referrals = cur.fetchone()[0]
+        cur.execute("SELECT first_name, referral_count FROM users ORDER BY referral_count DESC LIMIT 3")
+        top_referrers = cur.fetchall()
         
         cur.close()
         conn.close()
@@ -532,6 +520,13 @@ def get_detailed_report_text():
             f"🔔 <b>Alertas Activas:</b> {active_alerts}\n"
             f"📥 <b>Consultas Hoy:</b> {requests_today}\n"
         )
+
+        text += f"\n🤝 <b>Referidos Totales:</b> {total_referrals}\n"
+        if top_referrers:
+             text += "🏆 <b>Top Referidores:</b>\n"
+             for name, count in top_referrers:
+                 clean_name = name[:10] if name else "Anon"
+                 text += f"• {clean_name}: {count}\n"
         
         if top_sources:
             text += "\n🎯 <b>Top Campañas:</b>\n"
@@ -543,7 +538,7 @@ def get_detailed_report_text():
             for cmd, cnt in top_commands:
                 text += f"• {cmd}: {cnt}\n"
 
-        text += f"\n<i>Sistema Operativo V41 (Full Stats).</i> ✅"
+        text += f"\n<i>Sistema Operativo V42 (Stats Ref).</i> ✅"
         return text
     except Exception as e: 
         logging.error(f"Error detailed report: {e}")
@@ -583,7 +578,7 @@ def get_all_users_ids():
     try:
         conn = psycopg2.connect(DATABASE_URL)
         cur = conn.cursor()
-        cur.execute("SELECT user_id FROM users")
+        cur.execute("SELECT user_id FROM users WHERE status = 'active'")
         ids = [row[0] for row in cur.fetchall()]
         cur.close()
         conn.close()
@@ -684,23 +679,32 @@ def fetch_binance_price():
         return sum(prices) / len(prices) if prices else None
     except Exception: return None
 
+# 🔥 FIX BCV: User-Agent + Logging + Error Handling 🔥
 def fetch_bcv_price():
     url = "http://www.bcv.org.ve/"
-    headers = {"User-Agent": "Mozilla/5.0"}
+    headers = {
+        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
+    }
     rates = {'usd': None, 'eur': None}
     try:
-        response = requests.get(url, headers=headers, timeout=20, verify=False)
+        response = requests.get(url, headers=headers, timeout=30, verify=False)
         if response.status_code == 200:
             soup = BeautifulSoup(response.content, 'html.parser')
             dolar_div = soup.find('div', id='dolar')
-            if dolar_div: rates['usd'] = float(dolar_div.find('strong').text.strip().replace(',', '.'))
+            if dolar_div: 
+                rates['usd'] = float(dolar_div.find('strong').text.strip().replace(',', '.'))
             euro_div = soup.find('div', id='euro')
-            if euro_div: rates['eur'] = float(euro_div.find('strong').text.strip().replace(',', '.'))
+            if euro_div: 
+                rates['eur'] = float(euro_div.find('strong').text.strip().replace(',', '.'))
             if rates['usd']:
                 logging.info(f"✅ BCV ENCONTRADO: {rates['usd']} Bs")
             return rates if (rates['usd'] or rates['eur']) else None
-    except Exception: return None
-    return None
+        else:
+            logging.error(f"❌ BCV Error HTTP: {response.status_code}")
+            return None
+    except Exception as e: 
+        logging.error(f"❌ BCV Exception: {e}")
+        return None
 
 async def update_price_task(context: ContextTypes.DEFAULT_TYPE):
     new_binance = await asyncio.to_thread(fetch_binance_price)
@@ -760,12 +764,10 @@ def build_price_message(binance, bcv_data, time_str, user_id=None, requests_coun
             brecha = ((binance - usd_bcv) / usd_bcv) * 100
             emoji_brecha = "🔴" if brecha >= 20 else "🟠" if brecha >= 10 else "🟢"
             text += f"📈 <b>Brecha:</b> {brecha:.2f}% {emoji_brecha}\n"
-        if bcv_data.get('eur'):
-            text += f"🇪🇺 <b>BCV (Euro):</b> {bcv_data['eur']:,.2f} Bs\n"
+        if bcv_data.get('eur'): text += f"🇪🇺 <b>BCV (Euro):</b> {bcv_data['eur']:,.2f} Bs\n"
         text += "\n"
-    else:
-        text += "🏛️ <b>BCV:</b> <i>No disponible</i>\n\n"
-        
+    else: text += "🏛️ <b>BCV:</b> <i>No disponible</i>\n\n"
+    
     text += f"{EMOJI_PAYPAL} <b>Tasa PayPal:</b> {paypal:,.2f} Bs\n"
     text += f"{EMOJI_AMAZON} <b>Giftcard Amazon:</b> {amazon:,.2f} Bs\n\n"
     
@@ -804,7 +806,6 @@ async def send_daily_report(context: ContextTypes.DEFAULT_TYPE):
     body = body.replace(f"{EMOJI_STATS} <b>MONITOR DE TASAS</b>\n\n", "")
     text = f"{header}\n\n{body}"
 
-    # Botón compartir en reporte también (Mismo orden)
     share_text = quote(f"🔥 Dólar en {binance:.2f} Bs. Revisa la tasa real aquí:")
     share_url = f"https://t.me/share/url?url=https://t.me/tasabinance_bot&text={share_text}"
     keyboard = [[InlineKeyboardButton("🔄 Ver en tiempo real", callback_data='refresh_price')], [InlineKeyboardButton("📤 Compartir", url=share_url)]]
@@ -852,7 +853,7 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
         f"{EMOJI_STATS} <b>/grafico</b> → Tendencia Semanal (Promedio).\n"
         f"🧠 <b>/ia</b> → Predicción de Tendencia.\n"
         f"{EMOJI_ALERTA} <b>/alerta</b> → Avísame si sube o baja.\n"
-        f"🎁 <b>/referidos</b> → ¡Invita y Gana!\n\n"
+        f"🏆 <b>/referidos</b> → ¡Gana $10 USDT!\n\n"
         f"🧮 <b>CALCULADORA (Toca abajo):</b>\n"
         f"• <b>/usdt</b> → Dólares a Bs.\n"
         f"• <b>/bs</b> → Bs a Dólares."
@@ -906,14 +907,18 @@ async def precio(update: Update, context: ContextTypes.DEFAULT_TYPE):
     binance = MARKET_DATA["price"]
     bcv = MARKET_DATA["bcv"]
     time_str = MARKET_DATA["last_updated"]
+    
     if binance:
         req_count = await asyncio.to_thread(get_daily_requests_count)
         text = build_price_message(binance, bcv, time_str, user_id, req_count)
         keyboard = get_sentiment_keyboard(user_id)
+        
+        # SMART NUDGE (REFERIDOS)
         if random.random() < 0.2:
             days, refs = await asyncio.to_thread(get_user_loyalty, user_id)
             if days > 3 and refs == 0:
                 text += "\n\n🎁 <i>¡Gana $10 USDT invitando amigos! Toca /referidos</i>"
+
         await update.message.reply_text(text, parse_mode=ParseMode.HTML, reply_markup=InlineKeyboardMarkup(keyboard))
     else:
         await update.message.reply_text("🔄 Iniciando sistema... intenta en unos segundos.")
@@ -923,6 +928,8 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await asyncio.to_thread(track_user, update.effective_user)
     query = update.callback_query
     data = query.data
+    
+    # --- LOGICA DE VOTO FIX UX ---
     if data in ['vote_up', 'vote_down']:
         vote_type = 'UP' if data == 'vote_up' else 'DOWN'
         if await asyncio.to_thread(cast_vote, user_id, vote_type):
@@ -930,12 +937,15 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
             await query.answer("✅ ¡Voto registrado!")
         else:
             await query.answer("⚠️ Ya votaste hoy.")
+        
         data = 'refresh_price'
+
     if data == 'refresh_price':
         await asyncio.to_thread(log_activity, user_id, "btn_refresh")
         binance = MARKET_DATA["price"]
         bcv = MARKET_DATA["bcv"]
         time_str = MARKET_DATA["last_updated"]
+        
         if binance:
             req_count = await asyncio.to_thread(get_daily_requests_count)
             text = build_price_message(binance, bcv, time_str, user_id, req_count)
@@ -944,6 +954,7 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 await query.edit_message_text(text=text, parse_mode=ParseMode.HTML, reply_markup=InlineKeyboardMarkup(keyboard))
             except BadRequest: pass
             except Exception as e: logging.error(f"Error edit: {e}")
+            
     try: await query.answer()
     except: pass
 
