@@ -840,7 +840,7 @@ async def grafico(update: Update, context: ContextTypes.DEFAULT_TYPE):
     today_str = datetime.now(TIMEZONE).date().isoformat()
     if GRAPH_CACHE["date"] == today_str and GRAPH_CACHE["photo_id"]:
         try:
-            await update.message.reply_photo(photo=GRAPH_CACHE["photo_id"], caption="📉 <b>Promedio Diario (Semanal)</b>\n\n📲 <i>¡Compártelo en tus estados!</i>\n\n@tasabinance_bot", parse_mode=ParseMode.HTML)
+            await update.message.reply_photo(photo=GRAPH_CACHE["photo_id"], caption="📉 <b>Promedio Diario (Semanal) TasaBinance/BCV</b>\n\n📲 <i>¡Compártelo en tus estados!</i>\n\n@tasabinance_bot", parse_mode=ParseMode.HTML)
             return
         except Exception: GRAPH_CACHE["photo_id"] = None
     await update.message.reply_chat_action("upload_photo")
