@@ -173,6 +173,7 @@ def migrate_db():
             conn.close()
     except Exception: pass
 
+# --- FUNCIÓN PARA RECUPERAR PRECIO ---
 def recover_last_state():
     if not DATABASE_URL: return
     try:
@@ -500,11 +501,8 @@ def get_detailed_report_text():
         cur.execute("SELECT command, COUNT(*) FROM activity_logs GROUP BY command ORDER BY 2 DESC")
         top_commands = cur.fetchall()
 
-        # 🔥 NUEVO: RANKING REFERIDOS 🔥
         cur.execute("SELECT COUNT(*) FROM users WHERE referred_by IS NOT NULL")
         total_referrals = cur.fetchone()[0]
-        cur.execute("SELECT first_name, referral_count FROM users ORDER BY referral_count DESC LIMIT 3")
-        top_referrers = cur.fetchall()
         
         cur.close()
         conn.close()
@@ -522,11 +520,6 @@ def get_detailed_report_text():
         )
 
         text += f"\n🤝 <b>Referidos Totales:</b> {total_referrals}\n"
-        if top_referrers:
-             text += "🏆 <b>Top Referidores:</b>\n"
-             for name, count in top_referrers:
-                 clean_name = name[:10] if name else "Anon"
-                 text += f"• {clean_name}: {count}\n"
         
         if top_sources:
             text += "\n🎯 <b>Top Campañas:</b>\n"
@@ -538,7 +531,7 @@ def get_detailed_report_text():
             for cmd, cnt in top_commands:
                 text += f"• {cmd}: {cnt}\n"
 
-        text += f"\n<i>Sistema Operativo V42 (Stats Ref).</i> ✅"
+        text += f"\n<i>Sistema Operativo V43.</i> ✅"
         return text
     except Exception as e: 
         logging.error(f"Error detailed report: {e}")
@@ -679,15 +672,12 @@ def fetch_binance_price():
         return sum(prices) / len(prices) if prices else None
     except Exception: return None
 
-# 🔥 FIX BCV: User-Agent + Logging + Error Handling 🔥
 def fetch_bcv_price():
     url = "http://www.bcv.org.ve/"
-    headers = {
-        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
-    }
+    headers = {"User-Agent": "Mozilla/5.0"}
     rates = {'usd': None, 'eur': None}
     try:
-        response = requests.get(url, headers=headers, timeout=30, verify=False)
+        response = requests.get(url, headers=headers, timeout=20, verify=False)
         if response.status_code == 200:
             soup = BeautifulSoup(response.content, 'html.parser')
             dolar_div = soup.find('div', id='dolar')
@@ -730,15 +720,13 @@ async def update_price_task(context: ContextTypes.DEFAULT_TYPE):
         MARKET_DATA["last_updated"] = now.strftime("%d/%m/%Y %I:%M:%S %p")
         logging.info(f"🔄 Actualizado - Bin: {new_binance}")
 
-# --- BUILDER CON NUEVAS FUNCIONES SOCIALES ---
+# --- BUILDER ---
 def get_sentiment_keyboard(user_id):
     if has_user_voted(user_id):
         up, down = get_vote_results()
         total = up + down
-        
         share_text = quote(f"🔥 Dólar en {MARKET_DATA['price']:.2f} Bs. Revisa la tasa real aquí:")
         share_url = f"https://t.me/share/url?url=https://t.me/tasabinance_bot&text={share_text}"
-        
         return [
             [InlineKeyboardButton("🔄 Actualizar Precio", callback_data='refresh_price')],
             [InlineKeyboardButton("📤 Compartir con Amigos", url=share_url)]
@@ -768,10 +756,7 @@ def build_price_message(binance, bcv_data, time_str, user_id=None, requests_coun
         text += "\n"
     else: text += "🏛️ <b>BCV:</b> <i>No disponible</i>\n\n"
     
-    text += f"{EMOJI_PAYPAL} <b>Tasa PayPal:</b> {paypal:,.2f} Bs\n"
-    text += f"{EMOJI_AMAZON} <b>Giftcard Amazon:</b> {amazon:,.2f} Bs\n\n"
-    
-    # TERMÓMETRO (AL MEDIO)
+    # TERMÓMETRO
     if user_id and has_user_voted(user_id):
         up, down = get_vote_results()
         total = up + down
@@ -783,11 +768,11 @@ def build_price_message(binance, bcv_data, time_str, user_id=None, requests_coun
         text += "🗣️ <b>¿Qué dice la comunidad?</b> 👇\n\n"
 
     # RESTO
+    text += f"{EMOJI_PAYPAL} <b>Tasa PayPal:</b> {paypal:,.2f} Bs\n"
+    text += f"{EMOJI_AMAZON} <b>Giftcard Amazon:</b> {amazon:,.2f} Bs\n\n"
     text += f"{EMOJI_STORE} <i>Actualizado: {time_str}</i>\n"
-    if requests_count > 100:
-        text += f"👁 <b>{requests_count:,}</b> consultas hoy\n\n"
-    else:
-        text += "\n"
+    if requests_count > 100: text += f"👁 <b>{requests_count:,}</b> consultas hoy\n\n"
+    else: text += "\n"
     text += "📢 <b>Síguenos:</b> @tasabinance_bot"
     return text
 
@@ -853,7 +838,7 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
         f"{EMOJI_STATS} <b>/grafico</b> → Tendencia Semanal (Promedio).\n"
         f"🧠 <b>/ia</b> → Predicción de Tendencia.\n"
         f"{EMOJI_ALERTA} <b>/alerta</b> → Avísame si sube o baja.\n"
-        f"🏆 <b>/referidos</b> → ¡Gana $10 USDT!\n\n"
+        f"🎁 <b>/referidos</b> → ¡Invita y Gana!\n\n"
         f"🧮 <b>CALCULADORA (Toca abajo):</b>\n"
         f"• <b>/usdt</b> → Dólares a Bs.\n"
         f"• <b>/bs</b> → Bs a Dólares."
@@ -876,15 +861,28 @@ async def grafico(update: Update, context: ContextTypes.DEFAULT_TYPE):
             return
         except Exception: GRAPH_CACHE["photo_id"] = None
     await update.message.reply_chat_action("upload_photo")
+    
+    # GENERAR GRÁFICO (CON NUEVA EXPLICACIÓN)
     img_buf = await asyncio.to_thread(generate_public_price_chart)
+    
+    # BOTÓN DE COMPARTIR DEDICADO AL GRÁFICO
+    share_url = f"https://t.me/share/url?url=https://t.me/tasabinance_bot&text={quote('📉 Mira la tendencia del Dólar esta semana.')}"
+    keyboard = [[InlineKeyboardButton("📤 Compartir Gráfico", url=share_url)]]
+    
     if img_buf:
-        msg = await update.message.reply_photo(photo=img_buf, caption="📉 <b>Promedio Diario (Semanal)</b>\n\n<i>Precio promedio ponderado del día.</i>", parse_mode=ParseMode.HTML)
+        msg = await update.message.reply_photo(
+            photo=img_buf, 
+            caption="📉 <b>Promedio Diario (Semanal)</b>\n\n<i>Este gráfico te muestra cómo se ha movido la tasa Binance (USDT) frente al dólar BCV durante los últimos días, para que veas la diferencia real entre el precio de la calle y el oficial</i>\n\n📢 <b>Síguenos:</b> @tasabinance_bot", 
+            parse_mode=ParseMode.HTML,
+            reply_markup=InlineKeyboardMarkup(keyboard)
+        )
         if msg.photo:
             GRAPH_CACHE["date"] = today_str
             GRAPH_CACHE["photo_id"] = msg.photo[-1].file_id
     else:
         await update.message.reply_text("📉 Recopilando datos históricos. Vuelve pronto.")
 
+# 🔥 COMANDO REFERIDOS CON BOTÓN VIRAL 🔥
 async def referidos(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id = update.effective_user.id
     await asyncio.to_thread(track_user, update.effective_user)
@@ -897,8 +895,14 @@ async def referidos(update: Update, context: ContextTypes.DEFAULT_TYPE):
         clean_name = name.split()[0] if name else "Usuario"
         ranking_text += f"{medal} <b>{clean_name}</b> — {score} refs\n"
     invite_link = f"https://t.me/{context.bot.username}?start={user_id}"
+    
+    # BOTÓN DE COMPARTIR DIRECTO
+    share_msg = quote(f"🎁 ¡Gana 10 USDT con este bot! Entra aquí y participa:\n\n{invite_link}")
+    share_url = f"https://t.me/share/url?url={share_msg}"
+    keyboard = [[InlineKeyboardButton("📤 Comparte y Gana $10", url=share_url)]]
+
     text = (f"🎁 <b>PROGRAMA DE REFERIDOS (PREMIOS USDT)</b>\n\n¡Gana dinero real invitando a tus amigos!\n📅 <b>Corte y Pago:</b> Día 30 de cada mes.\n\n🏆 <b>PREMIOS MENSUALES:</b>\n🥇 1er Lugar: <b>$10 USDT</b>\n🥈 2do Lugar: <b>$5 USDT</b>\n🥉 3er Lugar: <b>$5 USDT</b>\n\n👤 <b>TUS ESTADÍSTICAS:</b>\n👥 Invitados: <b>{count}</b>\n🏆 Tu Rango: <b>#{rank}</b>\n\n🔗 <b>TU ENLACE ÚNICO:</b>\n<code>{invite_link}</code>\n<i>(Toca para copiar y compartir)</i>\n\n📊 <b>TOP 3 LÍDERES:</b>\n{ranking_text}\n👇 <b>¡Compártelo ahora!</b>")
-    await update.message.reply_text(text, parse_mode=ParseMode.HTML, disable_web_page_preview=True)
+    await update.message.reply_text(text, parse_mode=ParseMode.HTML, disable_web_page_preview=True, reply_markup=InlineKeyboardMarkup(keyboard))
 
 async def precio(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id = update.effective_user.id
@@ -913,7 +917,6 @@ async def precio(update: Update, context: ContextTypes.DEFAULT_TYPE):
         text = build_price_message(binance, bcv, time_str, user_id, req_count)
         keyboard = get_sentiment_keyboard(user_id)
         
-        # SMART NUDGE (REFERIDOS)
         if random.random() < 0.2:
             days, refs = await asyncio.to_thread(get_user_loyalty, user_id)
             if days > 3 and refs == 0:
@@ -928,8 +931,6 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await asyncio.to_thread(track_user, update.effective_user)
     query = update.callback_query
     data = query.data
-    
-    # --- LOGICA DE VOTO FIX UX ---
     if data in ['vote_up', 'vote_down']:
         vote_type = 'UP' if data == 'vote_up' else 'DOWN'
         if await asyncio.to_thread(cast_vote, user_id, vote_type):
@@ -937,15 +938,12 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
             await query.answer("✅ ¡Voto registrado!")
         else:
             await query.answer("⚠️ Ya votaste hoy.")
-        
         data = 'refresh_price'
-
     if data == 'refresh_price':
         await asyncio.to_thread(log_activity, user_id, "btn_refresh")
         binance = MARKET_DATA["price"]
         bcv = MARKET_DATA["bcv"]
         time_str = MARKET_DATA["last_updated"]
-        
         if binance:
             req_count = await asyncio.to_thread(get_daily_requests_count)
             text = build_price_message(binance, bcv, time_str, user_id, req_count)
@@ -954,7 +952,6 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 await query.edit_message_text(text=text, parse_mode=ParseMode.HTML, reply_markup=InlineKeyboardMarkup(keyboard))
             except BadRequest: pass
             except Exception as e: logging.error(f"Error edit: {e}")
-            
     try: await query.answer()
     except: pass
 
