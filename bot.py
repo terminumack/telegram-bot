@@ -173,32 +173,6 @@ def migrate_db():
             conn.close()
     except Exception: pass
 
-# --- FUNCIÓN PARA RECUPERAR PRECIO ---
-def recover_last_state():
-    if not DATABASE_URL: return
-    try:
-        conn = psycopg2.connect(DATABASE_URL)
-        cur = conn.cursor()
-        cur.execute("SELECT price_binance, price_bcv, recorded_at FROM price_ticks ORDER BY id DESC LIMIT 1")
-        row = cur.fetchone()
-        
-        if row:
-            binance_db, bcv_db, date_db = row
-            if binance_db:
-                MARKET_DATA["price"] = binance_db
-                MARKET_DATA["history"].append(binance_db)
-            if bcv_db:
-                MARKET_DATA["bcv"] = {'usd': bcv_db, 'eur': None} 
-            
-            fecha_bonita = date_db.astimezone(TIMEZONE).strftime("%d/%m/%Y %I:%M:%S %p")
-            MARKET_DATA["last_updated"] = fecha_bonita
-            logging.info(f"💾 ESTADO RECUPERADO DE BD: Bin={binance_db} | BCV={bcv_db}")
-        
-        cur.close()
-        conn.close()
-    except Exception as e:
-        logging.error(f"❌ Error recuperando estado: {e}")
-
 def track_user(user, referrer_id=None, source=None):
     if not DATABASE_URL: return 
     user_id = user.id
@@ -288,6 +262,7 @@ def get_user_loyalty(user_id):
         return (0, 0)
     except Exception: return (0, 0)
 
+# --- SOCIAL PROOF & VOTOS ---
 def get_daily_requests_count():
     if not DATABASE_URL: return 0
     try:
@@ -531,7 +506,7 @@ def get_detailed_report_text():
             for cmd, cnt in top_commands:
                 text += f"• {cmd}: {cnt}\n"
 
-        text += f"\n<i>Sistema Operativo V43.</i> ✅"
+        text += f"\n<i>Sistema Operativo V44 (UX Boost).</i> ✅"
         return text
     except Exception as e: 
         logging.error(f"Error detailed report: {e}")
@@ -720,13 +695,15 @@ async def update_price_task(context: ContextTypes.DEFAULT_TYPE):
         MARKET_DATA["last_updated"] = now.strftime("%d/%m/%Y %I:%M:%S %p")
         logging.info(f"🔄 Actualizado - Bin: {new_binance}")
 
-# --- BUILDER ---
+# --- BUILDER CON NUEVAS FUNCIONES SOCIALES ---
 def get_sentiment_keyboard(user_id):
     if has_user_voted(user_id):
         up, down = get_vote_results()
         total = up + down
+        
         share_text = quote(f"🔥 Dólar en {MARKET_DATA['price']:.2f} Bs. Revisa la tasa real aquí:")
         share_url = f"https://t.me/share/url?url=https://t.me/tasabinance_bot&text={share_text}"
+        
         return [
             [InlineKeyboardButton("🔄 Actualizar Precio", callback_data='refresh_price')],
             [InlineKeyboardButton("📤 Compartir con Amigos", url=share_url)]
@@ -752,11 +729,13 @@ def build_price_message(binance, bcv_data, time_str, user_id=None, requests_coun
             brecha = ((binance - usd_bcv) / usd_bcv) * 100
             emoji_brecha = "🔴" if brecha >= 20 else "🟠" if brecha >= 10 else "🟢"
             text += f"📈 <b>Brecha:</b> {brecha:.2f}% {emoji_brecha}\n"
-        if bcv_data.get('eur'): text += f"🇪🇺 <b>BCV (Euro):</b> {bcv_data['eur']:,.2f} Bs\n"
+        if bcv_data.get('eur'):
+            text += f"🇪🇺 <b>BCV (Euro):</b> {bcv_data['eur']:,.2f} Bs\n"
         text += "\n"
-    else: text += "🏛️ <b>BCV:</b> <i>No disponible</i>\n\n"
+    else:
+        text += "🏛️ <b>BCV:</b> <i>No disponible</i>\n\n"
     
-    # TERMÓMETRO
+    # TERMÓMETRO (AL MEDIO)
     if user_id and has_user_voted(user_id):
         up, down = get_vote_results()
         total = up + down
@@ -771,8 +750,12 @@ def build_price_message(binance, bcv_data, time_str, user_id=None, requests_coun
     text += f"{EMOJI_PAYPAL} <b>Tasa PayPal:</b> {paypal:,.2f} Bs\n"
     text += f"{EMOJI_AMAZON} <b>Giftcard Amazon:</b> {amazon:,.2f} Bs\n\n"
     text += f"{EMOJI_STORE} <i>Actualizado: {time_str}</i>\n"
-    if requests_count > 100: text += f"👁 <b>{requests_count:,}</b> consultas hoy\n\n"
-    else: text += "\n"
+    
+    if requests_count > 100:
+        text += f"👁 <b>{requests_count:,}</b> consultas hoy\n\n"
+    else:
+        text += "\n"
+    
     text += "📢 <b>Síguenos:</b> @tasabinance_bot"
     return text
 
@@ -857,32 +840,19 @@ async def grafico(update: Update, context: ContextTypes.DEFAULT_TYPE):
     today_str = datetime.now(TIMEZONE).date().isoformat()
     if GRAPH_CACHE["date"] == today_str and GRAPH_CACHE["photo_id"]:
         try:
-            await update.message.reply_photo(photo=GRAPH_CACHE["photo_id"], caption="📉 <b>Promedio Diario (Semanal)</b>\n\n📲 <i>¡Compártelo en tus estados!</i>", parse_mode=ParseMode.HTML)
+            await update.message.reply_photo(photo=GRAPH_CACHE["photo_id"], caption="📉 <b>Promedio Diario (Semanal)</b>\n\n📲 <i>¡Compártelo en tus estados!</i>\n\n@tasabinance_bot", parse_mode=ParseMode.HTML)
             return
         except Exception: GRAPH_CACHE["photo_id"] = None
     await update.message.reply_chat_action("upload_photo")
-    
-    # GENERAR GRÁFICO (CON NUEVA EXPLICACIÓN)
     img_buf = await asyncio.to_thread(generate_public_price_chart)
-    
-    # BOTÓN DE COMPARTIR DEDICADO AL GRÁFICO
-    share_url = f"https://t.me/share/url?url=https://t.me/tasabinance_bot&text={quote('📉 Mira la tendencia del Dólar esta semana.')}"
-    keyboard = [[InlineKeyboardButton("📤 Compartir Gráfico", url=share_url)]]
-    
     if img_buf:
-        msg = await update.message.reply_photo(
-            photo=img_buf, 
-            caption="📉 <b>Promedio Diario (Semanal)</b>\n\n<i>Este gráfico te muestra cómo se ha movido la tasa Binance (USDT) frente al dólar BCV durante los últimos días, para que veas la diferencia real entre el precio de la calle y el oficial</i>\n\n📢 <b>Síguenos:</b> @tasabinance_bot", 
-            parse_mode=ParseMode.HTML,
-            reply_markup=InlineKeyboardMarkup(keyboard)
-        )
+        msg = await update.message.reply_photo(photo=img_buf, caption="📉 <b>Promedio Diario (Semanal)</b>\n\n📲 <i>¡Compártelo en tus estados!</i>\n\n@tasabinance_bot", parse_mode=ParseMode.HTML)
         if msg.photo:
             GRAPH_CACHE["date"] = today_str
             GRAPH_CACHE["photo_id"] = msg.photo[-1].file_id
     else:
         await update.message.reply_text("📉 Recopilando datos históricos. Vuelve pronto.")
 
-# 🔥 COMANDO REFERIDOS CON BOTÓN VIRAL 🔥
 async def referidos(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id = update.effective_user.id
     await asyncio.to_thread(track_user, update.effective_user)
@@ -917,6 +887,7 @@ async def precio(update: Update, context: ContextTypes.DEFAULT_TYPE):
         text = build_price_message(binance, bcv, time_str, user_id, req_count)
         keyboard = get_sentiment_keyboard(user_id)
         
+        # SMART NUDGE (REFERIDOS)
         if random.random() < 0.2:
             days, refs = await asyncio.to_thread(get_user_loyalty, user_id)
             if days > 3 and refs == 0:
@@ -931,6 +902,8 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await asyncio.to_thread(track_user, update.effective_user)
     query = update.callback_query
     data = query.data
+    
+    # --- LOGICA DE VOTO FIX UX ---
     if data in ['vote_up', 'vote_down']:
         vote_type = 'UP' if data == 'vote_up' else 'DOWN'
         if await asyncio.to_thread(cast_vote, user_id, vote_type):
@@ -938,12 +911,15 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
             await query.answer("✅ ¡Voto registrado!")
         else:
             await query.answer("⚠️ Ya votaste hoy.")
+        
         data = 'refresh_price'
+
     if data == 'refresh_price':
         await asyncio.to_thread(log_activity, user_id, "btn_refresh")
         binance = MARKET_DATA["price"]
         bcv = MARKET_DATA["bcv"]
         time_str = MARKET_DATA["last_updated"]
+        
         if binance:
             req_count = await asyncio.to_thread(get_daily_requests_count)
             text = build_price_message(binance, bcv, time_str, user_id, req_count)
@@ -952,6 +928,7 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 await query.edit_message_text(text=text, parse_mode=ParseMode.HTML, reply_markup=InlineKeyboardMarkup(keyboard))
             except BadRequest: pass
             except Exception as e: logging.error(f"Error edit: {e}")
+            
     try: await query.answer()
     except: pass
 
