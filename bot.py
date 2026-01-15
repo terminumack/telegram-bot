@@ -221,6 +221,7 @@ def recover_last_state():
     try:
         conn = psycopg2.connect(DATABASE_URL)
         cur = conn.cursor()
+        # Buscamos el último precio guardado
         cur.execute("SELECT price_binance, price_bcv, recorded_at FROM price_ticks ORDER BY id DESC LIMIT 1")
         row = cur.fetchone()
         
@@ -235,6 +236,8 @@ def recover_last_state():
             fecha_bonita = date_db.astimezone(TIMEZONE).strftime("%d/%m/%Y %I:%M:%S %p")
             MARKET_DATA["last_updated"] = fecha_bonita
             logging.info(f"💾 ESTADO RECUPERADO DE BD: Bin={binance_db} | BCV={bcv_db}")
+        else:
+            logging.info("⚠️ No se encontró historial previo en DB.")
         
         cur.close()
         conn.close()
@@ -330,6 +333,7 @@ def get_user_loyalty(user_id):
         return (0, 0)
     except Exception: return (0, 0)
 
+# --- SOCIAL PROOF & VOTOS ---
 def get_daily_requests_count():
     if not DATABASE_URL: return 0
     try:
@@ -573,7 +577,7 @@ def get_detailed_report_text():
             for cmd, cnt in top_commands:
                 text += f"• {cmd}: {cnt}\n"
 
-        text += f"\n<i>Sistema Operativo V52.</i> ✅"
+        text += f"\n<i>Sistema Operativo V53.</i> ✅"
         return text
     except Exception as e: 
         logging.error(f"Error detailed report: {e}")
@@ -713,6 +717,14 @@ def fetch_binance_price(trade_type="BUY"):
             del payload["publisherType"]
             response = requests.post(url, json=payload, headers=headers, timeout=10)
             data = response.json()
+        if not data.get("data"):
+            payload["payTypes"] = ["PagoMovil"]
+            response = requests.post(url, json=payload, headers=headers, timeout=10)
+            data = response.json()
+        if not data.get("data"):
+            del payload["transAmount"]
+            response = requests.post(url, json=payload, headers=headers, timeout=10)
+            data = response.json()
         prices = [float(item["adv"]["price"]) for item in data.get("data", [])]
         return sum(prices) / len(prices) if prices else None
     except Exception: return None
@@ -750,7 +762,7 @@ def fetch_bcv_price():
 
 async def update_price_task(context: ContextTypes.DEFAULT_TYPE):
     new_binance = await asyncio.to_thread(fetch_binance_price, "BUY")
-    new_binance_sell = await asyncio.to_thread(fetch_binance_price, "SELL")
+    new_binance_sell = await asyncio.to_thread(fetch_binnance_price, "SELL")
     new_bcv = await asyncio.to_thread(fetch_bcv_price)
     
     if new_binance:
@@ -778,8 +790,10 @@ def get_sentiment_keyboard(user_id):
     if has_user_voted(user_id):
         up, down = get_vote_results()
         total = up + down
+        
         share_text = quote(f"🔥 Dólar en {MARKET_DATA['price']:.2f} Bs. Revisa la tasa real aquí:")
         share_url = f"https://t.me/share/url?url=https://t.me/tasabinance_bot&text={share_text}"
+        
         return [
             [InlineKeyboardButton("🔄 Actualizar Precio", callback_data='refresh_price')],
             [InlineKeyboardButton("📤 Compartir con Amigos", url=share_url)]
@@ -810,7 +824,7 @@ def build_price_message(binance, bcv_data, time_str, user_id=None, requests_coun
         text += "\n"
     else:
         text += "🏛️ <b>BCV:</b> <i>No disponible</i>\n\n"
-        
+    
     text += f"{EMOJI_PAYPAL} <b>Tasa PayPal:</b> {paypal:,.2f} Bs\n"
     text += f"{EMOJI_AMAZON} <b>Giftcard Amazon:</b> {amazon:,.2f} Bs\n\n"
     
@@ -836,7 +850,6 @@ def build_price_message(binance, bcv_data, time_str, user_id=None, requests_coun
     return text
 
 async def send_daily_report(context: ContextTypes.DEFAULT_TYPE):
-    # En reportes automáticos, usamos la COLA en lugar de enviar directo
     binance = MARKET_DATA["price"]
     bcv = MARKET_DATA["bcv"]
     if not binance: binance = await asyncio.to_thread(fetch_binance_price)
@@ -851,6 +864,7 @@ async def send_daily_report(context: ContextTypes.DEFAULT_TYPE):
     body = body.replace(f"{EMOJI_STATS} <b>MONITOR DE TASAS</b>\n\n", "")
     text = f"{header}\n\n{body}"
 
+    # Botón compartir en reporte también (Mismo orden)
     share_text = quote(f"🔥 Dólar en {binance:.2f} Bs. Revisa la tasa real aquí:")
     share_url = f"https://t.me/share/url?url=https://t.me/tasabinance_bot&text={share_text}"
     keyboard = [[InlineKeyboardButton("🔄 Ver en tiempo real", callback_data='refresh_price')], [InlineKeyboardButton("📤 Compartir", url=share_url)]]
@@ -917,13 +931,13 @@ async def grafico(update: Update, context: ContextTypes.DEFAULT_TYPE):
     today_str = datetime.now(TIMEZONE).date().isoformat()
     if GRAPH_CACHE["date"] == today_str and GRAPH_CACHE["photo_id"]:
         try:
-            await update.message.reply_photo(photo=GRAPH_CACHE["photo_id"], caption="📉 <b>Promedio Diario (Semanal)</b>\n\n📲 <i>¡Compártelo en tus estados!</i>", parse_mode=ParseMode.HTML)
+            await update.message.reply_photo(photo=GRAPH_CACHE["photo_id"], caption="📉 <b>Promedio Diario (Semanal)</b>\n\n📲 <i>¡Compártelo en tus estados!</i>\n\n@tasabinance_bot", parse_mode=ParseMode.HTML)
             return
         except Exception: GRAPH_CACHE["photo_id"] = None
     await update.message.reply_chat_action("upload_photo")
     img_buf = await asyncio.to_thread(generate_public_price_chart)
     if img_buf:
-        msg = await update.message.reply_photo(photo=img_buf, caption="📉 <b>Promedio Diario (Semanal)</b>\n\n📲 <i>¡Compártelo en tus estados!</i>\n\n@tasabinance_bot", parse_mode=ParseMode.HTML)
+        msg = await update.message.reply_photo(photo=img_buf, caption="📉 <b>Promedio Diario (Semanal)</b>\n\n<i>Precio promedio ponderado del día.</i>", parse_mode=ParseMode.HTML)
         if msg.photo:
             GRAPH_CACHE["date"] = today_str
             GRAPH_CACHE["photo_id"] = msg.photo[-1].file_id
@@ -1269,6 +1283,11 @@ if __name__ == "__main__":
     app.add_handler(CommandHandler("debug", debug_mining))
     app.add_handler(CallbackQueryHandler(button_handler))
     
+    # 💥 AQUI FUE EL ERROR: Agregar la recuperación de memoria al inicio
+    # Esta línea asegura que el bot recupere el precio de la BD al arrancar
+    if MARKET_DATA["price"] is None:
+        recover_last_state()
+
     if app.job_queue:
         app.job_queue.run_repeating(update_price_task, interval=UPDATE_INTERVAL, first=1)
         app.job_queue.run_daily(send_daily_report, time=time(hour=9, minute=0, tzinfo=TIMEZONE), days=(0, 1, 2, 3, 4, 5, 6))
