@@ -131,11 +131,13 @@ def init_db():
                 bcv_price FLOAT DEFAULT 0
             )
         """)
+        # Tabla Ticks (Actualizada para Euro)
         cur.execute("""
             CREATE TABLE IF NOT EXISTS price_ticks (
                 id SERIAL PRIMARY KEY,
                 price_binance FLOAT,
                 price_bcv FLOAT,
+                price_bcv_eur FLOAT, -- 🔥 NUEVO CAMPO EURO 🔥
                 recorded_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
                 price_sell FLOAT,
                 spread_pct FLOAT
@@ -205,6 +207,8 @@ def migrate_db():
             
             cur.execute("ALTER TABLE price_ticks ADD COLUMN IF NOT EXISTS price_sell FLOAT;")
             cur.execute("ALTER TABLE price_ticks ADD COLUMN IF NOT EXISTS spread_pct FLOAT;")
+            # 🔥 MIGRACIÓN EURO 🔥
+            cur.execute("ALTER TABLE price_ticks ADD COLUMN IF NOT EXISTS price_bcv_eur FLOAT;")
             
             cur.execute("ALTER TABLE arbitrage_data ADD COLUMN IF NOT EXISTS spread_pct FLOAT;")
             
@@ -215,27 +219,28 @@ def migrate_db():
             conn.close()
     except Exception: pass
 
-# --- FUNCIÓN PARA RECUPERAR PRECIO ---
+# --- FUNCIÓN PARA RECUPERAR PRECIO (AHORA CON EURO) ---
 def recover_last_state():
     if not DATABASE_URL: return
     try:
         conn = psycopg2.connect(DATABASE_URL)
         cur = conn.cursor()
-        # Buscamos el último precio guardado
-        cur.execute("SELECT price_binance, price_bcv, recorded_at FROM price_ticks ORDER BY id DESC LIMIT 1")
+        # Buscamos también el Euro
+        cur.execute("SELECT price_binance, price_bcv, price_bcv_eur, recorded_at FROM price_ticks ORDER BY id DESC LIMIT 1")
         row = cur.fetchone()
         
         if row:
-            binance_db, bcv_db, date_db = row
+            binance_db, bcv_db, bcv_eur_db, date_db = row
             if binance_db:
                 MARKET_DATA["price"] = binance_db
                 MARKET_DATA["history"].append(binance_db)
-            if bcv_db:
-                MARKET_DATA["bcv"] = {'usd': bcv_db, 'eur': None} 
+            
+            # Restaurar BCV (Dólar y Euro)
+            MARKET_DATA["bcv"] = {'usd': bcv_db, 'eur': bcv_eur_db} 
             
             fecha_bonita = date_db.astimezone(TIMEZONE).strftime("%d/%m/%Y %I:%M:%S %p")
             MARKET_DATA["last_updated"] = fecha_bonita
-            logging.info(f"💾 ESTADO RECUPERADO DE BD: Bin={binance_db} | BCV={bcv_db}")
+            logging.info(f"💾 ESTADO RECUPERADO DE BD: Bin={binance_db} | USD={bcv_db} | EUR={bcv_eur_db}")
         else:
             logging.info("⚠️ No se encontró historial previo en DB.")
         
@@ -333,7 +338,6 @@ def get_user_loyalty(user_id):
         return (0, 0)
     except Exception: return (0, 0)
 
-# --- SOCIAL PROOF & VOTOS ---
 def get_daily_requests_count():
     if not DATABASE_URL: return 0
     try:
@@ -577,7 +581,7 @@ def get_detailed_report_text():
             for cmd, cnt in top_commands:
                 text += f"• {cmd}: {cnt}\n"
 
-        text += f"\n<i>Sistema Operativo V53.</i> ✅"
+        text += f"\n<i>Sistema Operativo V54.</i> ✅"
         return text
     except Exception as e: 
         logging.error(f"Error detailed report: {e}")
@@ -684,10 +688,11 @@ def save_mining_data(binance, bcv_val, binance_sell):
                 bcv_price = GREATEST(daily_stats.bcv_price, %s)
         """, (today, binance, bcv_val, binance, bcv_val))
         
+        # 🔥 GUARDAR EURO TAMBIÉN EN TICKS 🔥
         cur.execute("""
-            INSERT INTO arbitrage_data (buy_pm, sell_pm, buy_banesco, buy_mercantil, buy_provincial, spread_pct)
-            VALUES (%s, %s, 0, 0, 0, %s)
-        """, (binance, binance_sell, spread))
+            INSERT INTO price_ticks (price_binance, price_sell, price_bcv, price_bcv_eur, spread_pct) 
+            VALUES (%s, %s, %s, %s, %s)
+        """, (binance, binance_sell, bcv_val, MARKET_DATA["bcv"]["eur"], spread))
         
         conn.commit()
         cur.close()
@@ -762,7 +767,7 @@ def fetch_bcv_price():
 
 async def update_price_task(context: ContextTypes.DEFAULT_TYPE):
     new_binance = await asyncio.to_thread(fetch_binance_price, "BUY")
-    new_binance_sell = await asyncio.to_thread(fetch_binnance_price, "SELL")
+    new_binance_sell = await asyncio.to_thread(fetch_binance_price, "SELL")
     new_bcv = await asyncio.to_thread(fetch_bcv_price)
     
     if new_binance:
@@ -956,8 +961,6 @@ async def referidos(update: Update, context: ContextTypes.DEFAULT_TYPE):
         clean_name = name.split()[0] if name else "Usuario"
         ranking_text += f"{medal} <b>{clean_name}</b> — {score} refs\n"
     invite_link = f"https://t.me/{context.bot.username}?start={user_id}"
-    
-    # BOTÓN DE COMPARTIR DIRECTO
     share_msg = quote(f"🎁 ¡Gana 10 USDT con este bot! Entra aquí y participa:\n\n{invite_link}")
     share_url = f"https://t.me/share/url?url={share_msg}"
     keyboard = [[InlineKeyboardButton("📤 Comparte y Gana $10", url=share_url)]]
@@ -972,18 +975,13 @@ async def precio(update: Update, context: ContextTypes.DEFAULT_TYPE):
     binance = MARKET_DATA["price"]
     bcv = MARKET_DATA["bcv"]
     time_str = MARKET_DATA["last_updated"]
-    
     if binance:
         req_count = await asyncio.to_thread(get_daily_requests_count)
         text = build_price_message(binance, bcv, time_str, user_id, req_count)
         keyboard = get_sentiment_keyboard(user_id)
-        
-        # SMART NUDGE (REFERIDOS)
         if random.random() < 0.2:
             days, refs = await asyncio.to_thread(get_user_loyalty, user_id)
-            if days > 3 and refs == 0:
-                text += "\n\n🎁 <i>¡Gana $10 USDT invitando amigos! Toca /referidos</i>"
-
+            if days > 3 and refs == 0: text += "\n\n🎁 <i>¡Gana $10 USDT invitando amigos! Toca /referidos</i>"
         await update.message.reply_text(text, parse_mode=ParseMode.HTML, reply_markup=InlineKeyboardMarkup(keyboard))
     else:
         await update.message.reply_text("🔄 Iniciando sistema... intenta en unos segundos.")
@@ -993,33 +991,25 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await asyncio.to_thread(track_user, update.effective_user)
     query = update.callback_query
     data = query.data
-    
-    # --- LOGICA DE VOTO FIX UX ---
     if data in ['vote_up', 'vote_down']:
         vote_type = 'UP' if data == 'vote_up' else 'DOWN'
         if await asyncio.to_thread(cast_vote, user_id, vote_type):
             await asyncio.to_thread(log_activity, user_id, f"vote_{vote_type.lower()}")
             await query.answer("✅ ¡Voto registrado!")
-        else:
-            await query.answer("⚠️ Ya votaste hoy.")
-        
+        else: await query.answer("⚠️ Ya votaste hoy.")
         data = 'refresh_price'
-
     if data == 'refresh_price':
         await asyncio.to_thread(log_activity, user_id, "btn_refresh")
         binance = MARKET_DATA["price"]
         bcv = MARKET_DATA["bcv"]
         time_str = MARKET_DATA["last_updated"]
-        
         if binance:
             req_count = await asyncio.to_thread(get_daily_requests_count)
             text = build_price_message(binance, bcv, time_str, user_id, req_count)
             keyboard = get_sentiment_keyboard(user_id)
-            try:
-                await query.edit_message_text(text=text, parse_mode=ParseMode.HTML, reply_markup=InlineKeyboardMarkup(keyboard))
+            try: await query.edit_message_text(text=text, parse_mode=ParseMode.HTML, reply_markup=InlineKeyboardMarkup(keyboard))
             except BadRequest: pass
             except Exception as e: logging.error(f"Error edit: {e}")
-            
     try: await query.answer()
     except: pass
 
