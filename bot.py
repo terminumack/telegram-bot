@@ -215,6 +215,32 @@ def migrate_db():
             conn.close()
     except Exception: pass
 
+# --- FUNCIÓN PARA RECUPERAR PRECIO ---
+def recover_last_state():
+    if not DATABASE_URL: return
+    try:
+        conn = psycopg2.connect(DATABASE_URL)
+        cur = conn.cursor()
+        cur.execute("SELECT price_binance, price_bcv, recorded_at FROM price_ticks ORDER BY id DESC LIMIT 1")
+        row = cur.fetchone()
+        
+        if row:
+            binance_db, bcv_db, date_db = row
+            if binance_db:
+                MARKET_DATA["price"] = binance_db
+                MARKET_DATA["history"].append(binance_db)
+            if bcv_db:
+                MARKET_DATA["bcv"] = {'usd': bcv_db, 'eur': None} 
+            
+            fecha_bonita = date_db.astimezone(TIMEZONE).strftime("%d/%m/%Y %I:%M:%S %p")
+            MARKET_DATA["last_updated"] = fecha_bonita
+            logging.info(f"💾 ESTADO RECUPERADO DE BD: Bin={binance_db} | BCV={bcv_db}")
+        
+        cur.close()
+        conn.close()
+    except Exception as e:
+        logging.error(f"❌ Error recuperando estado: {e}")
+
 def track_user(user, referrer_id=None, source=None):
     if not DATABASE_URL: return 
     user_id = user.id
@@ -422,7 +448,7 @@ def generate_stats_chart():
         return buf
     except Exception: return None
 
-# --- GRÁFICO VERTICAL ---
+# --- GRÁFICO VERTICAL (STORY MODE) ---
 def generate_public_price_chart():
     if not DATABASE_URL: return None
     buf = io.BytesIO()
@@ -452,8 +478,8 @@ def generate_public_price_chart():
         fig.patch.set_facecolor(bg_color)
         ax.set_facecolor(bg_color)
         
-        ax.plot(dates, prices_bin, color='#F3BA2F', marker='o', linewidth=4, label="Binance")
-        ax.plot(dates, prices_bcv, color='#2979FF', marker='s', linewidth=2, linestyle='--', label="BCV")
+        ax.plot(dates, prices_bin, color='#F3BA2F', marker='o', linewidth=4, markersize=10, label="Binance")
+        ax.plot(dates, prices_bcv, color='#2979FF', marker='s', linewidth=2, markersize=8, linestyle='--', label="BCV")
         
         ax.set_title('TASA BINANCE VZLA', color='#F3BA2F', fontsize=18, fontweight='bold', pad=25)
         ax.set_xlabel('Últimos 7 Días', color='white', fontsize=12)
@@ -547,7 +573,7 @@ def get_detailed_report_text():
             for cmd, cnt in top_commands:
                 text += f"• {cmd}: {cnt}\n"
 
-        text += f"\n<i>Sistema Operativo V51.</i> ✅"
+        text += f"\n<i>Sistema Operativo V52.</i> ✅"
         return text
     except Exception as e: 
         logging.error(f"Error detailed report: {e}")
@@ -751,6 +777,7 @@ async def update_price_task(context: ContextTypes.DEFAULT_TYPE):
 def get_sentiment_keyboard(user_id):
     if has_user_voted(user_id):
         up, down = get_vote_results()
+        total = up + down
         share_text = quote(f"🔥 Dólar en {MARKET_DATA['price']:.2f} Bs. Revisa la tasa real aquí:")
         share_url = f"https://t.me/share/url?url=https://t.me/tasabinance_bot&text={share_text}"
         return [
@@ -783,7 +810,7 @@ def build_price_message(binance, bcv_data, time_str, user_id=None, requests_coun
         text += "\n"
     else:
         text += "🏛️ <b>BCV:</b> <i>No disponible</i>\n\n"
-    
+        
     text += f"{EMOJI_PAYPAL} <b>Tasa PayPal:</b> {paypal:,.2f} Bs\n"
     text += f"{EMOJI_AMAZON} <b>Giftcard Amazon:</b> {amazon:,.2f} Bs\n\n"
     
@@ -809,6 +836,7 @@ def build_price_message(binance, bcv_data, time_str, user_id=None, requests_coun
     return text
 
 async def send_daily_report(context: ContextTypes.DEFAULT_TYPE):
+    # En reportes automáticos, usamos la COLA en lugar de enviar directo
     binance = MARKET_DATA["price"]
     bcv = MARKET_DATA["bcv"]
     if not binance: binance = await asyncio.to_thread(fetch_binance_price)
@@ -823,7 +851,6 @@ async def send_daily_report(context: ContextTypes.DEFAULT_TYPE):
     body = body.replace(f"{EMOJI_STATS} <b>MONITOR DE TASAS</b>\n\n", "")
     text = f"{header}\n\n{body}"
 
-    # Botón compartir en reporte también (Mismo orden)
     share_text = quote(f"🔥 Dólar en {binance:.2f} Bs. Revisa la tasa real aquí:")
     share_url = f"https://t.me/share/url?url=https://t.me/tasabinance_bot&text={share_text}"
     keyboard = [[InlineKeyboardButton("🔄 Ver en tiempo real", callback_data='refresh_price')], [InlineKeyboardButton("📤 Compartir", url=share_url)]]
@@ -890,13 +917,13 @@ async def grafico(update: Update, context: ContextTypes.DEFAULT_TYPE):
     today_str = datetime.now(TIMEZONE).date().isoformat()
     if GRAPH_CACHE["date"] == today_str and GRAPH_CACHE["photo_id"]:
         try:
-            await update.message.reply_photo(photo=GRAPH_CACHE["photo_id"], caption="📉 <b>Promedio Diario (Semanal)</b>\n\n📲 <i>¡Compártelo en tus estados!</i>\n\n@tasabinance_bot", parse_mode=ParseMode.HTML)
+            await update.message.reply_photo(photo=GRAPH_CACHE["photo_id"], caption="📉 <b>Promedio Diario (Semanal)</b>\n\n📲 <i>¡Compártelo en tus estados!</i>", parse_mode=ParseMode.HTML)
             return
         except Exception: GRAPH_CACHE["photo_id"] = None
     await update.message.reply_chat_action("upload_photo")
     img_buf = await asyncio.to_thread(generate_public_price_chart)
     if img_buf:
-        msg = await update.message.reply_photo(photo=img_buf, caption="📉 <b>Promedio Diario (Semanal)</b>\n\n<i>Precio promedio ponderado del día.</i>", parse_mode=ParseMode.HTML)
+        msg = await update.message.reply_photo(photo=img_buf, caption="📉 <b>Promedio Diario (Semanal)</b>\n\n📲 <i>¡Compártelo en tus estados!</i>\n\n@tasabinance_bot", parse_mode=ParseMode.HTML)
         if msg.photo:
             GRAPH_CACHE["date"] = today_str
             GRAPH_CACHE["photo_id"] = msg.photo[-1].file_id
@@ -915,9 +942,12 @@ async def referidos(update: Update, context: ContextTypes.DEFAULT_TYPE):
         clean_name = name.split()[0] if name else "Usuario"
         ranking_text += f"{medal} <b>{clean_name}</b> — {score} refs\n"
     invite_link = f"https://t.me/{context.bot.username}?start={user_id}"
+    
+    # BOTÓN DE COMPARTIR DIRECTO
     share_msg = quote(f"🎁 ¡Gana 10 USDT con este bot! Entra aquí y participa:\n\n{invite_link}")
     share_url = f"https://t.me/share/url?url={share_msg}"
     keyboard = [[InlineKeyboardButton("📤 Comparte y Gana $10", url=share_url)]]
+
     text = (f"🎁 <b>PROGRAMA DE REFERIDOS (PREMIOS USDT)</b>\n\n¡Gana dinero real invitando a tus amigos!\n📅 <b>Corte y Pago:</b> Día 30 de cada mes.\n\n🏆 <b>PREMIOS MENSUALES:</b>\n🥇 1er Lugar: <b>$10 USDT</b>\n🥈 2do Lugar: <b>$5 USDT</b>\n🥉 3er Lugar: <b>$5 USDT</b>\n\n👤 <b>TUS ESTADÍSTICAS:</b>\n👥 Invitados: <b>{count}</b>\n🏆 Tu Rango: <b>#{rank}</b>\n\n🔗 <b>TU ENLACE ÚNICO:</b>\n<code>{invite_link}</code>\n<i>(Toca para copiar y compartir)</i>\n\n📊 <b>TOP 3 LÍDERES:</b>\n{ranking_text}\n👇 <b>¡Compártelo ahora!</b>")
     await update.message.reply_text(text, parse_mode=ParseMode.HTML, disable_web_page_preview=True, reply_markup=InlineKeyboardMarkup(keyboard))
 
@@ -1074,7 +1104,7 @@ async def process_alert_logic(update: Update, target):
         await update.message.reply_text("⛔ <b>Límite alcanzado</b>\nSolo puedes tener 3 alertas activas al mismo tiempo.", parse_mode=ParseMode.HTML)
     return ConversationHandler.END
 
-# 🔥 CALCULADORA DUAL 🔥
+# 🔥 CALCULADORA PRO (V52) 🔥
 async def calculate_conversion(update: Update, text_amount, currency_type):
     rate_binance = MARKET_DATA["price"]
     rate_bcv = MARKET_DATA["bcv"]["usd"] if MARKET_DATA["bcv"] else None
@@ -1100,14 +1130,17 @@ async def calculate_conversion(update: Update, text_amount, currency_type):
 
         if currency_type == "USDT":
             total_binance = amount * rate_binance
-            text = f"🇺🇸 <b>{amount:,.2f} USDT son:</b>\n\n"
+            
+            text = f"🇺🇸 <b>{amount:,.2f} (USDT / Dólares) son:</b>\n\n"
             text += f"🔶 <b>{total_binance:,.2f} Bs</b> (Binance)\n"
-            text += f"<i>Tasa: {rate_binance:,.2f}</i>\n\n"
+            text += f"└ <i>Tasa: {rate_binance:,.2f}</i>\n\n"
             
             if rate_bcv:
                 total_bcv = amount * rate_bcv
-                text += f"🏛️ <b>{total_bcv:,.2f} Bs</b> (BCV)\n"
-                text += f"<i>Tasa: {rate_bcv:,.2f}</i>"
+                diff = abs(total_binance - total_bcv)
+                text += f"🏛️ <b>{total_bcv:,.2f} Bs</b> (Tasa BCV)\n"
+                text += f"└ <i>Tasa: {rate_bcv:,.2f}</i>\n\n"
+                text += f"💸 <b>Diferencia:</b> {diff:,.2f} Bs"
             else:
                  text += "🏛️ <b>BCV:</b> No disponible"
 
@@ -1115,14 +1148,17 @@ async def calculate_conversion(update: Update, text_amount, currency_type):
 
         else: 
             total_binance = amount / rate_binance
-            text = f"🇻🇪 <b>{amount:,.2f} Bs son:</b>\n\n"
+            
+            text = f"🇻🇪 <b>{amount:,.2f} Bs equivalen a:</b>\n\n"
             text += f"🔶 <b>{total_binance:,.2f} USDT</b> (Binance)\n"
-            text += f"<i>Tasa: {rate_binance:,.2f}</i>\n\n"
+            text += f"└ <i>Tasa: {rate_binance:,.2f}</i>\n\n"
 
             if rate_bcv and rate_bcv > 0:
                 total_bcv = amount / rate_bcv
-                text += f"🏛️ <b>{total_bcv:,.2f} USDT</b> (BCV)\n"
-                text += f"<i>Tasa: {rate_bcv:,.2f}</i>"
+                diff = abs(total_binance - total_bcv)
+                text += f"🏛️ <b>{total_bcv:,.2f} $</b> (Dólar Oficial)\n"
+                text += f"└ <i>Tasa: {rate_bcv:,.2f}</i>\n\n"
+                text += f"💸 <b>Diferencia:</b> {diff:,.2f} USD"
             else:
                 text += "🏛️ <b>BCV:</b> No disponible"
 
