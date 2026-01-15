@@ -93,21 +93,94 @@ def init_db():
         conn = psycopg2.connect(DATABASE_URL)
         cur = conn.cursor()
         
-        # Crear tablas si no existen
-        tables = [
-            """CREATE TABLE IF NOT EXISTS users (user_id BIGINT PRIMARY KEY, joined_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP, first_name TEXT, referral_count INTEGER DEFAULT 0, referred_by BIGINT, last_active TIMESTAMP DEFAULT CURRENT_TIMESTAMP, status TEXT DEFAULT 'active', source TEXT)""",
-            """CREATE TABLE IF NOT EXISTS alerts (id SERIAL PRIMARY KEY, user_id BIGINT, target_price FLOAT, condition TEXT, created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP)""",
-            """CREATE TABLE IF NOT EXISTS activity_logs (id SERIAL PRIMARY KEY, user_id BIGINT, command TEXT, created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP)""",
-            """CREATE TABLE IF NOT EXISTS daily_stats (date DATE PRIMARY KEY, price_sum FLOAT DEFAULT 0, count INTEGER DEFAULT 0, bcv_price FLOAT DEFAULT 0)""",
-            """CREATE TABLE IF NOT EXISTS price_ticks (id SERIAL PRIMARY KEY, price_binance FLOAT, price_bcv FLOAT, recorded_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP, price_sell FLOAT, spread_pct FLOAT, price_bcv_eur FLOAT)""",
-            """CREATE TABLE IF NOT EXISTS calc_logs (id SERIAL PRIMARY KEY, user_id BIGINT, amount FLOAT, currency_type TEXT, result FLOAT, created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP)""",
-            """CREATE TABLE IF NOT EXISTS daily_votes (user_id BIGINT, vote_date DATE, vote_type TEXT, PRIMARY KEY (user_id, vote_date))""",
-            """CREATE TABLE IF NOT EXISTS broadcast_queue (id SERIAL PRIMARY KEY, message TEXT, status TEXT DEFAULT 'pending', created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP)""",
-            """CREATE TABLE IF NOT EXISTS arbitrage_data (id SERIAL PRIMARY KEY, recorded_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP, buy_pm FLOAT, sell_pm FLOAT, buy_banesco FLOAT, buy_mercantil FLOAT, buy_provincial FLOAT, spread_pct FLOAT)"""
-        ]
-        for t in tables:
-            cur.execute(t)
-            
+        # Tablas
+        cur.execute("""
+            CREATE TABLE IF NOT EXISTS users (
+                user_id BIGINT PRIMARY KEY,
+                joined_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                first_name TEXT,
+                referral_count INTEGER DEFAULT 0,
+                referred_by BIGINT,
+                last_active TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                status TEXT DEFAULT 'active',
+                source TEXT 
+            )
+        """)
+        cur.execute("""
+            CREATE TABLE IF NOT EXISTS alerts (
+                id SERIAL PRIMARY KEY,
+                user_id BIGINT,
+                target_price FLOAT,
+                condition TEXT, 
+                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+            )
+        """)
+        cur.execute("""
+            CREATE TABLE IF NOT EXISTS activity_logs (
+                id SERIAL PRIMARY KEY,
+                user_id BIGINT,
+                command TEXT,
+                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+            )
+        """)
+        cur.execute("""
+            CREATE TABLE IF NOT EXISTS daily_stats (
+                date DATE PRIMARY KEY,
+                price_sum FLOAT DEFAULT 0,
+                count INTEGER DEFAULT 0,
+                bcv_price FLOAT DEFAULT 0
+            )
+        """)
+        cur.execute("""
+            CREATE TABLE IF NOT EXISTS price_ticks (
+                id SERIAL PRIMARY KEY,
+                price_binance FLOAT,
+                price_bcv FLOAT,
+                recorded_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                price_sell FLOAT,
+                spread_pct FLOAT,
+                price_bcv_eur FLOAT
+            )
+        """)
+        cur.execute("""
+            CREATE TABLE IF NOT EXISTS calc_logs (
+                id SERIAL PRIMARY KEY,
+                user_id BIGINT,
+                amount FLOAT,
+                currency_type TEXT,
+                result FLOAT,
+                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+            )
+        """)
+        cur.execute("""
+            CREATE TABLE IF NOT EXISTS daily_votes (
+                user_id BIGINT,
+                vote_date DATE,
+                vote_type TEXT, 
+                PRIMARY KEY (user_id, vote_date)
+            )
+        """)
+        cur.execute("""
+            CREATE TABLE IF NOT EXISTS broadcast_queue (
+                id SERIAL PRIMARY KEY,
+                message TEXT,
+                status TEXT DEFAULT 'pending',
+                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+            )
+        """)
+        cur.execute("""
+            CREATE TABLE IF NOT EXISTS arbitrage_data (
+                id SERIAL PRIMARY KEY,
+                recorded_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                buy_pm FLOAT,
+                sell_pm FLOAT,
+                buy_banesco FLOAT,
+                buy_mercantil FLOAT,
+                buy_provincial FLOAT,
+                spread_pct FLOAT
+            )
+        """)
+
         conn.commit()
         cur.close()
         conn.close()
@@ -120,8 +193,8 @@ def migrate_db():
     try:
         conn = psycopg2.connect(DATABASE_URL)
         cur = conn.cursor()
-        # Migraciones silenciosas
         try:
+            # Migraciones
             cur.execute("ALTER TABLE users ADD COLUMN IF NOT EXISTS status TEXT DEFAULT 'active';")
             cur.execute("ALTER TABLE users ADD COLUMN IF NOT EXISTS source TEXT;")
             cur.execute("ALTER TABLE daily_stats ADD COLUMN IF NOT EXISTS bcv_price FLOAT DEFAULT 0;")
@@ -223,7 +296,10 @@ def get_user_loyalty(user_id):
         res = cur.fetchone()
         cur.close()
         conn.close()
-        if res: return ((datetime.now() - res[0]).days, res[1])
+        if res:
+            days = (datetime.now() - res[0]).days
+            refs = res[1]
+            return (days, refs)
         return (0, 0)
     except Exception: return (0, 0)
 
@@ -253,6 +329,7 @@ def get_yesterday_close():
 
 def cast_vote(user_id, vote_type):
     if not DATABASE_URL: return False
+    today = datetime.now(TIMEZONE).date()
     try:
         conn = psycopg2.connect(DATABASE_URL)
         cur = conn.cursor()
@@ -266,6 +343,7 @@ def cast_vote(user_id, vote_type):
 
 def get_vote_results():
     if not DATABASE_URL: return (0, 0)
+    today = datetime.now(TIMEZONE).date()
     try:
         conn = psycopg2.connect(DATABASE_URL)
         cur = conn.cursor()
@@ -278,6 +356,7 @@ def get_vote_results():
 
 def has_user_voted(user_id):
     if not DATABASE_URL: return False
+    today = datetime.now(TIMEZONE).date()
     try:
         conn = psycopg2.connect(DATABASE_URL)
         cur = conn.cursor()
@@ -304,6 +383,18 @@ def get_referral_stats(user_id):
         conn.close()
         return (cnt, rank, top3)
     except Exception: return (0, 0, [])
+
+def get_total_users():
+    if not DATABASE_URL: return 0
+    try:
+        conn = psycopg2.connect(DATABASE_URL)
+        cur = conn.cursor()
+        cur.execute("SELECT COUNT(*) FROM users")
+        count = cur.fetchone()[0]
+        cur.close()
+        conn.close()
+        return count
+    except Exception: return 0
 
 def get_all_users_ids():
     if not DATABASE_URL: return []
@@ -385,22 +476,34 @@ def queue_broadcast(message):
 # ==============================================================================
 #  BACKEND PRECIOS
 # ==============================================================================
-def fetch_binance_price(trade_type="BUY"):
+def fetch_binance_raw(trade_type, bank_filter=None):
     url = "https://p2p.binance.com/bapi/c2c/v2/friendly/c2c/adv/search"
     ua = random.choice(USER_AGENTS)
     headers = {"Content-Type": "application/json", "User-Agent": ua}
     last_known = MARKET_DATA["price"] if MARKET_DATA["price"] else 600
     dynamic_amount = int(last_known * FILTER_MIN_USD)
-    payload = {"page": 1, "rows": 3, "payTypes": ["PagoMovil", "Banesco", "Mercantil", "Provincial"], "publisherType": "merchant", "transAmount": str(dynamic_amount), "asset": "USDT", "fiat": "VES", "tradeType": trade_type}
+    pay_types = [bank_filter] if bank_filter else ["PagoMovil", "Banesco", "Mercantil", "Provincial"]
+    payload = {
+        "page": 1, "rows": 3, 
+        "payTypes": pay_types, 
+        "publisherType": "merchant", 
+        "transAmount": str(dynamic_amount), 
+        "asset": "USDT", "fiat": "VES", "tradeType": trade_type
+    }
     try:
         response = requests.post(url, json=payload, headers=headers, timeout=10)
         data = response.json()
-        if not data.get("data"): del payload["publisherType"]; response = requests.post(url, json=payload, headers=headers, timeout=10); data = response.json()
-        if not data.get("data"): payload["payTypes"] = ["PagoMovil"]; response = requests.post(url, json=payload, headers=headers, timeout=10); data = response.json()
-        if not data.get("data"): del payload["transAmount"]; response = requests.post(url, json=payload, headers=headers, timeout=10); data = response.json()
+        if not data.get("data"):
+            del payload["publisherType"]
+            response = requests.post(url, json=payload, headers=headers, timeout=10)
+            data = response.json()
         prices = [float(item["adv"]["price"]) for item in data.get("data", [])]
         return sum(prices) / len(prices) if prices else None
     except Exception: return None
+
+def fetch_binance_price(trade_type="BUY"):
+    """Wrapper simple para compatibilidad."""
+    return fetch_binance_raw(trade_type, None)
 
 def fetch_bcv_price():
     url = "http://www.bcv.org.ve/"
@@ -410,7 +513,8 @@ def fetch_bcv_price():
         response = requests.get(url, headers=headers, timeout=30, verify=False)
         if response.status_code == 200:
             soup = BeautifulSoup(response.content, 'html.parser')
-            dolar_div = soup.find('div', id='dolar'); euro_div = soup.find('div', id='euro')
+            dolar_div = soup.find('div', id='dolar')
+            euro_div = soup.find('div', id='euro')
             if dolar_div: rates['usd'] = float(dolar_div.find('strong').text.strip().replace(',', '.'))
             if euro_div: rates['eur'] = float(euro_div.find('strong').text.strip().replace(',', '.'))
             if rates['usd']: logging.info(f"✅ BCV ENCONTRADO: {rates['usd']} Bs")
@@ -428,10 +532,30 @@ def generate_stats_chart():
         growth_data = cur.fetchall()
         cur.execute("SELECT command, COUNT(*) FROM activity_logs GROUP BY command ORDER BY 2 DESC LIMIT 5")
         cmd_data = cur.fetchall()
-        plt.style.use('dark_background'); fig, (ax1, ax2) = plt.subplots(1, 2, figsize=(10, 5)); bg_color = '#212121'; fig.patch.set_facecolor(bg_color); ax1.set_facecolor(bg_color); ax2.set_facecolor(bg_color)
-        if growth_data: ax1.bar([r[0] for r in growth_data], [r[1] for r in growth_data], color='#F3BA2F')
-        if cmd_data: ax2.pie([r[1] for r in cmd_data], labels=[r[0] for r in cmd_data], autopct='%1.1f%%')
-        plt.tight_layout(); plt.savefig(buf, format='png', facecolor=bg_color); buf.seek(0); plt.close(); cur.close(); conn.close()
+        plt.style.use('dark_background')
+        fig, (ax1, ax2) = plt.subplots(1, 2, figsize=(10, 5))
+        bg_color = '#212121'
+        fig.patch.set_facecolor(bg_color)
+        ax1.set_facecolor(bg_color)
+        ax2.set_facecolor(bg_color)
+        
+        if growth_data:
+             dates = [r[0] for r in growth_data]
+             counts = [r[1] for r in growth_data]
+             bars = ax1.bar(dates, counts, color='#F3BA2F')
+             ax1.bar_label(bars, color='white')
+             ax1.set_title('Nuevos Usuarios (7 Días)', color='white')
+             
+        if cmd_data:
+             ax2.pie([r[1] for r in cmd_data], labels=[r[0] for r in cmd_data], autopct='%1.1f%%')
+             ax2.set_title('Comandos Favoritos', color='white')
+             
+        plt.tight_layout()
+        plt.savefig(buf, format='png', facecolor=bg_color)
+        buf.seek(0)
+        plt.close()
+        cur.close()
+        conn.close()
         return buf
     except Exception: return None
 
@@ -444,21 +568,43 @@ def generate_public_price_chart():
         cur.execute("SELECT date, (price_sum / NULLIF(count, 0)) as avg_binance, bcv_price FROM daily_stats ORDER BY date DESC LIMIT 7")
         data = cur.fetchall()
         today = datetime.now(TIMEZONE).date()
-        if not any(d[0] == today for d in data) and MARKET_DATA["price"]: data.insert(0, (today, MARKET_DATA["price"], MARKET_DATA["bcv"]["usd"] if MARKET_DATA["bcv"] else 0))
+        if not any(d[0] == today for d in data) and MARKET_DATA["price"]: 
+            data.insert(0, (today, MARKET_DATA["price"], MARKET_DATA["bcv"]["usd"] if MARKET_DATA["bcv"] else 0))
         data.sort(key=lambda x: x[0])
         dates = [d[0].strftime('%d/%m') for d in data]
         prices_bin = [d[1] for d in data]
         prices_bcv = [d[2] if d[2] > 0 else None for d in data]
         if not prices_bin: return None
-        plt.style.use('dark_background'); fig, ax = plt.subplots(figsize=(6, 8)); bg_color = '#1e1e1e'; fig.patch.set_facecolor(bg_color); ax.set_facecolor(bg_color)
-        ax.plot(dates, prices_bin, color='#F3BA2F', marker='o', linewidth=4); ax.plot(dates, prices_bcv, color='#2979FF', marker='s', linewidth=2, linestyle='--')
+        
+        plt.style.use('dark_background')
+        fig, ax = plt.subplots(figsize=(6, 8))
+        bg_color = '#1e1e1e'
+        fig.patch.set_facecolor(bg_color)
+        ax.set_facecolor(bg_color)
+        
+        ax.plot(dates, prices_bin, color='#F3BA2F', marker='o', linewidth=4, label="Binance")
+        ax.plot(dates, prices_bcv, color='#2979FF', marker='s', linewidth=2, linestyle='--', label="BCV")
+        
         ax.set_title('TASA BINANCE VZLA', color='#F3BA2F', fontsize=18, fontweight='bold', pad=25)
-        for i, p in enumerate(prices_bin): ax.annotate(f"{p:.2f}", (dates[i], p), textcoords="offset points", xytext=(0,15), ha='center', color='white', fontsize=11)
+        
+        for i, p in enumerate(prices_bin): 
+            ax.annotate(f"{p:.2f}", (dates[i], p), textcoords="offset points", xytext=(0,15), ha='center', color='white', fontsize=11, fontweight='bold')
         for i, p in enumerate(prices_bcv): 
-            if p: ax.annotate(f"{p:.2f}", (dates[i], p), textcoords="offset points", xytext=(0,-20), ha='center', color='#2979FF', fontsize=10)
-        fig.text(0.5, 0.5, '@tasabinance_bot', fontsize=28, color='white', ha='center', va='center', alpha=0.08, rotation=45); plt.tight_layout(); plt.savefig(buf, format='png', facecolor=bg_color, dpi=100); buf.seek(0); plt.close(); cur.close(); conn.close()
+            if p: ax.annotate(f"{p:.2f}", (dates[i], p), textcoords="offset points", xytext=(0,-20), ha='center', color='#2979FF', fontsize=10, fontweight='bold')
+            
+        fig.text(0.5, 0.5, '@tasabinance_bot', fontsize=28, color='white', ha='center', va='center', alpha=0.08, rotation=45, fontweight='bold')
+        fig.text(0.5, 0.03, '¡Úsalo Gratis en Telegram!', fontsize=12, color='#F3BA2F', ha='center', va='bottom', fontweight='bold')
+        
+        plt.tight_layout()
+        plt.savefig(buf, format='png', facecolor=bg_color, dpi=100)
+        buf.seek(0)
+        plt.close()
+        cur.close()
+        conn.close()
         return buf
-    except Exception: return None
+    except Exception as e:
+        logging.error(f"Error Public Chart: {e}")
+        return None
 
 def get_detailed_report_text():
     if not DATABASE_URL: return "⚠️ Error DB"
@@ -471,7 +617,6 @@ def get_detailed_report_text():
         blocked = cur.fetchone()[0]
         active_real = total - blocked
         churn_rate = (blocked / total * 100) if total > 0 else 0
-        
         cur.execute("SELECT COUNT(*) FROM users WHERE joined_at >= CURRENT_DATE")
         new_today = cur.fetchone()[0]
         cur.execute("SELECT COUNT(*) FROM users WHERE last_active >= NOW() - INTERVAL '24 HOURS'")
@@ -480,44 +625,26 @@ def get_detailed_report_text():
         active_alerts = cur.fetchone()[0]
         cur.execute("SELECT COUNT(*) FROM activity_logs WHERE created_at >= CURRENT_DATE")
         requests_today = cur.fetchone()[0]
-        
         cur.execute("SELECT source, COUNT(*) FROM users WHERE source IS NOT NULL GROUP BY source ORDER BY 2 DESC LIMIT 3")
         top_sources = cur.fetchall()
-
         cur.execute("SELECT command, COUNT(*) FROM activity_logs GROUP BY command ORDER BY 2 DESC")
         top_commands = cur.fetchall()
-
         cur.execute("SELECT COUNT(*) FROM users WHERE referred_by IS NOT NULL")
         total_referrals = cur.fetchone()[0]
-        
         cur.close()
         conn.close()
         
-        text = (
-            f"📊 <b>REPORTE EJECUTIVO</b>\n\n"
-            f"👥 <b>Total Histórico:</b> {total}\n"
-            f"✅ <b>Usuarios Reales:</b> {active_real}\n"
-            f"🚫 <b>Bloqueados:</b> {blocked} ({churn_rate:.2f}%)\n"
-            f"--------------------------\n"
-            f"📈 <b>Nuevos Hoy:</b> +{new_today}\n"
-            f"🔥 <b>Activos (24h):</b> {active_24h}\n"
-            f"🔔 <b>Alertas Activas:</b> {active_alerts}\n"
-            f"📥 <b>Consultas Hoy:</b> {requests_today}\n"
-        )
-
+        text = (f"📊 <b>REPORTE EJECUTIVO</b>\n\n👥 <b>Total Histórico:</b> {total}\n✅ <b>Usuarios Reales:</b> {active_real}\n🚫 <b>Bloqueados:</b> {blocked} ({churn_rate:.2f}%)\n--------------------------\n📈 <b>Nuevos Hoy:</b> +{new_today}\n🔥 <b>Activos (24h):</b> {active_24h}\n🔔 <b>Alertas Activas:</b> {active_alerts}\n📥 <b>Consultas Hoy:</b> {requests_today}\n")
         text += f"\n🤝 <b>Referidos Totales:</b> {total_referrals}\n"
         
         if top_sources:
             text += "\n🎯 <b>Top Campañas:</b>\n"
-            for src, cnt in top_sources:
-                text += f"• {src}: {cnt}\n"
-        
+            for src, cnt in top_sources: text += f"• {src}: {cnt}\n"
         if top_commands:
             text += "\n🤖 <b>Comandos Totales:</b>\n"
-            for cmd, cnt in top_commands:
-                text += f"• {cmd}: {cnt}\n"
-
-        text += f"\n<i>Sistema Operativo V59 (Fix Report).</i> ✅"
+            for cmd, cnt in top_commands: text += f"• {cmd}: {cnt}\n"
+            
+        text += f"\n<i>Sistema Operativo V60 (Stable Full).</i> ✅"
         return text
     except Exception as e: 
         logging.error(f"Error detailed report: {e}")
@@ -527,8 +654,16 @@ def get_detailed_report_text():
 #  TASKS & LOGIC
 # ==============================================================================
 async def update_price_task(context: ContextTypes.DEFAULT_TYPE):
-    new_binance = await asyncio.to_thread(fetch_binance_price, "BUY")
-    new_binance_sell = await asyncio.to_thread(fetch_binance_price, "SELL")
+    new_binance = await asyncio.to_thread(fetch_binance_raw, "BUY", "PagoMovil")
+    await asyncio.sleep(random.uniform(0.5, 1.5))
+    new_binance_sell = await asyncio.to_thread(fetch_binance_raw, "SELL", "PagoMovil")
+    
+    # MINERÍA BANCOS
+    await asyncio.sleep(random.uniform(0.5, 1.5))
+    buy_banesco = await asyncio.to_thread(fetch_binance_raw, "BUY", "Banesco")
+    buy_mercantil = await asyncio.to_thread(fetch_binance_raw, "BUY", "Mercantil")
+    buy_provincial = await asyncio.to_thread(fetch_binance_raw, "BUY", "Provincial")
+    
     new_bcv = await asyncio.to_thread(fetch_bcv_price)
     
     if new_binance:
@@ -542,6 +677,18 @@ async def update_price_task(context: ContextTypes.DEFAULT_TYPE):
                 except Exception: pass
         bcv_val = new_bcv['usd'] if (new_bcv and new_bcv.get('usd')) else 0
         await asyncio.to_thread(save_mining_data, new_binance, bcv_val, new_binance_sell)
+        
+        # GUARDAR ARBITRAJE DATA
+        try:
+             conn = psycopg2.connect(DATABASE_URL)
+             cur = conn.cursor()
+             spread = 0
+             if new_binance and new_binance_sell: spread = ((new_binance - new_binance_sell) / new_binance) * 100
+             cur.execute("INSERT INTO arbitrage_data (buy_pm, sell_pm, buy_banesco, buy_mercantil, buy_provincial, spread_pct) VALUES (%s, %s, %s, %s, %s, %s)", (new_binance, new_binance_sell, buy_banesco, buy_mercantil, buy_provincial, spread))
+             conn.commit()
+             cur.close()
+             conn.close()
+        except Exception: pass
 
     if new_bcv: MARKET_DATA["bcv"] = new_bcv
     if new_binance or new_bcv:
@@ -584,38 +731,6 @@ def build_price_message(binance, bcv_data, time_str, user_id=None, requests_coun
     else: text += "\n"
     text += "📢 <b>Síguenos:</b> @tasabinance_bot"
     return text
-
-# 🔥 FIX REPORTE DIARIO CON BOTONES (TURBO DIRECTO) 🔥
-async def send_daily_report(context: ContextTypes.DEFAULT_TYPE):
-    binance = MARKET_DATA["price"]
-    bcv = MARKET_DATA["bcv"]
-    if not binance: binance = await asyncio.to_thread(fetch_binance_price)
-    if not bcv: bcv = await asyncio.to_thread(fetch_bcv_price)
-    if not binance: return
-
-    time_str = datetime.now(TIMEZONE).strftime("%d/%m/%Y %I:%M:%S %p")
-    hour = datetime.now(TIMEZONE).hour
-    header = "☀️ <b>¡Buenos días! Así abre el mercado:</b>" if hour < 12 else "🌤 <b>Reporte de la Tarde:</b>"
-    
-    # IMPORTANTE: No pasamos user_id aquí, así que el mensaje sale con los botones genéricos
-    body = build_price_message(binance, bcv, time_str)
-    body = body.replace(f"{EMOJI_STATS} <b>MONITOR DE TASAS</b>\n\n", "")
-    text = f"{header}\n\n{body}"
-    
-    share_text = quote(f"🔥 Dólar en {binance:.2f} Bs.")
-    share_url = f"https://t.me/share/url?url=https://t.me/tasabinance_bot&text={share_text}"
-    keyboard = [[InlineKeyboardButton("🔄 Ver en tiempo real", callback_data='refresh_price')], [InlineKeyboardButton("📤 Compartir", url=share_url)]]
-    
-    # ENVÍO DIRECTO (NO WORKER) para soportar botones
-    users = await asyncio.to_thread(get_all_users_ids)
-    batch_size = 30
-    for i in range(0, len(users), batch_size):
-        batch = users[i:i + batch_size]
-        tasks = []
-        for user_id in batch:
-            tasks.append(context.bot.send_message(chat_id=user_id, text=text, parse_mode=ParseMode.HTML, reply_markup=InlineKeyboardMarkup(keyboard), disable_notification=True))
-        await asyncio.gather(*tasks, return_exceptions=True)
-        await asyncio.sleep(0.8)
 
 # ==============================================================================
 #  CONVERSATION & COMMAND HANDLERS
@@ -751,7 +866,7 @@ async def debug_mining(update: Update, context: ContextTypes.DEFAULT_TYPE):
             msg = (f"🕵️‍♂️ <b>DATA MINING DEBUG</b>\n\n🕒 Time: {row[1]}\n🟢 Buy PM: {row[2]}\n🔴 Sell PM: {row[3]}\n📉 Spread: {row[7]:.2f}%\n🏦 Ban: {row[4]} | Mer: {row[5]} | Pro: {row[6]}")
             await update.message.reply_text(msg, parse_mode=ParseMode.HTML)
         else: await update.message.reply_text("❌ No hay data.")
-    except Exception as e: await update.message.reply_text(f"❌ Error: {e}")
+    except Exception as e: await update.message.reply_text(f"❌ Error Debug: {e}")
 
 async def backup(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if update.effective_user.id != ADMIN_ID: return
@@ -795,12 +910,13 @@ async def error_handler(update: object, context: ContextTypes.DEFAULT_TYPE) -> N
 if __name__ == "__main__":
     init_db()
     if not TOKEN: exit(1)
+    
     WEBHOOK_URL = os.getenv("WEBHOOK_URL")
     PORT = int(os.environ.get("PORT", "8080"))
+
     app = ApplicationBuilder().token(TOKEN).build()
     app.add_error_handler(error_handler)
     
-    # Handlers
     conv_usdt = ConversationHandler(entry_points=[CommandHandler("usdt", start_usdt_calc)], states={ESPERANDO_INPUT_USDT: [MessageHandler(filters.TEXT & ~filters.COMMAND, process_usdt_input)]}, fallbacks=[CommandHandler("cancel", cancel)])
     conv_bs = ConversationHandler(entry_points=[CommandHandler("bs", start_bs_calc)], states={ESPERANDO_INPUT_BS: [MessageHandler(filters.TEXT & ~filters.COMMAND, process_bs_input)]}, fallbacks=[CommandHandler("cancel", cancel)])
     conv_alert = ConversationHandler(entry_points=[CommandHandler("alerta", start_alert)], states={ESPERANDO_PRECIO_ALERTA: [MessageHandler(filters.TEXT & ~filters.COMMAND, process_alert_input)]}, fallbacks=[CommandHandler("cancel", cancel)])
@@ -817,7 +933,6 @@ if __name__ == "__main__":
     app.add_handler(CommandHandler("backup", backup))
     app.add_handler(CallbackQueryHandler(button_handler))
     
-    # 🔥 RECUPERACIÓN DE ESTADO 🔥
     if MARKET_DATA["price"] is None:
         recover_last_state()
 
@@ -831,4 +946,4 @@ if __name__ == "__main__":
         app.run_webhook(listen="0.0.0.0", port=PORT, url_path=TOKEN, webhook_url=f"{WEBHOOK_URL}/{TOKEN}")
     else:
         print("⚠️ Sin WEBHOOK_URL. Iniciando Polling...")
-        app.run_polling()run_polling()
+        app.run_polling()
