@@ -4,7 +4,7 @@ import requests
 import psycopg2 
 import asyncio
 import io 
-import random # Vital para el Anti-Ban
+import random 
 import matplotlib
 matplotlib.use('Agg') 
 import matplotlib.pyplot as plt
@@ -38,15 +38,15 @@ logging.basicConfig(
 
 TOKEN = os.getenv("TOKEN")
 DATABASE_URL = os.getenv("DATABASE_URL")
-ADMIN_ID = 533888411 
+ADMIN_ID = int(os.getenv("ADMIN_ID", "533888411"))
 
 # --- CONFIGURACIÓN ---
 UPDATE_INTERVAL = 120 
 TIMEZONE = pytz.timezone('America/Caracas') 
 FILTER_MIN_USD = 20
-MAX_HISTORY_POINTS = 200 # IA Mejorada: ~7 Horas de memoria
+MAX_HISTORY_POINTS = 200
 
-# 🛡️ LISTA DE AGENTES (ANTI-BAN) 🛡️
+# Lista Anti-Ban
 USER_AGENTS = [
     "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
     "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.2 Safari/605.1.15",
@@ -73,7 +73,7 @@ EMOJI_STATS   = '<tg-emoji emoji-id="5231200819986047254">📊</tg-emoji>'
 EMOJI_STORE   = '<tg-emoji emoji-id="5895288113537748673">🏪</tg-emoji>'
 EMOJI_ALERTA  = '🔔'
 
-# Memoria (Caché)
+# Memoria
 MARKET_DATA = {
     "price": None, 
     "bcv": {'usd': None, 'eur': None},   
@@ -93,7 +93,7 @@ def init_db():
         conn = psycopg2.connect(DATABASE_URL)
         cur = conn.cursor()
         
-        # Tablas Core
+        # Tablas
         cur.execute("""
             CREATE TABLE IF NOT EXISTS users (
                 user_id BIGINT PRIMARY KEY,
@@ -123,8 +123,6 @@ def init_db():
                 created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
             )
         """)
-        
-        # Minería Básica
         cur.execute("""
             CREATE TABLE IF NOT EXISTS daily_stats (
                 date DATE PRIMARY KEY,
@@ -138,7 +136,9 @@ def init_db():
                 id SERIAL PRIMARY KEY,
                 price_binance FLOAT,
                 price_bcv FLOAT,
-                recorded_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+                recorded_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                price_sell FLOAT,
+                spread_pct FLOAT
             )
         """)
         cur.execute("""
@@ -167,8 +167,7 @@ def init_db():
                 created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
             )
         """)
-        
-        # 🔥 MINERÍA AVANZADA (V49) 🔥
+        # Tabla Arbitraje (V49)
         cur.execute("""
             CREATE TABLE IF NOT EXISTS arbitrage_data (
                 id SERIAL PRIMARY KEY,
@@ -202,9 +201,12 @@ def migrate_db():
             cur.execute("ALTER TABLE users ADD COLUMN IF NOT EXISTS last_active TIMESTAMP DEFAULT CURRENT_TIMESTAMP;")
             cur.execute("ALTER TABLE users ADD COLUMN IF NOT EXISTS status TEXT DEFAULT 'active';")
             cur.execute("ALTER TABLE users ADD COLUMN IF NOT EXISTS source TEXT;")
+            
             cur.execute("ALTER TABLE daily_stats ADD COLUMN IF NOT EXISTS bcv_price FLOAT DEFAULT 0;")
             
-            # 🔥 Migración V49 (Spread) 🔥
+            cur.execute("ALTER TABLE price_ticks ADD COLUMN IF NOT EXISTS price_sell FLOAT;")
+            cur.execute("ALTER TABLE price_ticks ADD COLUMN IF NOT EXISTS spread_pct FLOAT;")
+            
             cur.execute("ALTER TABLE arbitrage_data ADD COLUMN IF NOT EXISTS spread_pct FLOAT;")
             
             conn.commit()
@@ -212,62 +214,6 @@ def migrate_db():
         finally:
             cur.close()
             conn.close()
-    except Exception: pass
-
-# --- GUARDADO MINERÍA AVANZADA ---
-def save_arbitrage_data(buy_pm, sell_pm, buy_banesco, buy_mercantil, buy_provincial):
-    if not DATABASE_URL: return
-    try:
-        conn = psycopg2.connect(DATABASE_URL)
-        cur = conn.cursor()
-        
-        # Calcular spread (Bid vs Ask)
-        spread = 0
-        if buy_pm and sell_pm:
-            spread = ((buy_pm - sell_pm) / buy_pm) * 100
-        
-        cur.execute("""
-            INSERT INTO arbitrage_data (buy_pm, sell_pm, buy_banesco, buy_mercantil, buy_provincial, spread_pct)
-            VALUES (%s, %s, %s, %s, %s, %s)
-        """, (buy_pm, sell_pm, buy_banesco, buy_mercantil, buy_provincial, spread))
-        
-        # Actualizar daily_stats (Promedio Diario Público)
-        if buy_pm:
-            today = datetime.now(TIMEZONE).date()
-            cur.execute("""
-                INSERT INTO daily_stats (date, price_sum, count) 
-                VALUES (%s, %s, 1)
-                ON CONFLICT (date) DO UPDATE SET 
-                    price_sum = daily_stats.price_sum + %s,
-                    count = daily_stats.count + 1
-            """, (today, buy_pm, buy_pm))
-            
-        conn.commit()
-        cur.close()
-        conn.close()
-    except Exception as e:
-        logging.error(f"Error saving arbitrage data: {e}")
-
-# ... (Funciones auxiliares estándar) ...
-def recover_last_state():
-    if not DATABASE_URL: return
-    try:
-        conn = psycopg2.connect(DATABASE_URL)
-        cur = conn.cursor()
-        cur.execute("SELECT price_binance, price_bcv, recorded_at FROM price_ticks ORDER BY id DESC LIMIT 1")
-        row = cur.fetchone()
-        if row:
-            binance_db, bcv_db, date_db = row
-            if binance_db:
-                MARKET_DATA["price"] = binance_db
-                MARKET_DATA["history"].append(binance_db)
-            if bcv_db:
-                MARKET_DATA["bcv"] = {'usd': bcv_db, 'eur': None} 
-            fecha_bonita = date_db.astimezone(TIMEZONE).strftime("%d/%m/%Y %I:%M:%S %p")
-            MARKET_DATA["last_updated"] = fecha_bonita
-            logging.info(f"💾 ESTADO RECUPERADO DE BD: Bin={binance_db}")
-        cur.close()
-        conn.close()
     except Exception: pass
 
 def track_user(user, referrer_id=None, source=None):
@@ -279,31 +225,47 @@ def track_user(user, referrer_id=None, source=None):
         conn = psycopg2.connect(DATABASE_URL)
         cur = conn.cursor()
         cur.execute("SELECT user_id FROM users WHERE user_id = %s", (user_id,))
-        if not cur.fetchone():
+        exists = cur.fetchone()
+        if not exists:
             valid_referrer = False
             final_referrer = None
             if referrer_id and referrer_id != user_id:
                 cur.execute("SELECT user_id FROM users WHERE user_id = %s", (referrer_id,))
-                if cur.fetchone(): valid_referrer = True; final_referrer = referrer_id
-            cur.execute("INSERT INTO users (user_id, first_name, referred_by, last_active, status, source) VALUES (%s, %s, %s, %s, 'active', %s)", (user_id, first_name, final_referrer, now, source))
-            if valid_referrer: cur.execute("UPDATE users SET referral_count = referral_count + 1 WHERE user_id = %s", (final_referrer,))
-        else: cur.execute("UPDATE users SET first_name = %s, last_active = %s, status = 'active' WHERE user_id = %s", (first_name, now, user_id))
+                if cur.fetchone(): 
+                    valid_referrer = True
+                    final_referrer = referrer_id
+
+            cur.execute("""
+                INSERT INTO users (user_id, first_name, referred_by, last_active, status, source) 
+                VALUES (%s, %s, %s, %s, 'active', %s)
+            """, (user_id, first_name, final_referrer, now, source))
+            
+            if valid_referrer:
+                cur.execute("UPDATE users SET referral_count = referral_count + 1 WHERE user_id = %s", (final_referrer,))
+        else:
+            cur.execute("UPDATE users SET first_name = %s, last_active = %s, status = 'active' WHERE user_id = %s", (first_name, now, user_id))
         conn.commit()
         cur.close()
         conn.close()
-    except Exception: pass
+    except Exception as e: logging.error(f"Error track_user: {e}")
 
 async def track_my_chat_member(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not update.my_chat_member or not DATABASE_URL: return
     user_id = update.my_chat_member.from_user.id
     new_status = update.my_chat_member.new_chat_member.status
-    db_status = 'blocked' if new_status in [ChatMember.KICKED, ChatMember.LEFT] else 'active'
+    db_status = 'active'
+    if new_status in [ChatMember.KICKED, ChatMember.LEFT]:
+        db_status = 'blocked'
+    elif new_status == ChatMember.MEMBER:
+        db_status = 'active'
     try:
         conn = psycopg2.connect(DATABASE_URL)
         cur = conn.cursor()
         cur.execute("UPDATE users SET status = %s WHERE user_id = %s", (db_status, user_id))
-        conn.commit(); cur.close(); conn.close()
-    except Exception: pass
+        conn.commit()
+        cur.close()
+        conn.close()
+    except Exception as e: logging.error(f"Error tracking chat member: {e}")
 
 def log_activity(user_id, command):
     if not DATABASE_URL: return
@@ -311,8 +273,10 @@ def log_activity(user_id, command):
         conn = psycopg2.connect(DATABASE_URL)
         cur = conn.cursor()
         cur.execute("INSERT INTO activity_logs (user_id, command) VALUES (%s, %s)", (user_id, command))
-        conn.commit(); cur.close(); conn.close()
-    except Exception: pass
+        conn.commit()
+        cur.close()
+        conn.close()
+    except Exception as e: logging.error(f"Error log_activity: {e}")
 
 def log_calc(user_id, amount, currency, result):
     if not DATABASE_URL: return
@@ -320,8 +284,10 @@ def log_calc(user_id, amount, currency, result):
         conn = psycopg2.connect(DATABASE_URL)
         cur = conn.cursor()
         cur.execute("INSERT INTO calc_logs (user_id, amount, currency_type, result) VALUES (%s, %s, %s, %s)", (user_id, amount, currency, result))
-        conn.commit(); cur.close(); conn.close()
-    except Exception: pass
+        conn.commit()
+        cur.close()
+        conn.close()
+    except Exception as e: logging.error(f"Error log_calc: {e}")
 
 def get_user_loyalty(user_id):
     if not DATABASE_URL: return (0, 0)
@@ -330,8 +296,12 @@ def get_user_loyalty(user_id):
         cur = conn.cursor()
         cur.execute("SELECT joined_at, referral_count FROM users WHERE user_id = %s", (user_id,))
         res = cur.fetchone()
-        cur.close(); conn.close()
-        if res: return ((datetime.now() - res[0]).days, res[1])
+        cur.close()
+        conn.close()
+        if res:
+            days = (datetime.now() - res[0]).days
+            refs = res[1]
+            return (days, refs)
         return (0, 0)
     except Exception: return (0, 0)
 
@@ -342,9 +312,22 @@ def get_daily_requests_count():
         cur = conn.cursor()
         cur.execute("SELECT COUNT(*) FROM activity_logs WHERE created_at >= CURRENT_DATE")
         count = cur.fetchone()[0]
-        cur.close(); conn.close()
+        cur.close()
+        conn.close()
         return count
     except Exception: return 0
+
+def get_yesterday_close():
+    if not DATABASE_URL: return None
+    try:
+        conn = psycopg2.connect(DATABASE_URL)
+        cur = conn.cursor()
+        cur.execute("SELECT (price_sum / NULLIF(count, 0)) FROM daily_stats WHERE date = CURRENT_DATE - 1")
+        res = cur.fetchone()
+        cur.close()
+        conn.close()
+        return res[0] if res else None
+    except Exception: return None
 
 def cast_vote(user_id, vote_type):
     if not DATABASE_URL: return False
@@ -352,9 +335,15 @@ def cast_vote(user_id, vote_type):
     try:
         conn = psycopg2.connect(DATABASE_URL)
         cur = conn.cursor()
-        cur.execute("INSERT INTO daily_votes (user_id, vote_date, vote_type) VALUES (%s, %s, %s) ON CONFLICT (user_id, vote_date) DO NOTHING", (user_id, today, vote_type))
+        cur.execute("""
+            INSERT INTO daily_votes (user_id, vote_date, vote_type)
+            VALUES (%s, %s, %s)
+            ON CONFLICT (user_id, vote_date) DO NOTHING
+        """, (user_id, today, vote_type))
         rows = cur.rowcount
-        conn.commit(); cur.close(); conn.close()
+        conn.commit()
+        cur.close()
+        conn.close()
         return rows > 0
     except Exception: return False
 
@@ -366,8 +355,11 @@ def get_vote_results():
         cur = conn.cursor()
         cur.execute("SELECT vote_type, COUNT(*) FROM daily_votes WHERE vote_date = %s GROUP BY vote_type", (today,))
         results = dict(cur.fetchall())
-        cur.close(); conn.close()
-        return (results.get('UP', 0), results.get('DOWN', 0))
+        up = results.get('UP', 0)
+        down = results.get('DOWN', 0)
+        cur.close()
+        conn.close()
+        return (up, down)
     except Exception: return (0, 0)
 
 def has_user_voted(user_id):
@@ -378,38 +370,62 @@ def has_user_voted(user_id):
         cur = conn.cursor()
         cur.execute("SELECT 1 FROM daily_votes WHERE user_id = %s AND vote_date = %s", (user_id, today))
         voted = cur.fetchone() is not None
-        cur.close(); conn.close()
+        cur.close()
+        conn.close()
         return voted
     except Exception: return False
 
+# ==============================================================================
+#  ANALÍTICAS VISUALES (DASHBOARD)
+# ==============================================================================
 def generate_stats_chart():
-    # ... (Código Gráfico Admin igual a V36) ...
     if not DATABASE_URL: return None
     buf = io.BytesIO()
     try:
         conn = psycopg2.connect(DATABASE_URL)
         cur = conn.cursor()
-        cur.execute("SELECT TO_CHAR(joined_at, 'MM-DD'), COUNT(*) FROM users WHERE joined_at >= NOW() - INTERVAL '7 DAYS' GROUP BY 1 ORDER BY 1")
+        cur.execute("""
+            SELECT TO_CHAR(joined_at, 'MM-DD'), COUNT(*) 
+            FROM users WHERE joined_at >= NOW() - INTERVAL '7 DAYS'
+            GROUP BY 1 ORDER BY 1
+        """)
         growth_data = cur.fetchall()
-        cur.execute("SELECT command, COUNT(*) FROM activity_logs GROUP BY command ORDER BY 2 DESC LIMIT 5")
+        cur.execute("""
+            SELECT command, COUNT(*) FROM activity_logs 
+            GROUP BY command ORDER BY 2 DESC LIMIT 5
+        """)
         cmd_data = cur.fetchall()
         plt.style.use('dark_background')
         fig, (ax1, ax2) = plt.subplots(1, 2, figsize=(10, 5))
         bg_color = '#212121'
         fig.patch.set_facecolor(bg_color)
-        ax1.set_facecolor(bg_color); ax2.set_facecolor(bg_color)
+        ax1.set_facecolor(bg_color)
+        ax2.set_facecolor(bg_color)
         if growth_data:
-            bars = ax1.bar([r[0] for r in growth_data], [r[1] for r in growth_data], color='#F3BA2F')
+            dates = [row[0] for row in growth_data]
+            counts = [row[1] for row in growth_data]
+            bars = ax1.bar(dates, counts, color='#F3BA2F') 
+            ax1.set_title('Nuevos Usuarios (7 Días)', color='white', fontsize=12)
             ax1.bar_label(bars, color='white')
+        else: ax1.text(0.5, 0.5, "Sin datos", ha='center', color='gray')
         if cmd_data:
-            ax2.pie([r[1] for r in cmd_data], labels=[r[0] for r in cmd_data], autopct='%1.1f%%')
+            labels = [row[0] for row in cmd_data]
+            sizes = [row[1] for row in cmd_data]
+            ax2.pie(sizes, labels=labels, autopct='%1.1f%%', startangle=90, textprops={'color':"white"})
+            ax2.set_title('Comandos Favoritos', color='white', fontsize=12)
+        else: ax2.text(0.5, 0.5, "Esperando data", ha='center', color='gray')
         plt.tight_layout()
         plt.savefig(buf, format='png', facecolor=bg_color)
-        buf.seek(0); plt.close(); cur.close(); conn.close()
+        buf.seek(0)
+        plt.close()
+        cur.close()
+        conn.close()
         return buf
     except Exception: return None
 
+# --- GRÁFICO VERTICAL ---
 def generate_public_price_chart():
+    # (Código V44 - Se mantiene igual)
     if not DATABASE_URL: return None
     buf = io.BytesIO()
     try:
@@ -446,19 +462,75 @@ def generate_public_price_chart():
         return buf
     except Exception: return None
 
+# 🔥 FIX STATS V50: REPORTE COMPLETO CON CONCATENACIÓN ROBUSTA 🔥
 def get_detailed_report_text():
-    # ... (Misma función de V41)
-    if not DATABASE_URL: return "Error"
+    if not DATABASE_URL: return "⚠️ Error DB"
     try:
         conn = psycopg2.connect(DATABASE_URL)
         cur = conn.cursor()
-        cur.execute("SELECT COUNT(*) FROM users"); total = cur.fetchone()[0]
-        cur.execute("SELECT COUNT(*) FROM users WHERE status = 'blocked'"); blocked = cur.fetchone()[0]
-        cur.execute("SELECT COUNT(*) FROM activity_logs WHERE created_at >= CURRENT_DATE"); reqs = cur.fetchone()[0]
-        cur.execute("SELECT COUNT(*) FROM users WHERE last_active >= NOW() - INTERVAL '24 HOURS'"); active = cur.fetchone()[0]
-        cur.close(); conn.close()
-        return f"📊 Reporte V49:\nTotal: {total}\nBloqueados: {blocked}\nActivos 24h: {active}\nConsultas: {reqs}"
-    except Exception: return "Error"
+        
+        # 1. KPI Principales
+        cur.execute("SELECT COUNT(*) FROM users")
+        total = cur.fetchone()[0]
+        cur.execute("SELECT COUNT(*) FROM users WHERE status = 'blocked'")
+        blocked = cur.fetchone()[0]
+        active_real = total - blocked
+        churn_rate = (blocked / total * 100) if total > 0 else 0
+        
+        # 2. Actividad Reciente
+        cur.execute("SELECT COUNT(*) FROM users WHERE joined_at >= CURRENT_DATE")
+        new_today = cur.fetchone()[0]
+        cur.execute("SELECT COUNT(*) FROM users WHERE last_active >= NOW() - INTERVAL '24 HOURS'")
+        active_24h = cur.fetchone()[0]
+        cur.execute("SELECT COUNT(*) FROM alerts")
+        active_alerts = cur.fetchone()[0]
+        cur.execute("SELECT COUNT(*) FROM activity_logs WHERE created_at >= CURRENT_DATE")
+        requests_today = cur.fetchone()[0]
+        
+        # 3. Listas Top (Concatenación Segura)
+        cur.execute("SELECT source, COUNT(*) FROM users WHERE source IS NOT NULL GROUP BY source ORDER BY 2 DESC LIMIT 3")
+        top_sources = cur.fetchall()
+        cur.execute("SELECT command, COUNT(*) FROM activity_logs GROUP BY command ORDER BY 2 DESC")
+        top_commands = cur.fetchall()
+        cur.execute("SELECT COUNT(*) FROM users WHERE referred_by IS NOT NULL")
+        total_referrals = cur.fetchone()[0]
+        
+        cur.close()
+        conn.close()
+        
+        # Construcción del Mensaje
+        text = (
+            f"📊 <b>REPORTE EJECUTIVO</b>\n\n"
+            f"👥 <b>Total Histórico:</b> {total}\n"
+            f"✅ <b>Usuarios Reales:</b> {active_real}\n"
+            f"🚫 <b>Bloqueados:</b> {blocked} ({churn_rate:.2f}%)\n"
+            f"--------------------------\n"
+            f"📈 <b>Nuevos Hoy:</b> +{new_today}\n"
+            f"🔥 <b>Activos (24h):</b> {active_24h}\n"
+            f"🔔 <b>Alertas Activas:</b> {active_alerts}\n"
+            f"📥 <b>Consultas Hoy:</b> {requests_today}\n"
+        )
+        
+        # Bloque Referidos
+        text += f"\n🤝 <b>Referidos Totales:</b> {total_referrals}\n"
+        
+        # Bloque Campañas
+        if top_sources:
+            text += "\n🎯 <b>Top Campañas:</b>\n"
+            for src, cnt in top_sources:
+                text += f"• {src}: {cnt}\n"
+        
+        # Bloque Comandos
+        if top_commands:
+            text += "\n🤖 <b>Comandos Totales:</b>\n"
+            for cmd, cnt in top_commands:
+                text += f"• {cmd}: {cnt}\n"
+
+        text += f"\n<i>Sistema Operativo V50 (Debug+Fix).</i> ✅"
+        return text
+    except Exception as e: 
+        logging.error(f"Error detailed report: {e}")
+        return f"Error calculando métricas: {e}"
 
 def get_referral_stats(user_id):
     if not DATABASE_URL: return (0, 0, [])
@@ -472,7 +544,8 @@ def get_referral_stats(user_id):
         my_rank = cur.fetchone()[0]
         cur.execute("SELECT first_name, referral_count FROM users ORDER BY referral_count DESC LIMIT 3")
         top_3 = cur.fetchall()
-        cur.close(); conn.close()
+        cur.close()
+        conn.close()
         return (my_count, my_rank, top_3)
     except Exception: return (0, 0, [])
 
@@ -481,8 +554,10 @@ def get_total_users():
     try:
         conn = psycopg2.connect(DATABASE_URL)
         cur = conn.cursor()
-        cur.execute("SELECT COUNT(*) FROM users"); count = cur.fetchone()[0]
-        cur.close(); conn.close()
+        cur.execute("SELECT COUNT(*) FROM users")
+        count = cur.fetchone()[0]
+        cur.close()
+        conn.close()
         return count
     except Exception: return 0
 
@@ -493,7 +568,8 @@ def get_all_users_ids():
         cur = conn.cursor()
         cur.execute("SELECT user_id FROM users WHERE status = 'active'")
         ids = [row[0] for row in cur.fetchall()]
-        cur.close(); conn.close()
+        cur.close()
+        conn.close()
         return ids
     except Exception: return []
 
@@ -504,9 +580,16 @@ def add_alert(user_id, target_price, condition):
         conn = psycopg2.connect(DATABASE_URL)
         cur = conn.cursor()
         cur.execute("SELECT COUNT(*) FROM alerts WHERE user_id = %s", (user_id,))
-        if cur.fetchone()[0] >= 3: cur.close(); conn.close(); return False
-        cur.execute("INSERT INTO alerts (user_id, target_price, condition) VALUES (%s, %s, %s)", (user_id, target_price, condition))
-        conn.commit(); cur.close(); conn.close()
+        count = cur.fetchone()[0]
+        if count >= 3:
+            cur.close()
+            conn.close()
+            return False
+        cur.execute("INSERT INTO alerts (user_id, target_price, condition) VALUES (%s, %s, %s)", 
+                    (user_id, target_price, condition))
+        conn.commit()
+        cur.close()
+        conn.close()
         return True
     except Exception: return False
 
@@ -517,34 +600,60 @@ def get_triggered_alerts(current_price):
         conn = psycopg2.connect(DATABASE_URL)
         cur = conn.cursor()
         cur.execute("SELECT id, user_id, target_price FROM alerts WHERE condition = 'ABOVE' AND %s >= target_price", (current_price,))
-        triggered.extend(cur.fetchall())
+        above = cur.fetchall()
         cur.execute("SELECT id, user_id, target_price FROM alerts WHERE condition = 'BELOW' AND %s <= target_price", (current_price,))
-        triggered.extend(cur.fetchall())
+        below = cur.fetchall()
+        triggered = above + below
         if triggered:
             ids = tuple([t[0] for t in triggered])
             cur.execute(f"DELETE FROM alerts WHERE id IN {ids}")
             conn.commit()
-        cur.close(); conn.close()
+        cur.close()
+        conn.close()
     except Exception: pass
     return triggered
 
+def save_mining_data(binance, bcv_val, binance_sell):
+    if not DATABASE_URL: return
+    try:
+        today = datetime.now(TIMEZONE).date()
+        conn = psycopg2.connect(DATABASE_URL)
+        cur = conn.cursor()
+        
+        # Spread
+        spread = 0
+        if binance and binance_sell:
+            spread = ((binance - binance_sell) / binance) * 100
+        
+        cur.execute("""
+            INSERT INTO daily_stats (date, price_sum, count, bcv_price) 
+            VALUES (%s, %s, 1, %s)
+            ON CONFLICT (date) DO UPDATE SET 
+                price_sum = daily_stats.price_sum + %s,
+                count = daily_stats.count + 1,
+                bcv_price = GREATEST(daily_stats.bcv_price, %s)
+        """, (today, binance, bcv_val, binance, bcv_val))
+        
+        cur.execute("""
+            INSERT INTO arbitrage_data (buy_pm, sell_pm, buy_banesco, buy_mercantil, buy_provincial, spread_pct)
+            VALUES (%s, %s, 0, 0, 0, %s)
+        """, (binance, binance_sell, spread))
+        
+        conn.commit()
+        cur.close()
+        conn.close()
+    except Exception as e: logging.error(f"Error mining: {e}")
+
 # ==============================================================================
-#  BACKEND PRECIOS CON ROTACIÓN DE AGENTES Y JITTER (ANTI-BAN)
+#  BACKEND PRECIOS
 # ==============================================================================
 def fetch_binance_raw(trade_type, bank_filter=None):
-    """Consulta Binance con protección Anti-Ban."""
     url = "https://p2p.binance.com/bapi/c2c/v2/friendly/c2c/adv/search"
-    
-    # 🛡️ ROTACIÓN DE AGENTES
     ua = random.choice(USER_AGENTS)
     headers = {"Content-Type": "application/json", "User-Agent": ua}
-    
     last_known = MARKET_DATA["price"] if MARKET_DATA["price"] else 600
-    # FILTRO CLAMP: Asegurar que el monto sea razonable
     safe_amount = max(2000, min(int(last_known * FILTER_MIN_USD), 20000))
-    
     pay_types = [bank_filter] if bank_filter else ["PagoMovil", "Banesco", "Mercantil", "Provincial"]
-    
     payload = {
         "page": 1, "rows": 3, 
         "payTypes": pay_types, 
@@ -552,7 +661,6 @@ def fetch_binance_raw(trade_type, bank_filter=None):
         "transAmount": str(safe_amount), 
         "asset": "USDT", "fiat": "VES", "tradeType": trade_type
     }
-    
     try:
         response = requests.post(url, json=payload, headers=headers, timeout=10)
         data = response.json()
@@ -560,15 +668,12 @@ def fetch_binance_raw(trade_type, bank_filter=None):
             del payload["publisherType"]
             response = requests.post(url, json=payload, headers=headers, timeout=10)
             data = response.json()
-        
         prices = [float(item["adv"]["price"]) for item in data.get("data", [])]
         return sum(prices) / len(prices) if prices else None
     except Exception: return None
 
-# 🔥 FIX BCV: User-Agent + Logging 🔥
 def fetch_bcv_price():
     url = "http://www.bcv.org.ve/"
-    # Usamos un agente fijo robusto para BCV
     headers = {"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"}
     rates = {'usd': None, 'eur': None}
     try:
@@ -579,31 +684,18 @@ def fetch_bcv_price():
             if dolar: rates['usd'] = float(dolar.find('strong').text.strip().replace(',', '.'))
             euro = soup.find('div', id='euro')
             if euro: rates['eur'] = float(euro.find('strong').text.strip().replace(',', '.'))
-            if rates['usd']: logging.info(f"✅ BCV ENCONTRADO: {rates['usd']} Bs")
+            if rates['usd']: logging.info(f"✅ BCV: {rates['usd']}")
             return rates if rates['usd'] else None
     except Exception as e: logging.error(f"❌ BCV Error: {e}")
     return None
 
 async def update_price_task(context: ContextTypes.DEFAULT_TYPE):
-    # 🔥 DATA MINING PARALELO CON JITTER 🔥
-    
-    # 1. Buy General (Referencia Pública)
     buy_pm = await asyncio.to_thread(fetch_binance_raw, "BUY", "PagoMovil")
-    await asyncio.sleep(random.uniform(0.5, 1.5)) # Jitter
-    
-    # 2. Sell General (Para Spread)
-    sell_pm = await asyncio.to_thread(fetch_binance_raw, "SELL", "PagoMovil")
     await asyncio.sleep(random.uniform(0.5, 1.5))
+    sell_pm = await asyncio.to_thread(fetch_binance_raw, "SELL", "PagoMovil")
     
-    # 3. Bancos Específicos
-    buy_banesco = await asyncio.to_thread(fetch_binance_raw, "BUY", "Banesco")
-    buy_mercantil = await asyncio.to_thread(fetch_binance_raw, "BUY", "Mercantil")
-    buy_provincial = await asyncio.to_thread(fetch_binance_raw, "BUY", "Provincial")
-    
-    # 4. BCV
     new_bcv = await asyncio.to_thread(fetch_bcv_price)
     
-    # Actualizar Memoria y Alertas (Usamos Buy PM como referencia)
     if buy_pm:
         MARKET_DATA["price"] = buy_pm
         MARKET_DATA["history"].append(buy_pm)
@@ -612,21 +704,47 @@ async def update_price_task(context: ContextTypes.DEFAULT_TYPE):
         alerts = await asyncio.to_thread(get_triggered_alerts, buy_pm)
         if alerts:
             for alert in alerts:
-                try: await context.bot.send_message(chat_id=alert[1], text=f"{EMOJI_ALERTA} <b>¡ALERTA!</b>\nDólar en meta: <b>{alert[2]:,.2f} Bs</b>\nActual: {buy_pm:,.2f} Bs", parse_mode=ParseMode.HTML)
+                try:
+                    await context.bot.send_message(chat_id=alert[1], text=f"{EMOJI_ALERTA} <b>¡ALERTA!</b>\nDólar en meta: <b>{alert[2]:,.2f} Bs</b>\nActual: {buy_pm:,.2f} Bs", parse_mode=ParseMode.HTML)
                 except Exception: pass
         
-        # Guardar Minería
         bcv_val = new_bcv['usd'] if (new_bcv and new_bcv.get('usd')) else 0
-        await asyncio.to_thread(save_arbitrage_data, buy_pm, sell_pm, buy_banesco, buy_mercantil, buy_provincial)
+        await asyncio.to_thread(save_mining_data, buy_pm, bcv_val, sell_pm)
 
     if new_bcv: MARKET_DATA["bcv"] = new_bcv
-    
     if buy_pm or new_bcv:
         now = datetime.now(TIMEZONE)
         MARKET_DATA["last_updated"] = now.strftime("%d/%m/%Y %I:%M:%S %p")
         logging.info(f"🔄 Actualizado - PM: {buy_pm} | Sell: {sell_pm}")
 
-# --- BUILDER ---
+# --- NEW: COMANDO DEBUG ---
+async def debug_mining(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if update.effective_user.id != ADMIN_ID: return
+    try:
+        conn = psycopg2.connect(DATABASE_URL)
+        cur = conn.cursor()
+        cur.execute("SELECT * FROM arbitrage_data ORDER BY id DESC LIMIT 1")
+        row = cur.fetchone()
+        cur.close(); conn.close()
+        
+        if row:
+            msg = (
+                f"🕵️‍♂️ <b>DATA MINING DEBUG</b>\n\n"
+                f"🕒 Time: {row[1]}\n"
+                f"🟢 Buy PM: {row[2]}\n"
+                f"🔴 Sell PM: {row[3]}\n"
+                f"📉 Spread: {row[7]:.2f}%\n"
+                f"🏦 Ban: {row[4]} | Mer: {row[5]} | Pro: {row[6]}"
+            )
+            await update.message.reply_text(msg, parse_mode=ParseMode.HTML)
+        else:
+            await update.message.reply_text("❌ No hay data de minería aún.")
+    except Exception as e:
+        await update.message.reply_text(f"❌ Error Debug: {e}")
+
+# ... (El resto de comandos precio, start, etc. se mantienen igual a la V49) ...
+# (Para no hacer el mensaje muy largo, asegúrate de mantener las funciones build_price_message, etc.)
+
 def get_sentiment_keyboard(user_id):
     if has_user_voted(user_id):
         up, down = get_vote_results()
@@ -666,7 +784,7 @@ def build_price_message(binance, bcv_data, time_str, user_id=None, requests_coun
 async def send_daily_report(context: ContextTypes.DEFAULT_TYPE):
     binance = MARKET_DATA["price"]
     bcv = MARKET_DATA["bcv"]
-    if not binance: binance = await asyncio.to_thread(fetch_binance_price) # Fallback simple
+    if not binance: binance = await asyncio.to_thread(fetch_binance_price)
     if not bcv: bcv = await asyncio.to_thread(fetch_bcv_price)
     if not binance: return
 
@@ -687,12 +805,6 @@ def queue_broadcast(message):
         cur.execute("INSERT INTO broadcast_queue (message, status) VALUES (%s, 'pending')", (message,))
         conn.commit(); cur.close(); conn.close()
     except Exception: pass
-
-# ==============================================================================
-#  COMANDOS
-# ==============================================================================
-# ... (Mismos comandos de siempre: start, referidos, precio, button_handler, etc.) ...
-# ... (Para ahorrar espacio, usa los mismos del V36/V46, ya están optimizados) ...
 
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     referrer_id = None
@@ -839,18 +951,8 @@ async def global_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not mensaje_final:
         await update.message.reply_text("⚠️ Escribe el mensaje.", parse_mode=ParseMode.HTML)
         return
-    # 🔥 CAMBIO CLAVE: GUARDAR EN COLA 🔥
     await asyncio.to_thread(queue_broadcast, mensaje_final)
     await update.message.reply_text(f"✅ <b>Mensaje puesto en cola.</b>", parse_mode=ParseMode.HTML)
-
-def queue_broadcast(message):
-    if not DATABASE_URL: return
-    try:
-        conn = psycopg2.connect(DATABASE_URL)
-        cur = conn.cursor()
-        cur.execute("INSERT INTO broadcast_queue (message, status) VALUES (%s, 'pending')", (message,))
-        conn.commit(); cur.close(); conn.close()
-    except Exception: pass
 
 async def start_alert(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await asyncio.to_thread(track_user, update.effective_user)
@@ -939,7 +1041,20 @@ async def cancel(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text("Cancelado.")
     return ConversationHandler.END
 
-# --- ERROR HANDLER GLOBAL ---
+async def debug_mining(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if update.effective_user.id != ADMIN_ID: return
+    try:
+        conn = psycopg2.connect(DATABASE_URL)
+        cur = conn.cursor()
+        cur.execute("SELECT * FROM arbitrage_data ORDER BY id DESC LIMIT 1")
+        row = cur.fetchone()
+        cur.close(); conn.close()
+        if row:
+            msg = (f"🕵️‍♂️ <b>DATA MINING DEBUG</b>\n\n🕒 Time: {row[1]}\n🟢 Buy PM: {row[2]}\n🔴 Sell PM: {row[3]}\n📉 Spread: {row[7]:.2f}%\n🏦 Ban: {row[4]} | Mer: {row[5]} | Pro: {row[6]}")
+            await update.message.reply_text(msg, parse_mode=ParseMode.HTML)
+        else: await update.message.reply_text("❌ No hay data.")
+    except Exception as e: await update.message.reply_text(f"❌ Error: {e}")
+
 async def error_handler(update: object, context: ContextTypes.DEFAULT_TYPE) -> None:
     logging.error(msg="Exception while handling an update:", exc_info=context.error)
 
@@ -979,6 +1094,7 @@ if __name__ == "__main__":
     app.add_handler(CommandHandler("global", global_message))
     app.add_handler(CommandHandler("referidos", referidos)) 
     app.add_handler(CommandHandler("grafico", grafico)) 
+    app.add_handler(CommandHandler("debug", debug_mining))
     app.add_handler(CallbackQueryHandler(button_handler))
     
     if app.job_queue:
@@ -988,12 +1104,7 @@ if __name__ == "__main__":
     
     if WEBHOOK_URL:
         print(f"🚀 Iniciando modo WEBHOOK en puerto {PORT}")
-        app.run_webhook(
-            listen="0.0.0.0",
-            port=PORT,
-            url_path=TOKEN,
-            webhook_url=f"{WEBHOOK_URL}/{TOKEN}"
-        )
+        app.run_webhook(listen="0.0.0.0", port=PORT, url_path=TOKEN, webhook_url=f"{WEBHOOK_URL}/{TOKEN}")
     else:
         print("⚠️ Sin WEBHOOK_URL. Iniciando Polling...")
         app.run_polling()
