@@ -1,18 +1,23 @@
+#!/usr/bin/env python3
+# -*- coding: utf-8 -*-
+
 import os
 import logging
 import requests
-import psycopg2 
+import psycopg2
 import asyncio
-import io 
-import random 
+import io
+import random
 import matplotlib
-matplotlib.use('Agg') 
+matplotlib.use('Agg')
 import matplotlib.pyplot as plt
-from bs4 import BeautifulSoup 
+from bs4 import BeautifulSoup
 import urllib3
 from urllib.parse import quote
 from datetime import datetime, time, timedelta
-import pytz 
+import pytz
+from collections import deque   # ✅ correcto: import fuera de cualquier bloque
+
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup, ChatMember
 from telegram.constants import ParseMode
 from telegram.error import Forbidden, BadRequest
@@ -26,28 +31,23 @@ from telegram.ext import (
     ConversationHandler,
     ContextTypes
 )
-from logger_conf import logging
-BOT_VERSION = "v51_dev1"
-logging.info(f"🚀 Iniciando Tasabinance Bot {BOT_VERSION}")
 
 # Silenciar advertencias SSL
 urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
 
-# Configuración Logging
-logging.basicConfig(
-    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
-    level=logging.INFO
-)
+# ---------------------------------------------------------------------------
+# CONFIGURACIÓN DEL LOGGING Y VARIABLES GLOBALES
+# ---------------------------------------------------------------------------
+
+from logger_conf import logging     # importa tu configuración de logging
+BOT_VERSION = "v51_dev1"
+logging.info(f"🚀 Iniciando Tasabinance Bot {BOT_VERSION}")
 
 TOKEN = os.getenv("TOKEN")
 DATABASE_URL = os.getenv("DATABASE_URL")
 ADMIN_ID = int(os.getenv("ADMIN_ID", "533888411"))
 
-TOKEN = os.getenv("TOKEN")
-DATABASE_URL = os.getenv("DATABASE_URL")
-ADMIN_ID = int(os.getenv("ADMIN_ID", "533888411"))
-
-# ✅ Validar variables críticas antes de iniciar el bot
+# Validaciones básicas
 if not TOKEN:
     raise ValueError("❌ TOKEN de Telegram no configurado.")
 if not DATABASE_URL:
@@ -59,7 +59,7 @@ TIMEZONE = pytz.timezone('America/Caracas')
 FILTER_MIN_USD = 20
 MAX_HISTORY_POINTS = 200
 
-# Lista Anti-Ban
+# Lista Anti‑Ban
 USER_AGENTS = [
     "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
     "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.2 Safari/605.1.15",
@@ -73,30 +73,28 @@ LINK_CANAL = "https://t.me/tasabinance"
 LINK_GRUPO = "https://t.me/tasabinancegrupo"
 LINK_SOPORTE = "https://t.me/tasabinancesoporte"
 
-# Estados Conversación
+# Estados de conversación
 ESPERANDO_INPUT_USDT, ESPERANDO_INPUT_BS, ESPERANDO_PRECIO_ALERTA = range(3)
 
 # Emojis
 EMOJI_BINANCE = '<tg-emoji emoji-id="5269277053684819725">🔶</tg-emoji>'
 EMOJI_PAYPAL  = '<tg-emoji emoji-id="5364111181415996352">🅿️</tg-emoji>'
-EMOJI_AMAZON  = '🎁' 
+EMOJI_AMAZON  = '🎁'
 EMOJI_SUBIDA  = '<tg-emoji emoji-id="5244837092042750681">📈</tg-emoji>'
 EMOJI_BAJADA  = '<tg-emoji emoji-id="5246762912428603768">📉</tg-emoji>'
 EMOJI_STATS   = '<tg-emoji emoji-id="5231200819986047254">📊</tg-emoji>'
 EMOJI_STORE   = '<tg-emoji emoji-id="5895288113537748673">🏪</tg-emoji>'
 EMOJI_ALERTA  = '🔔'
 
-# Memoria
+# ---------------------------------------------------------------------------
+# MEMORIA / DATOS EN TIEMPO REAL
+# ---------------------------------------------------------------------------
 MARKET_DATA = {
     "price": None, 
-    "bcv": {'usd': None, 'eur': None},   
+    "bcv": {"usd": None, "eur": None},
     "last_updated": "Esperando...",
-    from collections import deque
-...
-"history": deque(maxlen=MAX_HISTORY_POINTS)
+    "history": deque(maxlen=MAX_HISTORY_POINTS)  # ✅ ahora usa el deque correctamente
 }
-GRAPH_CACHE = {"date": None, "photo_id": None}
-
 # ==============================================================================
 #  BASE DE DATOS
 # ==============================================================================
