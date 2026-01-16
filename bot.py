@@ -4,19 +4,44 @@
 import os
 import logging
 import asyncio
-import io
-import random
-import requests
-import psycopg2
-import urllib3
-from collections import deque
-from handlers.extras import grafico, referidos, prediccion, stats
-from datetime import datetime, time as dt_time, timedelta
-from urllib.parse import quote
-
-# Web Scraping y Timezone
-from bs4 import BeautifulSoup
+from datetime import datetime, time as dt_time
 import pytz
+
+# --- TELEGRAM IMPORTS ---
+from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
+from telegram.constants import ParseMode
+from telegram.ext import (
+    ApplicationBuilder, 
+    CommandHandler, 
+    CallbackQueryHandler, 
+    ConversationHandler,
+    ContextTypes
+)
+
+# --- SERVICIOS Y BASE DE DATOS ---
+from services.bcv_service import get_bcv_rates
+from services.binance_service import get_binance_price
+from database.stats import save_mining_data, queue_broadcast, get_daily_requests_count
+from database.alerts import get_triggered_alerts
+
+# --- UTILIDADES VISUALES ---
+from utils.formatting import build_price_message, get_sentiment_keyboard
+
+# --- HANDLERS (Tu lógica movida) ---
+from handlers.start import start_command
+from handlers.callbacks import button_handler
+from handlers.calc import conv_usdt, conv_bs  # Calculadora
+from handlers.alerts import conv_alert        # Alertas
+
+# Extras (Incluyendo el Bonus de global y debug si lo hiciste)
+from handlers.extras import (
+    grafico, 
+    referidos, 
+    prediccion, 
+    stats, 
+    global_message, 
+    debug_mining
+)
 
 # --- TELEGRAM IMPORTS ---
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup, ChatMember
