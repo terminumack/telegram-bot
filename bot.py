@@ -6,8 +6,6 @@ import logging
 import asyncio
 import random       # <--- NECESARIO para la publicidad
 import urllib3      # <--- NECESARIO para silenciar alertas del BCV
-# Silenciar advertencias de certificado SSL del BCV
-urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
 from datetime import datetime, time as dt_time
 import pytz
 from collections import deque
@@ -82,6 +80,8 @@ from handlers.callbacks import button_handler
 from handlers.calc import conv_usdt, conv_bs  # <-- Calculadora Refactorizada
 from handlers.alerts import conv_alert        # <-- Alertas Refactorizadas
 
+# Silenciar advertencias de certificado SSL del BCV
+urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
 # ---------------------------------------------------------------------------
 # CONFIGURACIÓN DEL LOGGING Y VARIABLES GLOBALES
 # ---------------------------------------------------------------------------
