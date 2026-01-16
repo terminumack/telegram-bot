@@ -1,4 +1,3 @@
 #!/bin/bash
-python bot.py &
-python worker.py
-wait
+echo "🚀 Iniciando Tasabinance Bot (dev)..."
+python bot.py
