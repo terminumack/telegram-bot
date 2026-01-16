@@ -55,6 +55,10 @@ if not TOKEN:
 if not DATABASE_URL:
     raise ValueError("❌ DATABASE_URL no configurada.")
 
+# Silenciar el ruido de librerías externas
+logging.getLogger("matplotlib").setLevel(logging.WARNING)
+logging.getLogger("httpx").setLevel(logging.WARNING) # Opcional: silencia logs de peticiones HTTP normales
+
 # --- CONFIGURACIÓN ---
 UPDATE_INTERVAL = 120 
 TIMEZONE = pytz.timezone('America/Caracas') 
