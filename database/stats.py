@@ -166,3 +166,15 @@ def get_referral_stats(user_id):
         return 0, 9999, []
     finally:
         put_conn(conn)
+
+def queue_broadcast(message):
+    """Agrega un mensaje a la cola de envíos masivos."""
+    conn = get_conn()
+    try:
+        with conn.cursor() as cur:
+            cur.execute("INSERT INTO broadcast_queue (message, status) VALUES (%s, 'pending')", (message,))
+            conn.commit()
+    except Exception as e:
+        logging.error(f"Error queue_broadcast: {e}")
+    finally:
+        put_conn(conn)
