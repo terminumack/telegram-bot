@@ -178,3 +178,60 @@ def queue_broadcast(message):
         logging.error(f"Error queue_broadcast: {e}")
     finally:
         put_conn(conn)
+
+# --- PEGA ESTO AL FINAL DE database/stats.py ---
+
+def save_mining_data(binance_buy, bcv_val, binance_sell):
+    """
+    Guarda el histórico de precios para los gráficos y calcula el spread.
+    Vital para que /grafico y /ia funcionen.
+    """
+    conn = get_conn()
+    try:
+        # Importamos datetime y timezone aquí por si no están arriba
+        from datetime import datetime
+        import pytz
+        tz = pytz.timezone('America/Caracas')
+        today = datetime.now(tz).date()
+        
+        # Calcular Spread
+        spread = 0
+        if binance_buy and binance_sell:
+            spread = ((binance_buy - binance_sell) / binance_buy) * 100
+        
+        with conn.cursor() as cur:
+            # 1. Tabla daily_stats (Upsert)
+            cur.execute("""
+                INSERT INTO daily_stats (date, price_sum, count, bcv_price) 
+                VALUES (%s, %s, 1, %s)
+                ON CONFLICT (date) DO UPDATE SET 
+                    price_sum = daily_stats.price_sum + %s,
+                    count = daily_stats.count + 1,
+                    bcv_price = GREATEST(daily_stats.bcv_price, %s)
+            """, (today, binance_buy, bcv_val, binance_buy, bcv_val))
+            
+            # 2. Tabla arbitrage_data (Histórico detallado)
+            cur.execute("""
+                INSERT INTO arbitrage_data (buy_pm, sell_pm, spread_pct, created_at)
+                VALUES (%s, %s, %s, NOW())
+            """, (binance_buy, binance_sell, spread))
+            
+            conn.commit()
+            
+    except Exception as e:
+        logging.error(f"Error guardando data de minería: {e}")
+        conn.rollback()
+    finally:
+        put_conn(conn)
+
+def queue_broadcast(message):
+    """Agrega un mensaje a la cola de envíos masivos (/global)."""
+    conn = get_conn()
+    try:
+        with conn.cursor() as cur:
+            cur.execute("INSERT INTO broadcast_queue (message, status) VALUES (%s, 'pending')", (message,))
+            conn.commit()
+    except Exception as e:
+        logging.error(f"Error queue_broadcast: {e}")
+    finally:
+        put_conn(conn)
