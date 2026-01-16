@@ -10,13 +10,9 @@ import requests
 import psycopg2
 import urllib3
 from collections import deque
+from handlers.extras import grafico, referidos, prediccion, stats
 from datetime import datetime, time as dt_time, timedelta
 from urllib.parse import quote
-
-# Configuración de Matplotlib (Para gráficos)
-import matplotlib
-matplotlib.use('Agg')
-import matplotlib.pyplot as plt
 
 # Web Scraping y Timezone
 from bs4 import BeautifulSoup
@@ -444,45 +440,6 @@ def queue_broadcast(message):
         cur.execute("INSERT INTO broadcast_queue (message, status) VALUES (%s, 'pending')", (message,))
         conn.commit(); cur.close(); conn.close()
     except Exception: pass
-
-async def grafico(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    user_id = update.effective_user.id
-    await asyncio.to_thread(track_user, update.effective_user)
-    await asyncio.to_thread(log_activity, user_id, "/grafico")
-    global GRAPH_CACHE
-    today_str = datetime.now(TIMEZONE).date().isoformat()
-    if GRAPH_CACHE["date"] == today_str and GRAPH_CACHE["photo_id"]:
-        try:
-            await update.message.reply_photo(photo=GRAPH_CACHE["photo_id"], caption="📉 <b>Promedio Diario (Semanal)</b>\n\n📲 <i>¡Compártelo en tus estados!</i>\n\n@tasabinance_bot", parse_mode=ParseMode.HTML)
-            return
-        except Exception: GRAPH_CACHE["photo_id"] = None
-    await update.message.reply_chat_action("upload_photo")
-    img_buf = await asyncio.to_thread(generate_public_price_chart)
-    if img_buf:
-        msg = await update.message.reply_photo(photo=img_buf, caption="📉 <b>Promedio Diario (Semanal)</b>\n\n<i>Precio promedio ponderado del día.</i>", parse_mode=ParseMode.HTML)
-        if msg.photo:
-            GRAPH_CACHE["date"] = today_str
-            GRAPH_CACHE["photo_id"] = msg.photo[-1].file_id
-    else:
-        await update.message.reply_text("📉 Recopilando datos históricos. Vuelve pronto.")
-
-async def referidos(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    user_id = update.effective_user.id
-    await asyncio.to_thread(track_user, update.effective_user)
-    await asyncio.to_thread(log_activity, user_id, "/referidos")
-    count, rank, top_3 = await asyncio.to_thread(get_referral_stats, user_id)
-    ranking_text = ""
-    medals = ["🥇", "🥈", "🥉"]
-    for i, (name, score) in enumerate(top_3):
-        medal = medals[i] if i < 3 else f"#{i+1}"
-        clean_name = name.split()[0] if name else "Usuario"
-        ranking_text += f"{medal} <b>{clean_name}</b> — {score} refs\n"
-    invite_link = f"https://t.me/{context.bot.username}?start={user_id}"
-    share_msg = quote(f"🎁 ¡Gana 10 USDT con este bot! Entra aquí y participa:\n\n{invite_link}")
-    share_url = f"https://t.me/share/url?url={share_msg}"
-    keyboard = [[InlineKeyboardButton("📤 Comparte y Gana $10", url=share_url)]]
-    text = (f"🎁 <b>PROGRAMA DE REFERIDOS (PREMIOS USDT)</b>\n\n¡Gana dinero real invitando a tus amigos!\n📅 <b>Corte y Pago:</b> Día 30 de cada mes.\n\n🏆 <b>PREMIOS MENSUALES:</b>\n🥇 1er Lugar: <b>$10 USDT</b>\n🥈 2do Lugar: <b>$5 USDT</b>\n🥉 3er Lugar: <b>$5 USDT</b>\n\n👤 <b>TUS ESTADÍSTICAS:</b>\n👥 Invitados: <b>{count}</b>\n🏆 Tu Rango: <b>#{rank}</b>\n\n🔗 <b>TU ENLACE ÚNICO:</b>\n<code>{invite_link}</code>\n<i>(Toca para copiar y compartir)</i>\n\n📊 <b>TOP 3 LÍDERES:</b>\n{ranking_text}\n👇 <b>¡Compártelo ahora!</b>")
-    await update.message.reply_text(text, parse_mode=ParseMode.HTML, disable_web_page_preview=True, reply_markup=InlineKeyboardMarkup(keyboard))
 
 async def precio(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id = update.effective_user.id
