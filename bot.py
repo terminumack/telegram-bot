@@ -280,37 +280,6 @@ def get_all_users_ids():
 
 # --- ALERTAS ---
 
-
-def save_mining_data(binance, bcv_val, binance_sell):
-    if not DATABASE_URL: return
-    try:
-        today = datetime.now(TIMEZONE).date()
-        conn = psycopg2.connect(DATABASE_URL)
-        cur = conn.cursor()
-        
-        # Spread
-        spread = 0
-        if binance and binance_sell:
-            spread = ((binance - binance_sell) / binance) * 100
-        
-        cur.execute("""
-            INSERT INTO daily_stats (date, price_sum, count, bcv_price) 
-            VALUES (%s, %s, 1, %s)
-            ON CONFLICT (date) DO UPDATE SET 
-                price_sum = daily_stats.price_sum + %s,
-                count = daily_stats.count + 1,
-                bcv_price = GREATEST(daily_stats.bcv_price, %s)
-        """, (today, binance, bcv_val, binance, bcv_val))
-        
-        cur.execute("""
-            INSERT INTO arbitrage_data (buy_pm, sell_pm, buy_banesco, buy_mercantil, buy_provincial, spread_pct)
-            VALUES (%s, %s, 0, 0, 0, %s)
-        """, (binance, binance_sell, spread))
-        
-        conn.commit()
-        cur.close()
-        conn.close()
-    except Exception as e: logging.error(f"Error mining: {e}")
 # ==============================================================================
 #  FUNCIONES DE REINTENTO ROBUSTO
 # ==============================================================================
