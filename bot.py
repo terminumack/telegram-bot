@@ -76,8 +76,6 @@ from handlers.start import start_command
 from handlers.callbacks import button_handler
 from handlers.calc import conv_usdt, conv_bs  # <-- Calculadora Refactorizada
 from handlers.alerts import conv_alert        # <-- Alertas Refactorizadas
-# Silenciar advertencias SSL
-urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
 
 # ---------------------------------------------------------------------------
 # CONFIGURACIÓN DEL LOGGING Y VARIABLES GLOBALES
