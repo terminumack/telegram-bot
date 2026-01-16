@@ -3,27 +3,26 @@
 
 import os
 import logging
-from services.bcv_service import get_bcv_rates
-from services.binance_service import get_binance_price
-from utils.formatting import build_price_message, get_sentiment_keyboard
-import requests
-import psycopg2
-from handlers.start import start_command
-from handlers.callbacks import button_handler
-from utils.formatting import build_price_message, get_sentiment_keyboard # <-- Importamos esto para que el comando /precio siga funcionando
 import asyncio
 import io
 import random
+import requests
+import psycopg2
+import urllib3
+from collections import deque
+from datetime import datetime, time as dt_time, timedelta
+from urllib.parse import quote
+
+# Configuración de Matplotlib (Para gráficos)
 import matplotlib
 matplotlib.use('Agg')
 import matplotlib.pyplot as plt
-from bs4 import BeautifulSoup
-import urllib3
-from urllib.parse import quote
-from datetime import datetime, time as dt_time, timedelta
-import pytz
-from collections import deque   # ✅ correcto: import fuera de cualquier bloque
 
+# Web Scraping y Timezone
+from bs4 import BeautifulSoup
+import pytz
+
+# --- TELEGRAM IMPORTS ---
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup, ChatMember
 from telegram.constants import ParseMode
 from telegram.error import Forbidden, BadRequest
@@ -38,6 +37,24 @@ from telegram.ext import (
     ContextTypes
 )
 
+# --- TUS MÓDULOS (La parte nueva) ---
+# Servicios
+from services.bcv_service import get_bcv_rates
+from services.binance_service import get_binance_price
+
+# Base de Datos
+from database.users import track_user  # Usado en comandos legacy
+from database.stats import log_activity, get_daily_requests_count, get_user_loyalty # Usado en /precio
+from database.alerts import get_triggered_alerts # <-- IMPORTANTE: Para revisar alertas en segundo plano
+
+# Utilidades Visuales
+from utils.formatting import build_price_message, get_sentiment_keyboard
+
+# Handlers (Comandos y Botones)
+from handlers.start import start_command
+from handlers.callbacks import button_handler
+from handlers.calc import conv_usdt, conv_bs  # <-- Calculadora Refactorizada
+from handlers.alerts import conv_alert        # <-- Alertas Refactorizadas
 # Silenciar advertencias SSL
 urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
 
@@ -322,44 +339,7 @@ def get_all_users_ids():
     except Exception: return []
 
 # --- ALERTAS ---
-def add_alert(user_id, target_price, condition):
-    if not DATABASE_URL: return False
-    try:
-        conn = psycopg2.connect(DATABASE_URL)
-        cur = conn.cursor()
-        cur.execute("SELECT COUNT(*) FROM alerts WHERE user_id = %s", (user_id,))
-        count = cur.fetchone()[0]
-        if count >= 3:
-            cur.close()
-            conn.close()
-            return False
-        cur.execute("INSERT INTO alerts (user_id, target_price, condition) VALUES (%s, %s, %s)", 
-                    (user_id, target_price, condition))
-        conn.commit()
-        cur.close()
-        conn.close()
-        return True
-    except Exception: return False
 
-def get_triggered_alerts(current_price):
-    if not DATABASE_URL: return []
-    triggered = []
-    try:
-        conn = psycopg2.connect(DATABASE_URL)
-        cur = conn.cursor()
-        cur.execute("SELECT id, user_id, target_price FROM alerts WHERE condition = 'ABOVE' AND %s >= target_price", (current_price,))
-        above = cur.fetchall()
-        cur.execute("SELECT id, user_id, target_price FROM alerts WHERE condition = 'BELOW' AND %s <= target_price", (current_price,))
-        below = cur.fetchall()
-        triggered = above + below
-        if triggered:
-            ids = tuple([t[0] for t in triggered])
-            cur.execute(f"DELETE FROM alerts WHERE id IN {ids}")
-            conn.commit()
-        cur.close()
-        conn.close()
-    except Exception: pass
-    return triggered
 
 def save_mining_data(binance, bcv_val, binance_sell):
     if not DATABASE_URL: return
@@ -639,92 +619,6 @@ async def global_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await asyncio.to_thread(queue_broadcast, mensaje_final)
     await update.message.reply_text(f"✅ <b>Mensaje puesto en cola.</b>", parse_mode=ParseMode.HTML)
 
-async def start_alert(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    await asyncio.to_thread(track_user, update.effective_user)
-    await asyncio.to_thread(log_activity, update.effective_user.id, "/alerta")
-    if context.args:
-        try:
-            target = float(context.args[0].replace(',', '.'))
-            return await process_alert_logic(update, target)
-        except ValueError:
-            await update.message.reply_text("🔢 Error: Ingresa un número válido.", parse_mode=ParseMode.HTML)
-            return ConversationHandler.END
-    await update.message.reply_text(f"{EMOJI_ALERTA} <b>CONFIGURAR ALERTA</b>\n\n¿A qué precio quieres que te avise?\n\n<i>Escribe el monto abajo (Ej: 600):</i>", parse_mode=ParseMode.HTML)
-    return ESPERANDO_PRECIO_ALERTA
-
-async def process_alert_input(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    try:
-        target = float(update.message.text.replace(',', '.'))
-        await process_alert_logic(update, target)
-    except ValueError:
-        await update.message.reply_text("🔢 Por favor ingresa solo números válidos.", parse_mode=ParseMode.HTML)
-    return ConversationHandler.END
-
-async def process_alert_logic(update: Update, target):
-    current_price = MARKET_DATA["price"]
-    if not current_price:
-        await update.message.reply_text("⚠️ Esperando actualización de precios... intenta en 1 minuto.")
-        return
-    if target > current_price:
-        condition = "ABOVE"
-        msg = f"📈 <b>ALERTA DE SUBIDA</b>\n\nTe avisaré cuando el dólar <b>SUPERE</b> los {target} Bs."
-    elif target < current_price:
-        condition = "BELOW"
-        msg = f"📉 <b>ALERTA DE BAJADA</b>\n\nTe avisaré cuando el dólar <b>BAJE</b> de {target} Bs."
-    else:
-        await update.message.reply_text(f"⚠️ El precio actual ya es {current_price}. Define un valor distinto.")
-        return
-    success = await asyncio.to_thread(add_alert, update.effective_user.id, target, condition)
-    if success:
-        await update.message.reply_text(f"✅ {msg}", parse_mode=ParseMode.HTML)
-    else:
-        await update.message.reply_text("⛔ <b>Límite alcanzado</b>\nSolo puedes tener 3 alertas activas al mismo tiempo.", parse_mode=ParseMode.HTML)
-    return ConversationHandler.END
-
-async def calculate_conversion(update: Update, text_amount, currency_type):
-    rate = MARKET_DATA["price"]
-    if not rate:
-        await update.message.reply_text("⏳ Actualizando tasas...")
-        return ConversationHandler.END
-    try:
-        clean_text = ''.join(c for c in text_amount if c.isdigit() or c in '.,')
-        amount = float(clean_text.replace(',', '.'))
-        await asyncio.to_thread(log_calc, update.effective_user.id, amount, currency_type, 0)
-        if currency_type == "USDT":
-            total = amount * rate
-            await update.message.reply_text(f"🇺🇸 {amount:,.2f} USDT son:\n🇻🇪 <b>{total:,.2f} Bolívares</b>\n<i>(Tasa: {rate:,.2f})</i>", parse_mode=ParseMode.HTML)
-        else: 
-            total = amount / rate
-            await update.message.reply_text(f"🇻🇪 {amount:,.2f} Bs son:\n🇺🇸 <b>{total:,.2f} USDT</b>\n<i>(Tasa: {rate:,.2f})</i>", parse_mode=ParseMode.HTML)
-    except ValueError:
-        await update.message.reply_text("🔢 Número inválido.")
-    return ConversationHandler.END
-
-async def start_usdt_calc(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    await asyncio.to_thread(track_user, update.effective_user)
-    await asyncio.to_thread(log_activity, update.effective_user.id, "/calc")
-    if context.args: return await calculate_conversion(update, context.args[0], "USDT")
-    await update.message.reply_text("🇺🇸 <b>Calculadora USDT:</b>\n\n¿Cuántos Dólares?\n<i>Escribe el número:</i>", parse_mode=ParseMode.HTML)
-    return ESPERANDO_INPUT_USDT
-
-async def start_bs_calc(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    await asyncio.to_thread(track_user, update.effective_user)
-    await asyncio.to_thread(log_activity, update.effective_user.id, "/calc")
-    if context.args: return await calculate_conversion(update, context.args[0], "BS")
-    await update.message.reply_text("🇻🇪 <b>Calculadora Bolívares:</b>\n\n¿Cuántos Bs?\n<i>Escribe el número:</i>", parse_mode=ParseMode.HTML)
-    return ESPERANDO_INPUT_BS
-
-async def process_usdt_input(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    await calculate_conversion(update, update.message.text, "USDT")
-    return ConversationHandler.END
-
-async def process_bs_input(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    await calculate_conversion(update, update.message.text, "BS")
-    return ConversationHandler.END
-
-async def cancel(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    await update.message.reply_text("Cancelado.")
-    return ConversationHandler.END
 
 async def debug_mining(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if update.effective_user.id != ADMIN_ID: return
