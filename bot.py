@@ -26,6 +26,9 @@ from telegram.ext import (
     ConversationHandler,
     ContextTypes
 )
+from logger_conf import logging
+BOT_VERSION = "v51_dev1"
+logging.info(f"🚀 Iniciando Tasabinance Bot {BOT_VERSION}")
 
 # Silenciar advertencias SSL
 urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
@@ -39,6 +42,16 @@ logging.basicConfig(
 TOKEN = os.getenv("TOKEN")
 DATABASE_URL = os.getenv("DATABASE_URL")
 ADMIN_ID = int(os.getenv("ADMIN_ID", "533888411"))
+
+TOKEN = os.getenv("TOKEN")
+DATABASE_URL = os.getenv("DATABASE_URL")
+ADMIN_ID = int(os.getenv("ADMIN_ID", "533888411"))
+
+# ✅ Validar variables críticas antes de iniciar el bot
+if not TOKEN:
+    raise ValueError("❌ TOKEN de Telegram no configurado.")
+if not DATABASE_URL:
+    raise ValueError("❌ DATABASE_URL no configurada.")
 
 # --- CONFIGURACIÓN ---
 UPDATE_INTERVAL = 120 
@@ -78,7 +91,9 @@ MARKET_DATA = {
     "price": None, 
     "bcv": {'usd': None, 'eur': None},   
     "last_updated": "Esperando...",
-    "history": [] 
+    from collections import deque
+...
+"history": deque(maxlen=MAX_HISTORY_POINTS)
 }
 GRAPH_CACHE = {"date": None, "photo_id": None}
 
