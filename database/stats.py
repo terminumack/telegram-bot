@@ -212,8 +212,8 @@ def save_mining_data(binance_buy, bcv_val, binance_sell):
             
             # 2. Tabla arbitrage_data (Histórico detallado)
             cur.execute("""
-                INSERT INTO arbitrage_data (buy_pm, sell_pm, spread_pct, created_at)
-                VALUES (%s, %s, %s, NOW())
+                INSERT INTO arbitrage_data (buy_pm, sell_pm, spread_pct, buy_banesco, buy_mercantil, buy_provincial)
+                VALUES (%s, %s, %s, 0, 0, 0)
             """, (binance_buy, binance_sell, spread))
             
             conn.commit()
