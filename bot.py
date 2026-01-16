@@ -5,6 +5,7 @@ import os
 import logging
 from services.bcv_service import get_bcv_rates
 from services.binance_service import get_binance_price
+from utils.formatting import build_price_message, get_sentiment_keyboard
 import requests
 import psycopg2
 from handlers.start import start_command
