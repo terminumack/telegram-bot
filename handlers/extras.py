@@ -4,6 +4,7 @@ from datetime import datetime
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.constants import ParseMode
 from telegram.ext import ContextTypes
+from database.stats import log_activity, get_referral_stats, queue_broadcast
 
 # Imports de BD y Servicios
 from database.users import track_user
@@ -151,3 +152,43 @@ async def stats(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await context.bot.send_photo(chat_id=ADMIN_ID, photo=chart, caption="📊 Reporte Admin", parse_mode=ParseMode.HTML)
     else:
         await update.message.reply_text("❌ Error generando gráfico.")
+
+# --- COMANDO: /global (Enviar mensaje a todos) ---
+async def global_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if update.effective_user.id != ADMIN_ID: return
+    
+    mensaje_original = update.message.text_html
+    if mensaje_original.startswith('/global'):
+        mensaje_final = mensaje_original.replace('/global', '', 1).strip()
+    else: return
+
+    if not mensaje_final:
+        await update.message.reply_text("⚠️ Escribe el mensaje.", parse_mode=ParseMode.HTML)
+        return
+
+    await asyncio.to_thread(queue_broadcast, mensaje_final)
+    await update.message.reply_text(f"✅ <b>Mensaje puesto en cola.</b>", parse_mode=ParseMode.HTML)
+
+# --- COMANDO: /debug (Ver minería técnica) ---
+async def debug_mining(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if update.effective_user.id != ADMIN_ID: return
+    conn = get_conn()
+    try:
+        with conn.cursor() as cur:
+            cur.execute("SELECT * FROM arbitrage_data ORDER BY id DESC LIMIT 1")
+            row = cur.fetchone()
+        
+        if row:
+            # Ajusta los índices [1], [2] según las columnas de tu tabla real
+            msg = (
+                f"🕵️‍♂️ <b>DATA MINING DEBUG</b>\n\n"
+                f"🕒 Data: {row[1] if len(row) > 1 else '?'}\n"
+                f"📊 Spread: {row[7] if len(row) > 7 else 0}%\n"
+            )
+            await update.message.reply_text(msg, parse_mode=ParseMode.HTML)
+        else:
+            await update.message.reply_text("❌ No hay data de minería aún.")
+    except Exception as e:
+        await update.message.reply_text(f"❌ Error Debug: {e}")
+    finally:
+        put_conn(conn)
