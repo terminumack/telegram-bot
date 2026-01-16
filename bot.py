@@ -722,43 +722,24 @@ def fetch_binance_raw(trade_type, bank_filter=None):
     result = asyncio.run(retry_request(_do_request))
     return result
 
-def fetch_bcv_price():
-    """
-    Obtiene la tasa del BCV con reintentos y fallback al último valor válido.
-    """
-    url = "https://www.bcv.org.ve/"
-    headers = {"User-Agent": random.choice(USER_AGENTS)}
-    rates = {"usd": None, "eur": None}
+# Imports al inicio
+from services.bcv_service import get_bcv_rates
 
-    def _scrape_bcv():
-        try:
-            response = requests.get(url, headers=headers, timeout=15, verify=False)
-            if response.status_code != 200:
-                raise ValueError(f"Status {response.status_code}")
+# ... resto de tu código ...
 
-            soup = BeautifulSoup(response.content, "html.parser")
-            dolar = soup.find("div", id="dolar")
-            euro = soup.find("div", id="euro")
-
-            if dolar:
-                rates["usd"] = float(dolar.find("strong").text.strip().replace(",", "."))
-            if euro:
-                rates["eur"] = float(euro.find("strong").text.strip().replace(",", "."))
-
-            if rates["usd"]:
-                logging.info(f"✅ BCV actualizado: {rates['usd']}")
-                return rates
-        except Exception as e:
-            logging.warning(f"⚠️ Error BCV: {e}")
-        return None
-
-    result = asyncio.run(retry_request(_scrape_bcv))
-
-    if not result and MARKET_DATA["bcv"].get("usd"):
-        logging.warning("⚠️ Usando última tasa BCV (fallback)")
-        return MARKET_DATA["bcv"]
-
-    return result
+# DONDE ANTES LLAMABAS A LA FUNCIÓN, AHORA HACES ESTO:
+async def job_update_rates(context):
+    """Ejemplo de tarea periódica que actualiza precios"""
+    
+    # Llamada limpia y asíncrona
+    tasas_bcv = await get_bcv_rates() 
+    
+    if tasas_bcv:
+        # Actualizar tu variable global o base de datos
+        MARKET_DATA["bcv"] = tasas_bcv
+    else:
+        # Manejar el error si es necesario
+        pass
 
 async def update_price_task(context: ContextTypes.DEFAULT_TYPE):
     """
