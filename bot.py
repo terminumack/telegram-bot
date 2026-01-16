@@ -659,79 +659,148 @@ def save_mining_data(binance, bcv_val, binance_sell):
         cur.close()
         conn.close()
     except Exception as e: logging.error(f"Error mining: {e}")
+# ==============================================================================
+#  FUNCIONES DE REINTENTO ROBUSTO
+# ==============================================================================
+import asyncio, time
 
+async def retry_request(func, *args, retries=3, delay=3, **kwargs):
+    """
+    Ejecuta una función (sincrónica o asíncrona) con reintentos automáticos.
+    Retorna None si todos los intentos fallan.
+    """
+    for attempt in range(1, retries + 1):
+        try:
+            if asyncio.iscoroutinefunction(func):
+                return await func(*args, **kwargs)
+            else:
+                return func(*args, **kwargs)
+        except Exception as e:
+            logging.warning(f"⚠️ Intento {attempt}/{retries} falló en {func.__name__}: {e}")
+            if attempt < retries:
+                await asyncio.sleep(delay * attempt)
+    logging.error(f"❌ Todos los intentos fallaron en {func.__name__}")
+    return None
 # ==============================================================================
 #  BACKEND PRECIOS
 # ==============================================================================
 def fetch_binance_raw(trade_type, bank_filter=None):
+    """
+    Obtiene el promedio del precio USDT en Binance P2P con reintentos robustos.
+    """
     url = "https://p2p.binance.com/bapi/c2c/v2/friendly/c2c/adv/search"
     ua = random.choice(USER_AGENTS)
     headers = {"Content-Type": "application/json", "User-Agent": ua}
+
     last_known = MARKET_DATA["price"] if MARKET_DATA["price"] else 600
     safe_amount = max(2000, min(int(last_known * FILTER_MIN_USD), 20000))
     pay_types = [bank_filter] if bank_filter else ["PagoMovil", "Banesco", "Mercantil", "Provincial"]
+
     payload = {
-        "page": 1, "rows": 3, 
-        "payTypes": pay_types, 
-        "publisherType": "merchant", 
-        "transAmount": str(safe_amount), 
+        "page": 1, "rows": 3,
+        "payTypes": pay_types,
+        "publisherType": "merchant",
+        "transAmount": str(safe_amount),
         "asset": "USDT", "fiat": "VES", "tradeType": trade_type
     }
-    try:
-        response = requests.post(url, json=payload, headers=headers, timeout=10)
-        data = response.json()
-        if not data.get("data"):
-            del payload["publisherType"]
+
+    def _do_request():
+        data = {}
+        try:
             response = requests.post(url, json=payload, headers=headers, timeout=10)
             data = response.json()
-        prices = [float(item["adv"]["price"]) for item in data.get("data", [])]
+            # Si no hay datos, intentar sin filtro de merchant
+            if not data.get("data"):
+                payload.pop("publisherType", None)
+                response = requests.post(url, json=payload, headers=headers, timeout=10)
+                data = response.json()
+        except Exception as e:
+            logging.warning(f"⚠️ Error en petición Binance: {e}")
+        prices = [float(item["adv"]["price"]) for item in data.get("data", []) if "adv" in item]
         return sum(prices) / len(prices) if prices else None
-    except Exception: return None
+
+    result = asyncio.run(retry_request(_do_request))
+    return result
 
 def fetch_bcv_price():
-    url = "http://www.bcv.org.ve/"
-    headers = {"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"}
-    rates = {'usd': None, 'eur': None}
-    try:
-        response = requests.get(url, headers=headers, timeout=30, verify=False)
-        if response.status_code == 200:
-            soup = BeautifulSoup(response.content, 'html.parser')
-            dolar = soup.find('div', id='dolar')
-            if dolar: rates['usd'] = float(dolar.find('strong').text.strip().replace(',', '.'))
-            euro = soup.find('div', id='euro')
-            if euro: rates['eur'] = float(euro.find('strong').text.strip().replace(',', '.'))
-            if rates['usd']: logging.info(f"✅ BCV: {rates['usd']}")
-            return rates if rates['usd'] else None
-    except Exception as e: logging.error(f"❌ BCV Error: {e}")
-    return None
+    """
+    Obtiene la tasa del BCV con reintentos y fallback al último valor válido.
+    """
+    url = "https://www.bcv.org.ve/"
+    headers = {"User-Agent": random.choice(USER_AGENTS)}
+    rates = {"usd": None, "eur": None}
+
+    def _scrape_bcv():
+        try:
+            response = requests.get(url, headers=headers, timeout=15, verify=False)
+            if response.status_code != 200:
+                raise ValueError(f"Status {response.status_code}")
+
+            soup = BeautifulSoup(response.content, "html.parser")
+            dolar = soup.find("div", id="dolar")
+            euro = soup.find("div", id="euro")
+
+            if dolar:
+                rates["usd"] = float(dolar.find("strong").text.strip().replace(",", "."))
+            if euro:
+                rates["eur"] = float(euro.find("strong").text.strip().replace(",", "."))
+
+            if rates["usd"]:
+                logging.info(f"✅ BCV actualizado: {rates['usd']}")
+                return rates
+        except Exception as e:
+            logging.warning(f"⚠️ Error BCV: {e}")
+        return None
+
+    result = asyncio.run(retry_request(_scrape_bcv))
+
+    if not result and MARKET_DATA["bcv"].get("usd"):
+        logging.warning("⚠️ Usando última tasa BCV (fallback)")
+        return MARKET_DATA["bcv"]
+
+    return result
 
 async def update_price_task(context: ContextTypes.DEFAULT_TYPE):
-    buy_pm = await asyncio.to_thread(fetch_binance_raw, "BUY", "PagoMovil")
-    await asyncio.sleep(random.uniform(0.5, 1.5))
-    sell_pm = await asyncio.to_thread(fetch_binance_raw, "SELL", "PagoMovil")
-    
-    new_bcv = await asyncio.to_thread(fetch_bcv_price)
-    
-    if buy_pm:
-        MARKET_DATA["price"] = buy_pm
-        MARKET_DATA["history"].append(buy_pm)
-        if len(MARKET_DATA["history"]) > MAX_HISTORY_POINTS: MARKET_DATA["history"].pop(0)
-        
-        alerts = await asyncio.to_thread(get_triggered_alerts, buy_pm)
-        if alerts:
+    """
+    Tarea periódica: actualiza precios Binance y BCV con manejo de errores y fallback.
+    """
+    try:
+        buy_pm = await asyncio.to_thread(fetch_binance_raw, "BUY", "PagoMovil")
+        await asyncio.sleep(random.uniform(0.5, 1.2))
+        sell_pm = await asyncio.to_thread(fetch_binance_raw, "SELL", "PagoMovil")
+        new_bcv = await asyncio.to_thread(fetch_bcv_price)
+
+        if buy_pm:
+            MARKET_DATA["price"] = buy_pm
+            MARKET_DATA["history"].append(buy_pm)
+            if len(MARKET_DATA["history"]) > MAX_HISTORY_POINTS:
+                MARKET_DATA["history"].popleft()
+
+            alerts = await asyncio.to_thread(get_triggered_alerts, buy_pm)
             for alert in alerts:
                 try:
-                    await context.bot.send_message(chat_id=alert[1], text=f"{EMOJI_ALERTA} <b>¡ALERTA!</b>\nDólar en meta: <b>{alert[2]:,.2f} Bs</b>\nActual: {buy_pm:,.2f} Bs", parse_mode=ParseMode.HTML)
-                except Exception: pass
-        
-        bcv_val = new_bcv['usd'] if (new_bcv and new_bcv.get('usd')) else 0
-        await asyncio.to_thread(save_mining_data, buy_pm, bcv_val, sell_pm)
+                    await context.bot.send_message(
+                        chat_id=alert[1],
+                        text=(f"{EMOJI_ALERTA} <b>¡ALERTA!</b>\n"
+                              f"Dólar meta: <b>{alert[2]:,.2f} Bs</b>\n"
+                              f"Actual: {buy_pm:,.2f} Bs"),
+                        parse_mode=ParseMode.HTML)
+                except Exception as e:
+                    logging.warning(f"No se pudo enviar alerta a {alert[1]}: {e}")
 
-    if new_bcv: MARKET_DATA["bcv"] = new_bcv
-    if buy_pm or new_bcv:
-        now = datetime.now(TIMEZONE)
-        MARKET_DATA["last_updated"] = now.strftime("%d/%m/%Y %I:%M:%S %p")
-        logging.info(f"🔄 Actualizado - PM: {buy_pm} | Sell: {sell_pm}")
+            bcv_val = new_bcv.get("usd") if new_bcv else MARKET_DATA["bcv"].get("usd", 0)
+            await asyncio.to_thread(save_mining_data, buy_pm, bcv_val, sell_pm)
+
+        if new_bcv:
+            MARKET_DATA["bcv"] = new_bcv
+
+        if buy_pm or new_bcv:
+            now = datetime.now(TIMEZONE)
+            MARKET_DATA["last_updated"] = now.strftime("%d/%m/%Y %I:%M:%S %p")
+            logging.info(f"🔄 Actualizado - PM: {buy_pm} | Sell: {sell_pm}")
+
+    except Exception as e:
+        logging.error(f"❌ Error update_price_task: {e}")
 
 # --- NEW: COMANDO DEBUG ---
 async def debug_mining(update: Update, context: ContextTypes.DEFAULT_TYPE):
