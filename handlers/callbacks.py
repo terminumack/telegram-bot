@@ -1,3 +1,9 @@
+async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    print("🔘 ¡CLICK RECIBIDO! Entrando al handler...") # <--- AGREGA ESTO
+    """Maneja los clicks en los botones."""
+    query = update.callback_query
+    # ... resto del código ...
+
 import logging
 import asyncio
 from datetime import datetime
