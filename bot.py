@@ -90,11 +90,14 @@ EMOJI_ALERTA  = '🔔'
 # MEMORIA / DATOS EN TIEMPO REAL
 # ---------------------------------------------------------------------------
 MARKET_DATA = {
-    "price": None, 
+    "price": None,
     "bcv": {"usd": None, "eur": None},
     "last_updated": "Esperando...",
-    "history": deque(maxlen=MAX_HISTORY_POINTS)  # ✅ ahora usa el deque correctamente
+    "history": deque(maxlen=MAX_HISTORY_POINTS)
 }
+
+# ✅ Este diccionario sirve para cachear el gráfico diario y evitar regenerarlo muchas veces
+GRAPH_CACHE = {"date": None, "photo_id": None}
 # ==============================================================================
 #  BASE DE DATOS
 # ==============================================================================
