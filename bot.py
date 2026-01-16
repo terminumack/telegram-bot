@@ -594,7 +594,7 @@ async def precio(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if binance:
         req_count = await asyncio.to_thread(get_daily_requests_count)
         text = build_price_message(binance, bcv, time_str, user_id, req_count)
-        keyboard = get_sentiment_keyboard(user_id)
+        keyboard = get_sentiment_keyboard(user_id, binance)
         if random.random() < 0.2:
             days, refs = await asyncio.to_thread(get_user_loyalty, user_id)
             if days > 3 and refs == 0: text += "\n\n🎁 <i>¡Gana $10 USDT invitando amigos! Toca /referidos</i>"
