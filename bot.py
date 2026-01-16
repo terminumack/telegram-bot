@@ -7,6 +7,7 @@ from services.bcv_service import get_bcv_rates
 from services.binance_service import get_binance_price
 import requests
 import psycopg2
+from handlers.start import start_command
 import asyncio
 import io
 import random
