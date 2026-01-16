@@ -110,7 +110,15 @@ GRAPH_CACHE = {"date": None, "photo_id": None}
 # --- IMPORTS DE BASE DE DATOS ---
 from database.setup import init_db
 from database.users import track_user, get_user_loyalty
-from database.stats import log_activity, log_calc, cast_vote, get_vote_results, has_user_voted
+from database.stats import (
+    log_activity, 
+    log_calc, 
+    cast_vote, 
+    get_vote_results, 
+    has_user_voted,
+    get_daily_requests_count, # <-- ESTA FALTABA
+    get_yesterday_close       # <-- Probablemente también te falte esta
+)
 # ==============================================================================
 #  ANALÍTICAS VISUALES (DASHBOARD)
 # ==============================================================================
