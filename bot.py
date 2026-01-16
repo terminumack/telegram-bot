@@ -646,22 +646,7 @@ if __name__ == "__main__":
 
     app = ApplicationBuilder().token(TOKEN).build()
     app.add_error_handler(error_handler)
-    
-    conv_usdt = ConversationHandler(
-        entry_points=[CommandHandler("usdt", start_usdt_calc)],
-        states={ESPERANDO_INPUT_USDT: [MessageHandler(filters.TEXT & ~filters.COMMAND, process_usdt_input)]},
-        fallbacks=[CommandHandler("cancel", cancel)]
-    )
-    conv_bs = ConversationHandler(
-        entry_points=[CommandHandler("bs", start_bs_calc)],
-        states={ESPERANDO_INPUT_BS: [MessageHandler(filters.TEXT & ~filters.COMMAND, process_bs_input)]},
-        fallbacks=[CommandHandler("cancel", cancel)]
-    )
-    conv_alert = ConversationHandler(
-        entry_points=[CommandHandler("alerta", start_alert)],
-        states={ESPERANDO_PRECIO_ALERTA: [MessageHandler(filters.TEXT & ~filters.COMMAND, process_alert_input)]},
-        fallbacks=[CommandHandler("cancel", cancel)]
-    )
+
 
     app.add_handler(conv_usdt)
     app.add_handler(conv_bs)
