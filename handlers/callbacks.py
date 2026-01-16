@@ -1,8 +1,3 @@
-async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    print("🔘 ¡CLICK RECIBIDO! Entrando al handler...") # <--- AGREGA ESTO
-    """Maneja los clicks en los botones."""
-    query = update.callback_query
-    # ... resto del código ...
 
 import logging
 import asyncio
@@ -11,6 +6,11 @@ from telegram import Update, InlineKeyboardMarkup
 from telegram.constants import ParseMode
 from telegram.ext import ContextTypes
 from telegram.error import BadRequest
+
+async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    print("🔘 ¡CLICK RECIBIDO! Entrando al handler...") # <--- AGREGA ESTO
+    """Maneja los clicks en los botones."""
+    query = update.callback_query
 
 # Imports Modulares
 from services.binance_service import get_binance_price
