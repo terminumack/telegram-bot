@@ -684,43 +684,48 @@ async def retry_request(func, *args, retries=3, delay=3, **kwargs):
 # ==============================================================================
 #  BACKEND PRECIOS
 # ==============================================================================
-def fetch_binance_raw(trade_type, bank_filter=None):
+# 1. Nuevos Imports
+from services.bcv_service import get_bcv_rates
+from services.binance_service import get_binance_price
+
+# ... (resto de imports y config) ...
+
+# Variable Global de Estado (Esto es lo único que mantenemos global por ahora)
+MARKET_DATA = {
+    "price": 60.0,      # Precio Binance Promedio
+    "bcv": {"usd": 0, "eur": 0},
+    "last_update": None
+}
+
+# 2. Nueva función de actualización (Reemplaza la lógica vieja)
+async def update_market_data(context):
     """
-    Obtiene el promedio del precio USDT en Binance P2P con reintentos robustos.
+    Esta función se ejecuta cada 2 min en segundo plano.
+    Actualiza BCV y Binance en PARALELO.
     """
-    url = "https://p2p.binance.com/bapi/c2c/v2/friendly/c2c/adv/search"
-    ua = random.choice(USER_AGENTS)
-    headers = {"Content-Type": "application/json", "User-Agent": ua}
+    try:
+        # Ejecutamos las dos consultas al mismo tiempo para ganar velocidad
+        # (Esto es la magia de asyncio: espera a los dos a la vez, no uno por uno)
+        bcv_task = get_bcv_rates()
+        binance_task = get_binance_price(
+            trade_type="BUY", 
+            current_ref_price=MARKET_DATA["price"]
+        )
 
-    last_known = MARKET_DATA["price"] if MARKET_DATA["price"] else 600
-    safe_amount = max(2000, min(int(last_known * FILTER_MIN_USD), 20000))
-    pay_types = [bank_filter] if bank_filter else ["PagoMovil", "Banesco", "Mercantil", "Provincial"]
+        # Esperamos los resultados
+        bcv_result, binance_result = await asyncio.gather(bcv_task, binance_task)
 
-    payload = {
-        "page": 1, "rows": 3,
-        "payTypes": pay_types,
-        "publisherType": "merchant",
-        "transAmount": str(safe_amount),
-        "asset": "USDT", "fiat": "VES", "tradeType": trade_type
-    }
+        # Actualizamos variables globales si hay datos
+        if bcv_result:
+            MARKET_DATA["bcv"] = bcv_result
+        
+        if binance_result:
+            MARKET_DATA["price"] = binance_result
+            
+        logging.info(f"📊 Mercado Actualizado: BCV={MARKET_DATA['bcv']['usd']} | Binance={MARKET_DATA['price']}")
 
-    def _do_request():
-        data = {}
-        try:
-            response = requests.post(url, json=payload, headers=headers, timeout=10)
-            data = response.json()
-            # Si no hay datos, intentar sin filtro de merchant
-            if not data.get("data"):
-                payload.pop("publisherType", None)
-                response = requests.post(url, json=payload, headers=headers, timeout=10)
-                data = response.json()
-        except Exception as e:
-            logging.warning(f"⚠️ Error en petición Binance: {e}")
-        prices = [float(item["adv"]["price"]) for item in data.get("data", []) if "adv" in item]
-        return sum(prices) / len(prices) if prices else None
-
-    result = asyncio.run(retry_request(_do_request))
-    return result
+    except Exception as e:
+        logging.error(f"Error crítico actualizando mercado: {e}")
 
 # Imports al inicio
 from services.bcv_service import get_bcv_rates
