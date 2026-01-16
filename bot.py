@@ -4,6 +4,8 @@
 import os
 import logging
 import asyncio
+import random       # <--- NECESARIO para la publicidad
+import urllib3      # <--- NECESARIO para silenciar alertas del BCV
 from datetime import datetime, time as dt_time
 import pytz
 from collections import deque
