@@ -8,6 +8,8 @@ from services.binance_service import get_binance_price
 import requests
 import psycopg2
 from handlers.start import start_command
+from handlers.callbacks import button_handler
+from utils.formatting import build_price_message, get_sentiment_keyboard # <-- Importamos esto para que el comando /precio siga funcionando
 import asyncio
 import io
 import random
@@ -517,42 +519,6 @@ async def debug_mining(update: Update, context: ContextTypes.DEFAULT_TYPE):
 # ... (El resto de comandos precio, start, etc. se mantienen igual a la V49) ...
 # (Para no hacer el mensaje muy largo, asegúrate de mantener las funciones build_price_message, etc.)
 
-def get_sentiment_keyboard(user_id):
-    if has_user_voted(user_id):
-        up, down = get_vote_results()
-        share_text = quote(f"🔥 Dólar en {MARKET_DATA['price']:.2f} Bs. Revisa la tasa real aquí:")
-        share_url = f"https://t.me/share/url?url=https://t.me/tasabinance_bot&text={share_text}"
-        return [[InlineKeyboardButton("🔄 Actualizar Precio", callback_data='refresh_price')], [InlineKeyboardButton("📤 Compartir con Amigos", url=share_url)]]
-    else:
-        return [[InlineKeyboardButton("🚀 Subirá", callback_data='vote_up'), InlineKeyboardButton("📉 Bajará", callback_data='vote_down')], [InlineKeyboardButton("🔄 Actualizar Precio", callback_data='refresh_price')]]
-
-def build_price_message(binance, bcv_data, time_str, user_id=None, requests_count=0):
-    paypal = binance * 0.90
-    amazon = binance * 0.75
-    text = f"{EMOJI_STATS} <b>MONITOR DE TASAS</b>\n\n{EMOJI_BINANCE} <b>Tasa Binance:</b> {binance:,.2f} Bs\n\n"
-    if bcv_data:
-        if bcv_data.get('usd'):
-            text += f"🏛️ <b>BCV (Dólar):</b> {bcv_data['usd']:,.2f} Bs\n"
-            brecha = ((binance - bcv_data['usd']) / bcv_data['usd']) * 100
-            emoji_brecha = "🔴" if brecha >= 20 else "🟠" if brecha >= 10 else "🟢"
-            text += f"📈 <b>Brecha:</b> {brecha:.2f}% {emoji_brecha}\n"
-        if bcv_data.get('eur'): text += f"🇪🇺 <b>BCV (Euro):</b> {bcv_data['eur']:,.2f} Bs\n"
-        text += "\n"
-    else: text += "🏛️ <b>BCV:</b> <i>No disponible</i>\n\n"
-    text += f"{EMOJI_PAYPAL} <b>Tasa PayPal:</b> {paypal:,.2f} Bs\n{EMOJI_AMAZON} <b>Giftcard Amazon:</b> {amazon:,.2f} Bs\n\n{EMOJI_STORE} <i>Actualizado: {time_str}</i>\n"
-    if requests_count > 100: text += f"👁 <b>{requests_count:,}</b> consultas hoy\n\n"
-    else: text += "\n"
-    if user_id and has_user_voted(user_id):
-        up, down = get_vote_results()
-        total = up + down
-        if total > 0:
-            up_pct = int((up / total) * 100)
-            down_pct = int((down / total) * 100)
-            text += f"🗣️ <b>¿Qué dice la comunidad?</b>\n🚀 {up_pct}% <b>Alcista</b> | 📉 {down_pct}% <b>Bajista</b>\n\n"
-    elif user_id: text += "🗣️ <b>¿Qué dice la comunidad?</b> 👇\n\n"
-    text += "📢 <b>Síguenos:</b> @tasabinance_bot"
-    return text
-
 async def send_daily_report(context: ContextTypes.DEFAULT_TYPE):
     binance = MARKET_DATA["price"]
     bcv = MARKET_DATA["bcv"]
@@ -633,33 +599,6 @@ async def precio(update: Update, context: ContextTypes.DEFAULT_TYPE):
             if days > 3 and refs == 0: text += "\n\n🎁 <i>¡Gana $10 USDT invitando amigos! Toca /referidos</i>"
         await update.message.reply_text(text, parse_mode=ParseMode.HTML, reply_markup=InlineKeyboardMarkup(keyboard))
     else: await update.message.reply_text("🔄 Iniciando sistema... intenta en unos segundos.")
-
-async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    user_id = update.effective_user.id
-    await asyncio.to_thread(track_user, update.effective_user)
-    query = update.callback_query
-    data = query.data
-    if data in ['vote_up', 'vote_down']:
-        vote_type = 'UP' if data == 'vote_up' else 'DOWN'
-        if await asyncio.to_thread(cast_vote, user_id, vote_type):
-            await asyncio.to_thread(log_activity, user_id, f"vote_{vote_type.lower()}")
-            await query.answer("✅ ¡Voto registrado!")
-        else: await query.answer("⚠️ Ya votaste hoy.")
-        data = 'refresh_price'
-    if data == 'refresh_price':
-        await asyncio.to_thread(log_activity, user_id, "btn_refresh")
-        binance = MARKET_DATA["price"]
-        bcv = MARKET_DATA["bcv"]
-        time_str = MARKET_DATA["last_updated"]
-        if binance:
-            req_count = await asyncio.to_thread(get_daily_requests_count)
-            text = build_price_message(binance, bcv, time_str, user_id, req_count)
-            keyboard = get_sentiment_keyboard(user_id)
-            try: await query.edit_message_text(text=text, parse_mode=ParseMode.HTML, reply_markup=InlineKeyboardMarkup(keyboard))
-            except BadRequest: pass
-            except Exception as e: logging.error(f"Error edit: {e}")
-    try: await query.answer()
-    except: pass
 
 async def prediccion(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await asyncio.to_thread(track_user, update.effective_user)
