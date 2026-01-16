@@ -8,9 +8,13 @@ from telegram.ext import ContextTypes
 from telegram.error import BadRequest
 
 async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    print("🔘 ¡CLICK RECIBIDO! Entrando al handler...") # <--- AGREGA ESTO
-    """Maneja los clicks en los botones."""
-    query = update.callback_query
+    # 👇 AGREGA ESTO
+    print(f"🔘 CLICK RECIBIDO: Data={update.callback_query.data}") 
+    
+    try:
+        """Maneja los clicks en los botones."""
+        query = update.callback_query
+        # ... (aquí sigue el resto de tu código normal) ...
 
 # Imports Modulares
 from services.binance_service import get_binance_price
