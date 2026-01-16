@@ -6,6 +6,8 @@ import logging
 import asyncio
 import random       # <--- NECESARIO para la publicidad
 import urllib3      # <--- NECESARIO para silenciar alertas del BCV
+# Silenciar advertencias de certificado SSL del BCV
+urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
 from datetime import datetime, time as dt_time
 import pytz
 from collections import deque
