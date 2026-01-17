@@ -448,20 +448,27 @@ def queue_broadcast(message):
         conn.commit(); cur.close(); conn.close()
     except Exception: pass
 
+# Asegúrate de tener este import arriba en bot.py:
+# from database.stats import get_daily_requests_count
+
 async def precio(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    # 1. Construir mensaje (Ahora pasamos MARKET_DATA completo)
-    msg = build_price_message(MARKET_DATA)
+    # 1. Registrar actividad (para que cuente la consulta)
+    user_id = update.effective_user.id
+    # await asyncio.to_thread(log_activity, user_id, "/precio") # Si usas log_activity
+
+    # 2. Obtener contador total de hoy
+    req_count = await asyncio.to_thread(get_daily_requests_count)
+
+    # 3. Construir mensaje pasando el contador
+    msg = build_price_message(MARKET_DATA, requests_count=req_count)
     
-    # 2. Botón de Actualizar
+    # 4. Botón
     keyboard = [[InlineKeyboardButton("🔄 Actualizar", callback_data='refresh')]]
     reply_markup = InlineKeyboardMarkup(keyboard)
 
-    # 3. Publicidad Aleatoria (20%)
+    # Publicidad (Opcional)
     if random.random() < 0.2:
-        try:
-            # Aquí puedes poner tu lógica de publicidad o borrar este bloque
-            pass 
-        except Exception: pass
+        pass # Tu lógica de publicidad
 
     await update.message.reply_text(msg, parse_mode=ParseMode.HTML, reply_markup=reply_markup)
 
