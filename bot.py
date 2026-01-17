@@ -116,13 +116,33 @@ async def check_alerts_async(context, price):
 #  TAREA DE FONDO: REPORTE DIARIO AUTOMÁTICO
 # ==============================================================================
 async def send_daily_report(context: ContextTypes.DEFAULT_TYPE):
+    # 1. Usamos MARKET_DATA que ya está actualizado por la tarea de fondo
     binance = MARKET_DATA["price"]
-    if not binance: return
+    # Si por alguna razón está vacío, no enviamos reporte roto
+    if not binance: 
+        return
+
+    # 2. Lógica de Hora (Tu código original)
+    # Importamos EMOJI_STATS aquí para usarlo en el replace
+    from utils.formatting import EMOJI_STATS 
     
-    msg = build_price_message(MARKET_DATA)
-    header = "☀️ <b>Reporte del Día:</b>\n\n"
-    # Lo enviamos a la cola de difusión (Broadcast)
-    await asyncio.to_thread(queue_broadcast, header + msg)
+    now = datetime.now(TIMEZONE)
+    hour = now.hour
+    
+    header = "☀️ <b>¡Buenos días! Así abre el mercado:</b>" if hour < 12 else "🌤 <b>Reporte de la Tarde:</b>"
+    
+    # 3. Construimos el cuerpo (Sin contador de visitas)
+    body = build_price_message(MARKET_DATA, requests_count=0)
+    
+    # 4. Quitamos el título "MONITOR DE TASAS" para que no se vea doble
+    # (Tal como lo tenías en tu original)
+    body = body.replace(f"{EMOJI_STATS} <b>MONITOR DE TASAS</b>\n\n", "")
+    
+    text = f"{header}\n\n{body}"
+    
+    # 5. Enviamos a la cola (El worker le pondrá el botón automáticamente)
+    await asyncio.to_thread(queue_broadcast, text)
+    logging.info(f"📢 Reporte diario ({'Mañana' if hour < 12 else 'Tarde'}) encolado.")
 
 # ==============================================================================
 #  COMANDO PRINCIPAL: /PRECIO (Se mantiene aquí para acceso rápido a memoria)
