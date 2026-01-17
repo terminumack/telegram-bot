@@ -319,67 +319,87 @@ async def retry_request(func, *args, retries=3, delay=3, **kwargs):
 
 async def update_price_task(context: ContextTypes.DEFAULT_TYPE):
     """
-    Tarea Maestra:
-    1. Obtiene tasas (Binance Buy/Sell y BCV) en PARALELO.
-    2. Actualiza variables globales y memoria.
-    3. Gestiona Alertas y Mining.
+    Tarea Maestra Optimizada para Alta Concurrencia.
+    Objetivo: Que el bot NUNCA deje de tener datos, aunque falle el BCV.
     """
+    global MARKET_DATA
+
     try:
-        # 1. PREPARAR LAS TAREAS
+        # 1. Definir Referencia (Para algoritmo de Binance)
+        # Si el bot acaba de prender y no tiene precio, usa 65.0 de base
         current_ref = MARKET_DATA["price"] or 65.0
         
+        # 2. Preparar Tareas (Binance y BCV en carriles separados)
+        # Usamos asyncio.gather con return_exceptions=True para que si una falla, la otra siga viva
+        # task_buy y task_sell usan tu binance_service.py optimizado
         task_buy = get_binance_price("BUY", "PagoMovil", reference_price=current_ref)
         task_sell = get_binance_price("SELL", "PagoMovil", reference_price=current_ref)
         task_bcv = get_bcv_rates()
 
-        # 2. EJECUTAR TODO A LA VEZ
-        buy_pm, sell_pm, new_bcv = await asyncio.gather(task_buy, task_sell, task_bcv)
+        # 3. Ejecución Paralela (Non-blocking)
+        # El bot esperará aquí lo que tarde el más lento (máx 5s por el timeout que pusimos)
+        results = await asyncio.gather(task_buy, task_sell, task_bcv, return_exceptions=True)
+        
+        buy_pm, sell_pm, new_bcv = results
 
-        # 3. PROCESAR BINANCE (COMPRA)
-        if buy_pm:
+        # 4. Procesar Resultados de forma DEFENSIVA
+        # Si hubo error en la conexión, la variable será una Exception, no un valor.
+        
+        # --- BINANCE COMPRA ---
+        if isinstance(buy_pm, float) and buy_pm > 0:
             MARKET_DATA["price"] = buy_pm
             MARKET_DATA["history"].append(buy_pm)
+            
+            # Chequeo de Alertas (En segundo plano real para no frenar nada)
+            # Solo si tenemos un precio válido de compra
+            asyncio.create_task(check_alerts_async(context, buy_pm))
 
-            # --- GESTIÓN DE ALERTAS ---
-            try:
-                alerts = await asyncio.to_thread(get_triggered_alerts, buy_pm)
-                for alert in alerts:
-                    # alert = (id, user_id, target_price)
-                    chat_id, target_price = alert[1], alert[2]
-                    try:
-                        await context.bot.send_message(
-                            chat_id=chat_id,
-                            text=(f"🚨 <b>¡ALERTA DE PRECIO!</b>\n\n"
-                                  f"El dólar ha tocado tu meta de: <b>{target_price:,.2f} Bs</b>\n"
-                                  f"Actual: <b>{buy_pm:,.2f} Bs</b>"),
-                            parse_mode=ParseMode.HTML
-                        )
-                    except Exception:
-                        pass # Si el usuario bloqueó el bot, ignoramos
-            except Exception as e_alerts:
-                logging.error(f"⚠️ Error alertas: {e_alerts}")
+        # --- BINANCE VENTA ---
+        # Si falló, asumimos 0 (no afecta al usuario principal)
+        val_sell = sell_pm if (isinstance(sell_pm, float) and sell_pm > 0) else 0
 
-        # 4. PROCESAR BCV
-        if new_bcv:
+        # --- BCV (LO CRÍTICO) ---
+        # Si new_bcv trajo datos, actualizamos.
+        # Si trajo None o Error, NO HACEMOS NADA (Mantenemos el valor viejo en memoria)
+        if isinstance(new_bcv, dict) and new_bcv:
             MARKET_DATA["bcv"] = new_bcv
+            logging.info(f"✅ BCV Actualizado: {new_bcv}")
+        else:
+            # Si falla, solo logueamos advertencia, pero el usuario seguirá viendo el precio anterior
+            logging.warning("⚠️ BCV falló o está lento. Manteniendo tasa anterior en memoria.")
 
         # 5. DATA MINING
-        val_buy = buy_pm if buy_pm else (MARKET_DATA["price"] or 0)
-        # Usamos .get('dolar') para seguridad
-        val_bcv = new_bcv.get("dolar", 0) if new_bcv else MARKET_DATA["bcv"].get("dolar", 0)
-        val_sell = sell_pm if sell_pm else 0
+        # Preparamos los valores finales para guardar (usando memoria si falló la red)
+        final_buy = MARKET_DATA["price"] or 0
+        final_bcv = MARKET_DATA["bcv"].get("dolar", 0) if MARKET_DATA["bcv"] else 0
+        
+        if final_buy > 0:
+            await asyncio.to_thread(save_mining_data, final_buy, final_bcv, val_sell)
 
-        if val_buy > 0:
-            await asyncio.to_thread(save_mining_data, val_buy, val_bcv, val_sell)
-
-        # 6. LOGGING
-        if buy_pm:
-            now = datetime.now(TIMEZONE)
-            MARKET_DATA["last_updated"] = now.strftime("%d/%m %I:%M %p")
-            logging.info(f"🔄 Update: Buy={val_buy:.2f} | Sell={val_sell:.2f} | BCV={val_bcv:.2f}")
+        # 6. Actualizar Timestamp Visual
+        now = datetime.now(TIMEZONE)
+        MARKET_DATA["last_updated"] = now.strftime("%d/%m %I:%M %p")
 
     except Exception as e:
-        logging.error(f"❌ Error CRÍTICO en update_price_task: {e}")
+        logging.error(f"❌ Error General en Update Task: {e}")
+
+# Función auxiliar para que las alertas no frenen la actualización de precios
+async def check_alerts_async(context, current_price):
+    try:
+        alerts = await asyncio.to_thread(get_triggered_alerts, current_price)
+        for alert in alerts:
+            chat_id, target_price = alert[1], alert[2]
+            try:
+                await context.bot.send_message(
+                    chat_id=chat_id,
+                    text=(f"🚨 <b>¡ALERTA DE PRECIO!</b>\n\n"
+                          f"El dólar tocó: <b>{target_price:,.2f} Bs</b>\n"
+                          f"Actual: <b>{current_price:,.2f} Bs</b>"),
+                    parse_mode=ParseMode.HTML
+                )
+            except Exception: pass
+    except Exception as e:
+        logging.error(f"Error en alertas async: {e}")
 # --- NEW: COMANDO DEBUG ---
 async def debug_mining(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if update.effective_user.id != ADMIN_ID: return
