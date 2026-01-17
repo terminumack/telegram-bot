@@ -70,3 +70,45 @@ def build_price_message(market_data, requests_count=0):
 def get_sentiment_keyboard(price):
     """(Opcional) Si quieres mantener la función para no romper imports"""
     return None
+
+from telegram import InlineKeyboardButton, InlineKeyboardMarkup
+from urllib.parse import quote
+from database.stats import has_user_voted, get_vote_results
+# Nota: MARKET_DATA se pasará como argumento para evitar import circular, o se importa dentro
+
+def get_sentiment_keyboard(user_id, current_price):
+    """
+    Genera los botones. 
+    Si no ha votado: Muestra [Subirá] [Bajará]
+    Si ya votó: Muestra resultados y compartir.
+    """
+    if has_user_voted(user_id):
+        up, down = get_vote_results()
+        total = up + down
+        up_pct = (up / total * 100) if total > 0 else 0
+        down_pct = (down / total * 100) if total > 0 else 0
+        
+        # Botones de resultados (No clicables, solo info)
+        results_row = [
+            InlineKeyboardButton(f"🚀 {up} ({up_pct:.0f}%)", callback_data='ignore'),
+            InlineKeyboardButton(f"📉 {down} ({down_pct:.0f}%)", callback_data='ignore')
+        ]
+        
+        # Botón compartir
+        share_text = quote(f"🔥 Dólar en {current_price:.2f} Bs. ¿Subirá o bajará? Vota aquí:")
+        share_url = f"https://t.me/share/url?url=https://t.me/tasabinance_bot&text={share_text}"
+        
+        return InlineKeyboardMarkup([
+            results_row,
+            [InlineKeyboardButton("📤 Compartir", url=share_url)],
+            [InlineKeyboardButton("🔄 Actualizar", callback_data='refresh')]
+        ])
+    else:
+        # Aún no ha votado
+        return InlineKeyboardMarkup([
+            [
+                InlineKeyboardButton("🚀 Subirá", callback_data='vote_UP'), 
+                InlineKeyboardButton("📉 Bajará", callback_data='vote_DOWN')
+            ],
+            [InlineKeyboardButton("🔄 Actualizar", callback_data='refresh')]
+        ])
