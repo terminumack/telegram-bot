@@ -350,3 +350,56 @@ def load_last_market_state():
         return None
     finally:
         put_conn(conn)
+
+# --- SISTEMA DE ENCUESTAS (VOTOS) ---
+
+def cast_vote(user_id, vote_type):
+    """Registra el voto del usuario hoy."""
+    conn = get_conn()
+    if not conn: return False
+    try:
+        with conn.cursor() as cur:
+            cur.execute("""
+                INSERT INTO daily_votes (user_id, vote_type, vote_date)
+                VALUES (%s, %s, CURRENT_DATE)
+                ON CONFLICT (user_id, vote_date) 
+                DO UPDATE SET vote_type = EXCLUDED.vote_type
+            """, (user_id, vote_type))
+            conn.commit()
+        return True
+    except Exception as e:
+        logging.error(f"Error votando: {e}")
+        return False
+    finally:
+        put_conn(conn)
+
+def has_user_voted(user_id):
+    """Verifica si el usuario ya votó hoy."""
+    conn = get_conn()
+    if not conn: return False
+    try:
+        with conn.cursor() as cur:
+            cur.execute("SELECT 1 FROM daily_votes WHERE user_id = %s AND vote_date = CURRENT_DATE", (user_id,))
+            return cur.fetchone() is not None
+    except Exception:
+        return False
+    finally:
+        put_conn(conn)
+
+def get_vote_results():
+    """Devuelve (votos_subida, votos_bajada)."""
+    conn = get_conn()
+    if not conn: return (0, 0)
+    try:
+        with conn.cursor() as cur:
+            cur.execute("""
+                SELECT 
+                    COUNT(*) FILTER (WHERE vote_type = 'UP'),
+                    COUNT(*) FILTER (WHERE vote_type = 'DOWN')
+                FROM daily_votes WHERE vote_date = CURRENT_DATE
+            """)
+            return cur.fetchone()
+    except Exception:
+        return (0, 0)
+    finally:
+        put_conn(conn)
