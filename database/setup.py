@@ -30,6 +30,23 @@ def init_db():
             """)
             # ... (Puedes agregar aquí el resto de tablas si quieres ser exhaustivo, 
             # pero con user y logs basta para empezar, el resto ya existen en tu DB de prod)
+# ... (después de crear la tabla users, alerts, etc.) ...
+
+        # TABLA NUEVA: Estado del Mercado (Para que no arranque en cero)
+        cur.execute("""
+            CREATE TABLE IF NOT EXISTS market_state (
+                id SERIAL PRIMARY KEY,
+                price_binance FLOAT,
+                bcv_usd FLOAT,
+                bcv_eur FLOAT,
+                last_updated TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+            );
+        """)
+        
+        # Insertamos una fila vacía si no existe (para tener qué actualizar luego)
+        cur.execute("SELECT COUNT(*) FROM market_state")
+        if cur.fetchone()[0] == 0:
+            cur.execute("INSERT INTO market_state (price_binance, bcv_usd, bcv_eur) VALUES (0, 0, 0)")
             
         conn.commit()
         logging.info("✅ Tablas de Base de Datos verificadas.")
