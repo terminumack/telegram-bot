@@ -1,569 +1,203 @@
-#!/usr/bin/env python3
-# -*- coding: utf-8 -*-
-
 import os
 import logging
 import asyncio
-import random       # <--- NECESARIO para la publicidad
-import urllib3      # <--- NECESARIO para silenciar alertas del BCV
+import urllib3
+import random
 from datetime import datetime, time as dt_time
 import pytz
-from collections import deque
-# ... otros imports ...
-from shared import MARKET_DATA, TIMEZONE, MAX_HISTORY_POINTS # <--- IMPORTANTE
-# Borra: from collections import deque
 
-# --- TELEGRAM IMPORTS ---
-from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
+from telegram import Update, InlineKeyboardMarkup, InlineKeyboardButton
 from telegram.constants import ParseMode
 from telegram.ext import (
     ApplicationBuilder, 
     CommandHandler, 
     CallbackQueryHandler, 
-    ConversationHandler,
-    ContextTypes
+    ContextTypes,
+    ConversationHandler
 )
 
-# --- SERVICIOS Y BASE DE DATOS ---
-from services.bcv_service import get_bcv_rates
-from services.binance_service import get_binance_price
-from database.stats import save_mining_data, queue_broadcast, get_daily_requests_count
+# --- 1. IMPORTS DE MEMORIA Y CONFIGURACIÓN ---
+from shared import MARKET_DATA, TIMEZONE
+from database.setup import init_db
+from database.stats import get_daily_requests_count, queue_broadcast, save_mining_data
 from database.alerts import get_triggered_alerts
 
-# --- UTILIDADES VISUALES ---
-from utils.formatting import build_price_message, get_sentiment_keyboard
+# --- 2. SERVICIOS (Conexión a Binance y BCV) ---
+from services.binance_service import get_binance_price
+from services.bcv_service import get_bcv_rates
 
-# --- HANDLERS (Tu lógica movida) ---
-from handlers.start import start_command
-from handlers.callbacks import button_handler
-from handlers.calc import conv_usdt, conv_bs  # Calculadora
-from handlers.alerts import conv_alert        # Alertas
+# --- 3. UTILIDADES VISUALES ---
+from utils.formatting import build_price_message
 
-# Extras (Incluyendo el Bonus de global y debug si lo hiciste)
-from handlers.extras import (
+# --- 4. HANDLERS (Aquí conectamos tu lógica vieja y nueva) ---
+# A. Comandos Generales (Mudados a commands.py)
+from handlers.commands import (
+    start_command, 
+    help_command, 
     grafico, 
     referidos, 
-    prediccion, 
-    stats, 
-    global_message, 
-    debug_mining
+    prediccion,    # Comando /ia
+    stats,         # Admin
+    global_message,# Admin
+    debug_mining   # Admin
 )
-
-# --- TELEGRAM IMPORTS ---
-from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup, ChatMember
-from telegram.constants import ParseMode
-from telegram.error import Forbidden, BadRequest
-from telegram.ext import (
-    ApplicationBuilder, 
-    CommandHandler, 
-    CallbackQueryHandler, 
-    MessageHandler,
-    ChatMemberHandler,
-    filters,            
-    ConversationHandler,
-    ContextTypes
-)
-
-# --- TUS MÓDULOS (La parte nueva) ---
-# Servicios
-from services.bcv_service import get_bcv_rates
-from services.binance_service import get_binance_price
-
-# Base de Datos
-from database.users import track_user  # Usado en comandos legacy
-from database.stats import log_activity, get_daily_requests_count, get_user_loyalty # Usado en /precio
-from database.alerts import get_triggered_alerts # <-- IMPORTANTE: Para revisar alertas en segundo plano
-
-# Utilidades Visuales
-from utils.formatting import build_price_message, get_sentiment_keyboard
-
-# Handlers (Comandos y Botones)
-from handlers.start import start_command
+# B. Botones (Actualizar precio)
 from handlers.callbacks import button_handler
-from handlers.calc import conv_usdt, conv_bs  # <-- Calculadora Refactorizada
-from handlers.alerts import conv_alert        # <-- Alertas Refactorizadas
-
-# Silenciar advertencias de certificado SSL del BCV
-urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
-# ---------------------------------------------------------------------------
-# CONFIGURACIÓN DEL LOGGING Y VARIABLES GLOBALES
-# ---------------------------------------------------------------------------
-
-from logger_conf import logging     # importa tu configuración de logging
-BOT_VERSION = "v51_dev1"
-logging.info(f"🚀 Iniciando Tasabinance Bot {BOT_VERSION}")
-
-TOKEN = os.getenv("TOKEN")
-DATABASE_URL = os.getenv("DATABASE_URL")
-ADMIN_ID = int(os.getenv("ADMIN_ID", "533888411"))
-
-# Validaciones básicas
-if not TOKEN:
-    raise ValueError("❌ TOKEN de Telegram no configurado.")
-if not DATABASE_URL:
-    raise ValueError("❌ DATABASE_URL no configurada.")
-
-# Silenciar el ruido de librerías externas
-logging.getLogger("matplotlib").setLevel(logging.WARNING)
-logging.getLogger("httpx").setLevel(logging.WARNING) # Opcional: silencia logs de peticiones HTTP normales
+# C. Módulos Complejos (Calculadora y Alertas - Archivos originales)
+from handlers.calc import conv_usdt, conv_bs 
+from handlers.alerts import conv_alert
 
 # --- CONFIGURACIÓN ---
-UPDATE_INTERVAL = 120 
-TIMEZONE = pytz.timezone('America/Caracas') 
-FILTER_MIN_USD = 20
-MAX_HISTORY_POINTS = 200
+urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
+logging.basicConfig(format='%(asctime)s - %(name)s - %(levelname)s - %(message)s', level=logging.INFO)
 
-# Lista Anti‑Ban
-USER_AGENTS = [
-    "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
-    "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.2 Safari/605.1.15",
-    "Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:109.0) Gecko/20100101 Firefox/115.0",
-    "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/119.0.0.0 Safari/537.36",
-    "Mozilla/5.0 (iPhone; CPU iPhone OS 17_0 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.0 Mobile/15E148 Safari/604.1"
-]
-
-# Links
-LINK_CANAL = "https://t.me/tasabinance"
-LINK_GRUPO = "https://t.me/tasabinancegrupo"
-LINK_SOPORTE = "https://t.me/tasabinancesoporte"
-
-# Estados de conversación
-ESPERANDO_INPUT_USDT, ESPERANDO_INPUT_BS, ESPERANDO_PRECIO_ALERTA = range(3)
-
-# Emojis
-EMOJI_BINANCE = '<tg-emoji emoji-id="5269277053684819725">🔶</tg-emoji>'
-EMOJI_PAYPAL  = '<tg-emoji emoji-id="5364111181415996352">🅿️</tg-emoji>'
-EMOJI_AMAZON  = '🎁'
-EMOJI_SUBIDA  = '<tg-emoji emoji-id="5244837092042750681">📈</tg-emoji>'
-EMOJI_BAJADA  = '<tg-emoji emoji-id="5246762912428603768">📉</tg-emoji>'
-EMOJI_STATS   = '<tg-emoji emoji-id="5231200819986047254">📊</tg-emoji>'
-EMOJI_STORE   = '<tg-emoji emoji-id="5895288113537748673">🏪</tg-emoji>'
-EMOJI_ALERTA  = '🔔'
-
-# ---------------------------------------------------------------------------
-# MEMORIA / DATOS EN TIEMPO REAL
-# ---------------------------------------------------------------------------
-# --- CONFIGURACIÓN GLOBAL ---
-MAX_HISTORY_POINTS = 20  # Cuántos precios guardamos en memoria RAM
-TIMEZONE = pytz.timezone('America/Caracas') # Asegúrate de tener pytz importado
+TOKEN = os.getenv("TOKEN")
+ADMIN_ID = int(os.getenv("ADMIN_ID", "533888411"))
 
 # ==============================================================================
-#  BASE DE DATOS
+#  TAREA DE FONDO: ACTUALIZADOR DE PRECIOS (EL CORAZÓN DEL BOT)
 # ==============================================================================
-# --- IMPORTS DE BASE DE DATOS ---
-from database.setup import init_db
-from database.users import track_user, get_user_loyalty
-from database.stats import (
-    log_activity, 
-    log_calc, 
-    cast_vote, 
-    get_vote_results, 
-    has_user_voted,
-    get_daily_requests_count, # <-- ESTA FALTABA
-    get_yesterday_close       # <-- Probablemente también te falte esta
-)
-# ==============================================================================
-#  ANALÍTICAS VISUALES (DASHBOARD)
-# ==============================================================================
-
-
-# --- GRÁFICO VERTICAL ---
-
-# 🔥 FIX STATS V50: REPORTE COMPLETO CON CONCATENACIÓN ROBUSTA 🔥
-def get_detailed_report_text():
-    if not DATABASE_URL: return "⚠️ Error DB"
-    try:
-        conn = psycopg2.connect(DATABASE_URL)
-        cur = conn.cursor()
-        
-        # 1. KPI Principales
-        cur.execute("SELECT COUNT(*) FROM users")
-        total = cur.fetchone()[0]
-        cur.execute("SELECT COUNT(*) FROM users WHERE status = 'blocked'")
-        blocked = cur.fetchone()[0]
-        active_real = total - blocked
-        churn_rate = (blocked / total * 100) if total > 0 else 0
-        
-        # 2. Actividad Reciente
-        cur.execute("SELECT COUNT(*) FROM users WHERE joined_at >= CURRENT_DATE")
-        new_today = cur.fetchone()[0]
-        cur.execute("SELECT COUNT(*) FROM users WHERE last_active >= NOW() - INTERVAL '24 HOURS'")
-        active_24h = cur.fetchone()[0]
-        cur.execute("SELECT COUNT(*) FROM alerts")
-        active_alerts = cur.fetchone()[0]
-        cur.execute("SELECT COUNT(*) FROM activity_logs WHERE created_at >= CURRENT_DATE")
-        requests_today = cur.fetchone()[0]
-        
-        # 3. Listas Top (Concatenación Segura)
-        cur.execute("SELECT source, COUNT(*) FROM users WHERE source IS NOT NULL GROUP BY source ORDER BY 2 DESC LIMIT 3")
-        top_sources = cur.fetchall()
-        cur.execute("SELECT command, COUNT(*) FROM activity_logs GROUP BY command ORDER BY 2 DESC")
-        top_commands = cur.fetchall()
-        cur.execute("SELECT COUNT(*) FROM users WHERE referred_by IS NOT NULL")
-        total_referrals = cur.fetchone()[0]
-        
-        cur.close()
-        conn.close()
-        
-        # Construcción del Mensaje
-        text = (
-            f"📊 <b>REPORTE EJECUTIVO</b>\n\n"
-            f"👥 <b>Total Histórico:</b> {total}\n"
-            f"✅ <b>Usuarios Reales:</b> {active_real}\n"
-            f"🚫 <b>Bloqueados:</b> {blocked} ({churn_rate:.2f}%)\n"
-            f"--------------------------\n"
-            f"📈 <b>Nuevos Hoy:</b> +{new_today}\n"
-            f"🔥 <b>Activos (24h):</b> {active_24h}\n"
-            f"🔔 <b>Alertas Activas:</b> {active_alerts}\n"
-            f"📥 <b>Consultas Hoy:</b> {requests_today}\n"
-        )
-        
-        # Bloque Referidos
-        text += f"\n🤝 <b>Referidos Totales:</b> {total_referrals}\n"
-        
-        # Bloque Campañas
-        if top_sources:
-            text += "\n🎯 <b>Top Campañas:</b>\n"
-            for src, cnt in top_sources:
-                text += f"• {src}: {cnt}\n"
-        
-        # Bloque Comandos
-        if top_commands:
-            text += "\n🤖 <b>Comandos Totales:</b>\n"
-            for cmd, cnt in top_commands:
-                text += f"• {cmd}: {cnt}\n"
-
-        text += f"\n<i>Sistema Operativo V50 (Debug+Fix).</i> ✅"
-        return text
-    except Exception as e: 
-        logging.error(f"Error detailed report: {e}")
-        return f"Error calculando métricas: {e}"
-
-def get_referral_stats(user_id):
-    if not DATABASE_URL: return (0, 0, [])
-    try:
-        conn = psycopg2.connect(DATABASE_URL)
-        cur = conn.cursor()
-        cur.execute("SELECT referral_count FROM users WHERE user_id = %s", (user_id,))
-        res = cur.fetchone()
-        my_count = res[0] if res else 0
-        cur.execute("SELECT COUNT(*) + 1 FROM users WHERE referral_count > %s", (my_count,))
-        my_rank = cur.fetchone()[0]
-        cur.execute("SELECT first_name, referral_count FROM users ORDER BY referral_count DESC LIMIT 3")
-        top_3 = cur.fetchall()
-        cur.close()
-        conn.close()
-        return (my_count, my_rank, top_3)
-    except Exception: return (0, 0, [])
-
-def get_total_users():
-    if not DATABASE_URL: return 0
-    try:
-        conn = psycopg2.connect(DATABASE_URL)
-        cur = conn.cursor()
-        cur.execute("SELECT COUNT(*) FROM users")
-        count = cur.fetchone()[0]
-        cur.close()
-        conn.close()
-        return count
-    except Exception: return 0
-
-def get_all_users_ids():
-    if not DATABASE_URL: return []
-    try:
-        conn = psycopg2.connect(DATABASE_URL)
-        cur = conn.cursor()
-        cur.execute("SELECT user_id FROM users WHERE status = 'active'")
-        ids = [row[0] for row in cur.fetchall()]
-        cur.close()
-        conn.close()
-        return ids
-    except Exception: return []
-
-# --- ALERTAS ---
-
-# ==============================================================================
-#  FUNCIONES DE REINTENTO ROBUSTO
-# ==============================================================================
-import asyncio, time
-
-async def retry_request(func, *args, retries=3, delay=3, **kwargs):
-    """
-    Ejecuta una función (sincrónica o asíncrona) con reintentos automáticos.
-    Retorna None si todos los intentos fallan.
-    """
-    for attempt in range(1, retries + 1):
-        try:
-            if asyncio.iscoroutinefunction(func):
-                return await func(*args, **kwargs)
-            else:
-                return func(*args, **kwargs)
-        except Exception as e:
-            logging.warning(f"⚠️ Intento {attempt}/{retries} falló en {func.__name__}: {e}")
-            if attempt < retries:
-                await asyncio.sleep(delay * attempt)
-    logging.error(f"❌ Todos los intentos fallaron en {func.__name__}")
-    return None
-# ==============================================================================
-#  BACKEND PRECIOS
-# ==============================================================================
-# --- IMPORTS NECESARIOS (Asegúrate de tenerlos arriba) ---
-# from services.bcv_service import get_bcv_rates
-# from services.binance_service import get_binance_price
-# from telegram.constants import ParseMode
-
 async def update_price_task(context: ContextTypes.DEFAULT_TYPE):
-    """
-    Tarea Maestra Optimizada para Alta Concurrencia.
-    Objetivo: Que el bot NUNCA deje de tener datos, aunque falle el BCV.
-    """
-    global MARKET_DATA
-
     try:
-        # 1. Definir Referencia (Para algoritmo de Binance)
-        # Si el bot acaba de prender y no tiene precio, usa 65.0 de base
+        # 1. Definir Referencia (Evita precios locos)
         current_ref = MARKET_DATA["price"] or 65.0
         
-        # 2. Preparar Tareas (Binance y BCV en carriles separados)
-        # Usamos asyncio.gather con return_exceptions=True para que si una falla, la otra siga viva
-        # task_buy y task_sell usan tu binance_service.py optimizado
+        # 2. Obtener Datos en Paralelo (Binance y BCV a la vez)
         task_buy = get_binance_price("BUY", "PagoMovil", reference_price=current_ref)
         task_sell = get_binance_price("SELL", "PagoMovil", reference_price=current_ref)
         task_bcv = get_bcv_rates()
-
-        # 3. Ejecución Paralela (Non-blocking)
-        # El bot esperará aquí lo que tarde el más lento (máx 5s por el timeout que pusimos)
-        results = await asyncio.gather(task_buy, task_sell, task_bcv, return_exceptions=True)
         
+        results = await asyncio.gather(task_buy, task_sell, task_bcv, return_exceptions=True)
         buy_pm, sell_pm, new_bcv = results
 
-        # 4. Procesar Resultados de forma DEFENSIVA
-        # Si hubo error en la conexión, la variable será una Exception, no un valor.
-        
-        # --- BINANCE COMPRA ---
+        # 3. Procesar Binance (Compra)
         if isinstance(buy_pm, float) and buy_pm > 0:
             MARKET_DATA["price"] = buy_pm
             MARKET_DATA["history"].append(buy_pm)
-            
-            # Chequeo de Alertas (En segundo plano real para no frenar nada)
-            # Solo si tenemos un precio válido de compra
+            # Chequear alertas en segundo plano
             asyncio.create_task(check_alerts_async(context, buy_pm))
 
-        # --- BINANCE VENTA ---
-        # Si falló, asumimos 0 (no afecta al usuario principal)
-        val_sell = sell_pm if (isinstance(sell_pm, float) and sell_pm > 0) else 0
-
-        # --- BCV (LO CRÍTICO) ---
-        # Si new_bcv trajo datos, actualizamos.
-        # Si trajo None o Error, NO HACEMOS NADA (Mantenemos el valor viejo en memoria)
+        # 4. Procesar BCV (Defensivo: Si falla, mantiene el anterior)
         if isinstance(new_bcv, dict) and new_bcv:
             MARKET_DATA["bcv"] = new_bcv
-            logging.info(f"✅ BCV Actualizado: {new_bcv}")
-        else:
-            # Si falla, solo logueamos advertencia, pero el usuario seguirá viendo el precio anterior
-            logging.warning("⚠️ BCV falló o está lento. Manteniendo tasa anterior en memoria.")
-
-        # 5. DATA MINING
-        # Preparamos los valores finales para guardar (usando memoria si falló la red)
-        final_buy = MARKET_DATA["price"] or 0
-        final_bcv = MARKET_DATA["bcv"].get("dolar", 0) if MARKET_DATA["bcv"] else 0
         
-        if final_buy > 0:
-            await asyncio.to_thread(save_mining_data, final_buy, final_bcv, val_sell)
+        # 5. Guardar en Base de Datos (Data Mining)
+        val_buy = MARKET_DATA["price"] or 0
+        val_bcv = MARKET_DATA["bcv"].get("dolar", 0) if MARKET_DATA["bcv"] else 0
+        val_sell = sell_pm if (isinstance(sell_pm, float) and sell_pm > 0) else 0
+        
+        if val_buy > 0:
+            await asyncio.to_thread(save_mining_data, val_buy, val_bcv, val_sell)
 
-        # 6. Actualizar Timestamp Visual
-        now = datetime.now(TIMEZONE)
-        MARKET_DATA["last_updated"] = now.strftime("%d/%m %I:%M %p")
+        # 6. Actualizar Timestamp
+        MARKET_DATA["last_updated"] = datetime.now(TIMEZONE).strftime("%d/%m %I:%M %p")
+        logging.info(f"🔄 Update: Buy={val_buy:.2f} | BCV={val_bcv:.2f}")
 
     except Exception as e:
-        logging.error(f"❌ Error General en Update Task: {e}")
+        logging.error(f"❌ Error Update Task: {e}")
 
-# Función auxiliar para que las alertas no frenen la actualización de precios
-async def check_alerts_async(context, current_price):
+async def check_alerts_async(context, price):
+    """Revisa si alguna alerta se activó y envía el mensaje."""
     try:
-        alerts = await asyncio.to_thread(get_triggered_alerts, current_price)
+        alerts = await asyncio.to_thread(get_triggered_alerts, price)
         for alert in alerts:
-            chat_id, target_price = alert[1], alert[2]
             try:
+                chat_id, target = alert[1], alert[2]
                 await context.bot.send_message(
-                    chat_id=chat_id,
-                    text=(f"🚨 <b>¡ALERTA DE PRECIO!</b>\n\n"
-                          f"El dólar tocó: <b>{target_price:,.2f} Bs</b>\n"
-                          f"Actual: <b>{current_price:,.2f} Bs</b>"),
-                    parse_mode=ParseMode.HTML
+                    chat_id, 
+                    f"🚨 <b>¡ALERTA DE PRECIO!</b>\n\nEl dólar tocó: <b>{target:,.2f} Bs</b>\nActual: <b>{price:,.2f} Bs</b>", 
+                    parse_mode="HTML"
                 )
-            except Exception: pass
-    except Exception as e:
-        logging.error(f"Error en alertas async: {e}")
-# --- NEW: COMANDO DEBUG ---
-async def debug_mining(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    if update.effective_user.id != ADMIN_ID: return
-    try:
-        conn = psycopg2.connect(DATABASE_URL)
-        cur = conn.cursor()
-        cur.execute("SELECT * FROM arbitrage_data ORDER BY id DESC LIMIT 1")
-        row = cur.fetchone()
-        cur.close(); conn.close()
-        
-        if row:
-            msg = (
-                f"🕵️‍♂️ <b>DATA MINING DEBUG</b>\n\n"
-                f"🕒 Time: {row[1]}\n"
-                f"🟢 Buy PM: {row[2]}\n"
-                f"🔴 Sell PM: {row[3]}\n"
-                f"📉 Spread: {row[7]:.2f}%\n"
-                f"🏦 Ban: {row[4]} | Mer: {row[5]} | Pro: {row[6]}"
-            )
-            await update.message.reply_text(msg, parse_mode=ParseMode.HTML)
-        else:
-            await update.message.reply_text("❌ No hay data de minería aún.")
-    except Exception as e:
-        await update.message.reply_text(f"❌ Error Debug: {e}")
+            except: pass
+    except: pass
 
-# ... (El resto de comandos precio, start, etc. se mantienen igual a la V49) ...
-# (Para no hacer el mensaje muy largo, asegúrate de mantener las funciones build_price_message, etc.)
-
+# ==============================================================================
+#  TAREA DE FONDO: REPORTE DIARIO AUTOMÁTICO
+# ==============================================================================
 async def send_daily_report(context: ContextTypes.DEFAULT_TYPE):
     binance = MARKET_DATA["price"]
-    bcv = MARKET_DATA["bcv"]
-    if not binance: binance = await asyncio.to_thread(fetch_binance_price)
-    if not bcv: bcv = await asyncio.to_thread(fetch_bcv_price)
     if not binance: return
-
-    time_str = datetime.now(TIMEZONE).strftime("%d/%m/%Y %I:%M:%S %p")
-    hour = datetime.now(TIMEZONE).hour
-    header = "☀️ <b>¡Buenos días! Así abre el mercado:</b>" if hour < 12 else "🌤 <b>Reporte de la Tarde:</b>"
-    body = build_price_message(binance, bcv, time_str)
-    body = body.replace(f"{EMOJI_STATS} <b>MONITOR DE TASAS</b>\n\n", "")
-    text = f"{header}\n\n{body}"
     
-    await asyncio.to_thread(queue_broadcast, text)
+    msg = build_price_message(MARKET_DATA)
+    header = "☀️ <b>Reporte del Día:</b>\n\n"
+    # Lo enviamos a la cola de difusión (Broadcast)
+    await asyncio.to_thread(queue_broadcast, header + msg)
 
-def queue_broadcast(message):
-    if not DATABASE_URL: return
-    try:
-        conn = psycopg2.connect(DATABASE_URL)
-        cur = conn.cursor()
-        cur.execute("INSERT INTO broadcast_queue (message, status) VALUES (%s, 'pending')", (message,))
-        conn.commit(); cur.close(); conn.close()
-    except Exception: pass
-
-# Asegúrate de tener este import arriba en bot.py:
-# from database.stats import get_daily_requests_count
-
+# ==============================================================================
+#  COMANDO PRINCIPAL: /PRECIO (Se mantiene aquí para acceso rápido a memoria)
+# ==============================================================================
 async def precio(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    # 1. Registrar actividad (para que cuente la consulta)
-    user_id = update.effective_user.id
-    # await asyncio.to_thread(log_activity, user_id, "/precio") # Si usas log_activity
-
-    # 2. Obtener contador total de hoy
+    # 1. Obtener contador de visitas
     req_count = await asyncio.to_thread(get_daily_requests_count)
-
-    # 3. Construir mensaje pasando el contador
+    
+    # 2. Construir mensaje
     msg = build_price_message(MARKET_DATA, requests_count=req_count)
     
-    # 4. Botón
-    keyboard = [[InlineKeyboardButton("🔄 Actualizar", callback_data='refresh')]]
-    reply_markup = InlineKeyboardMarkup(keyboard)
-
-    # Publicidad (Opcional)
-    if random.random() < 0.2:
-        pass # Tu lógica de publicidad
-
-    await update.message.reply_text(msg, parse_mode=ParseMode.HTML, reply_markup=reply_markup)
-
-async def prediccion(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    await asyncio.to_thread(track_user, update.effective_user)
-    await asyncio.to_thread(log_activity, update.effective_user.id, "/ia")
-    history = MARKET_DATA["history"]
-    if len(history) < 5:
-        await update.message.reply_text("🧠 <b>Calibrando IA...</b>\nRecopilando datos.", parse_mode=ParseMode.HTML)
-        return
-    start_p, end_p = history[0], history[-1]
-    percent = ((end_p - start_p) / start_p) * 100
-    if percent > 0.5: emoji, status, msg = EMOJI_SUBIDA, "ALCISTA FUERTE", "Subida rápida."
-    elif percent > 0: emoji, status, msg = EMOJI_SUBIDA, "LIGERAMENTE ALCISTA", "Recuperación."
-    elif percent < -0.5: emoji, status, msg = EMOJI_BAJADA, "BAJISTA FUERTE", "Caída rápida."
-    elif percent < 0: emoji, status, msg = EMOJI_BAJADA, "LIGERAMENTE BAJISTA", "Corrección."
-    else: emoji, status, msg = "⚖️", "LATERAL / ESTABLE", "Sin cambios."
-    text = (f"🧠 <b>ANÁLISIS DE MERCADO (IA)</b>\n<i>Tendencia basada en historial reciente.</i>\n\n"
-            f"{emoji} <b>Estado:</b> {status}\n{EMOJI_STATS} <b>Variación (1h):</b> {percent:.2f}%\n\n"
-            f"💡 <b>Conclusión:</b>\n<i>{msg}</i>\n\n⚠️ <i>No es consejo financiero.</i>")
-    await update.message.reply_text(text, parse_mode=ParseMode.HTML)
-
-async def stats(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    if update.effective_user.id != ADMIN_ID: return
-    chart = await asyncio.to_thread(generate_stats_chart)
-    report = await asyncio.to_thread(get_detailed_report_text)
-    if chart: await context.bot.send_photo(chat_id=ADMIN_ID, photo=chart, caption=report, parse_mode=ParseMode.HTML)
-    else: await update.message.reply_text("❌ Error generando gráfico.")
-
-async def global_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    if update.effective_user.id != ADMIN_ID: return
-    mensaje_original = update.message.text_html
-    if mensaje_original.startswith('/global'):
-        mensaje_final = mensaje_original.replace('/global', '', 1).strip()
-    else: return
-    if not mensaje_final:
-        await update.message.reply_text("⚠️ Escribe el mensaje.", parse_mode=ParseMode.HTML)
-        return
-    await asyncio.to_thread(queue_broadcast, mensaje_final)
-    await update.message.reply_text(f"✅ <b>Mensaje puesto en cola.</b>", parse_mode=ParseMode.HTML)
-
-
-async def debug_mining(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    if update.effective_user.id != ADMIN_ID: return
-    try:
-        conn = psycopg2.connect(DATABASE_URL)
-        cur = conn.cursor()
-        cur.execute("SELECT * FROM arbitrage_data ORDER BY id DESC LIMIT 1")
-        row = cur.fetchone()
-        cur.close(); conn.close()
-        if row:
-            msg = (f"🕵️‍♂️ <b>DATA MINING DEBUG</b>\n\n🕒 Time: {row[1]}\n🟢 Buy PM: {row[2]}\n🔴 Sell PM: {row[3]}\n📉 Spread: {row[7]:.2f}%\n🏦 Ban: {row[4]} | Mer: {row[5]} | Pro: {row[6]}")
-            await update.message.reply_text(msg, parse_mode=ParseMode.HTML)
-        else: await update.message.reply_text("❌ No hay data.")
-    except Exception as e: await update.message.reply_text(f"❌ Error: {e}")
-
-async def error_handler(update: object, context: ContextTypes.DEFAULT_TYPE) -> None:
-    logging.error(msg="Exception while handling an update:", exc_info=context.error)
-
-if __name__ == "__main__":
-    init_db()
-    if not TOKEN: exit(1)
+    # 3. Botón de refrescar
+    kb = [[InlineKeyboardButton("🔄 Actualizar", callback_data='refresh')]]
     
-    WEBHOOK_URL = os.getenv("WEBHOOK_URL")
-    PORT = int(os.environ.get("PORT", "8080"))
+    # 4. Publicidad aleatoria (20% de probabilidad)
+    if random.random() < 0.2:
+        # Aquí puedes insertar tu lógica de publicidad si la tienes
+        pass 
 
+    await update.message.reply_html(msg, reply_markup=InlineKeyboardMarkup(kb))
+
+# ==============================================================================
+#  MAIN: EL CEREBRO DE ARRANQUE
+# ==============================================================================
+if __name__ == "__main__":
+    # 1. Inicializar Base de Datos
+    init_db()
+    
+    # 2. Construir Aplicación
+    if not TOKEN:
+        print("❌ Error: No hay TOKEN definido.")
+        exit(1)
+        
     app = ApplicationBuilder().token(TOKEN).build()
-    app.add_error_handler(error_handler)
 
-
+    # --- REGISTRO DE COMANDOS (Conectando los cables) ---
+    
+    # Comandos Básicos
+    app.add_handler(CommandHandler("start", start_command))
+    app.add_handler(CommandHandler("help", help_command))
+    app.add_handler(CommandHandler("precio", precio))
+    app.add_handler(CommandHandler("grafico", grafico))
+    app.add_handler(CommandHandler("referidos", referidos))
+    app.add_handler(CommandHandler("ia", prediccion))
+    
+    # Comandos Admin
+    app.add_handler(CommandHandler("stats", stats))
+    app.add_handler(CommandHandler("global", global_message))
+    app.add_handler(CommandHandler("debug", debug_mining))
+    
+    # Conversaciones (Calculadora y Alertas avanzadas)
     app.add_handler(conv_usdt)
     app.add_handler(conv_bs)
     app.add_handler(conv_alert)
     
-    # 👇 ESTA ES LA LÍNEA QUE CAMBIÓ
-    app.add_handler(CommandHandler("start", start_command))
-    
-    app.add_handler(CommandHandler("precio", precio))
-    app.add_handler(CommandHandler("ia", prediccion))
-    app.add_handler(CommandHandler("stats", stats))
-    app.add_handler(CommandHandler("global", global_message))
-    app.add_handler(CommandHandler("referidos", referidos)) 
-    app.add_handler(CommandHandler("grafico", grafico)) 
-    app.add_handler(CommandHandler("debug", debug_mining))
+    # Botones
     app.add_handler(CallbackQueryHandler(button_handler))
+
+    # --- TAREAS AUTOMÁTICAS (JobQueue) ---
+    jq = app.job_queue
+    if jq:
+        # Actualizar precios cada 60 segundos
+        jq.run_repeating(update_price_task, interval=60, first=5)
+        
+        # Reportes diarios (9:00 AM y 1:00 PM hora Venezuela)
+        jq.run_daily(send_daily_report, time=dt_time(hour=9, minute=0, tzinfo=TIMEZONE))
+        jq.run_daily(send_daily_report, time=dt_time(hour=13, minute=0, tzinfo=TIMEZONE))
+
+    print(f"🚀 Tasabinance Bot V51 (MODULAR) INICIADO CORRECTAMENTE")
     
-    if app.job_queue:
-        app.job_queue.run_repeating(update_price_task, interval=UPDATE_INTERVAL, first=1)
-        # Asegúrate de que dt_time está siendo usado aquí
-        app.job_queue.run_daily(send_daily_report, time=dt_time(hour=9, minute=0, tzinfo=TIMEZONE), days=(0, 1, 2, 3, 4, 5, 6))
-        app.job_queue.run_daily(send_daily_report, time=dt_time(hour=13, minute=0, tzinfo=TIMEZONE), days=(0, 1, 2, 3, 4, 5, 6))
-    
+    # --- MODO DE EJECUCIÓN (Polling vs Webhook) ---
+    WEBHOOK_URL = os.getenv("WEBHOOK_URL")
     if WEBHOOK_URL:
-        print(f"🚀 Iniciando modo WEBHOOK en puerto {PORT}")
+        PORT = int(os.environ.get("PORT", "8080"))
+        print(f"🌐 Iniciando modo WEBHOOK en puerto {PORT}")
         app.run_webhook(listen="0.0.0.0", port=PORT, url_path=TOKEN, webhook_url=f"{WEBHOOK_URL}/{TOKEN}")
     else:
-        print("⚠️ Sin WEBHOOK_URL. Iniciando Polling...")
+        print("📡 Iniciando modo POLLING...")
         app.run_polling()
