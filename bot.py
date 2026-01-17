@@ -140,15 +140,18 @@ EMOJI_ALERTA  = '🔔'
 # ---------------------------------------------------------------------------
 # MEMORIA / DATOS EN TIEMPO REAL
 # ---------------------------------------------------------------------------
-MARKET_DATA = {
-    "price": None,
-    "bcv": {"usd": None, "eur": None},
-    "last_updated": "Esperando...",
-    "history": deque(maxlen=MAX_HISTORY_POINTS)
-}
+# --- CONFIGURACIÓN GLOBAL ---
+MAX_HISTORY_POINTS = 20  # Cuántos precios guardamos en memoria RAM
+TIMEZONE = pytz.timezone('America/Caracas') # Asegúrate de tener pytz importado
 
-# ✅ Este diccionario sirve para cachear el gráfico diario y evitar regenerarlo muchas veces
-GRAPH_CACHE = {"date": None, "photo_id": None}
+# --- MEMORIA DEL BOT ---
+MARKET_DATA = {
+    "price": None,       # Aquí se guarda el precio actual de Binance
+    "bcv": {},           # Aquí se guardan las tasas del BCV (Dólar, Euro)
+    "last_updated": "Esperando actualización...",
+    # 👇 ESTO ES LO NUEVO: Una lista inteligente que borra los datos viejos sola
+    "history": deque(maxlen=MAX_HISTORY_POINTS) 
+}
 # ==============================================================================
 #  BASE DE DATOS
 # ==============================================================================
@@ -322,69 +325,61 @@ async def update_price_task(context: ContextTypes.DEFAULT_TYPE):
     3. Gestiona Alertas y Mining.
     """
     try:
-        # 1. PREPARAR LAS TAREAS (No se ejecutan aún, solo se definen)
-        # Usamos el precio actual como referencia para el filtro de seguridad
-        current_ref = MARKET_DATA["price"] or 60.0
+        # 1. PREPARAR LAS TAREAS
+        current_ref = MARKET_DATA["price"] or 65.0
         
         task_buy = get_binance_price("BUY", "PagoMovil", reference_price=current_ref)
         task_sell = get_binance_price("SELL", "PagoMovil", reference_price=current_ref)
         task_bcv = get_bcv_rates()
 
-        # 2. EJECUTAR TODO A LA VEZ (Aquí ocurre la magia de la velocidad)
-        # El bot espera solo lo que tarde la más lenta, no la suma de todas.
+        # 2. EJECUTAR TODO A LA VEZ
         buy_pm, sell_pm, new_bcv = await asyncio.gather(task_buy, task_sell, task_bcv)
 
-        # 3. PROCESAR BINANCE (COMPRA - El precio principal)
+        # 3. PROCESAR BINANCE (COMPRA)
         if buy_pm:
             MARKET_DATA["price"] = buy_pm
-            
-            # Lógica de Historial (Deque)
             MARKET_DATA["history"].append(buy_pm)
-            if len(MARKET_DATA["history"]) > MAX_HISTORY_POINTS:
-                MARKET_DATA["history"].popleft()
 
             # --- GESTIÓN DE ALERTAS ---
-            # Nota: get_triggered_alerts sigue siendo síncrona (SQL), así que usamos to_thread
-            # Más adelante moveremos esto a database/alerts.py
             try:
                 alerts = await asyncio.to_thread(get_triggered_alerts, buy_pm)
                 for alert in alerts:
+                    # alert = (id, user_id, target_price)
                     chat_id, target_price = alert[1], alert[2]
                     try:
                         await context.bot.send_message(
                             chat_id=chat_id,
-                            text=(f"{EMOJI_ALERTA} <b>¡ALERTA!</b>\n"
-                                  f"Dólar meta: <b>{target_price:,.2f} Bs</b>\n"
-                                  f"Actual: {buy_pm:,.2f} Bs"),
+                            text=(f"🚨 <b>¡ALERTA DE PRECIO!</b>\n\n"
+                                  f"El dólar ha tocado tu meta de: <b>{target_price:,.2f} Bs</b>\n"
+                                  f"Actual: <b>{buy_pm:,.2f} Bs</b>"),
                             parse_mode=ParseMode.HTML
                         )
-                    except Exception as err_msg:
-                        logging.warning(f"No se pudo enviar alerta a {chat_id}: {err_msg}")
+                    except Exception:
+                        pass # Si el usuario bloqueó el bot, ignoramos
             except Exception as e_alerts:
-                logging.error(f"Error procesando alertas: {e_alerts}")
+                logging.error(f"⚠️ Error alertas: {e_alerts}")
 
         # 4. PROCESAR BCV
         if new_bcv:
             MARKET_DATA["bcv"] = new_bcv
 
-        # 5. DATA MINING (Guardar en DB)
-        # Usamos el dato nuevo si existe, sino el viejo de memoria
-        val_buy = buy_pm if buy_pm else MARKET_DATA["price"]
-        val_bcv = new_bcv["usd"] if (new_bcv and new_bcv.get("usd")) else MARKET_DATA["bcv"].get("usd", 0)
-        val_sell = sell_pm if sell_pm else 0 # Si falló el sell, guardamos 0 o el anterior según prefieras
+        # 5. DATA MINING
+        val_buy = buy_pm if buy_pm else (MARKET_DATA["price"] or 0)
+        # Usamos .get('dolar') para seguridad
+        val_bcv = new_bcv.get("dolar", 0) if new_bcv else MARKET_DATA["bcv"].get("dolar", 0)
+        val_sell = sell_pm if sell_pm else 0
 
-        # Ejecutamos la query de guardado en hilo aparte para no frenar
-        await asyncio.to_thread(save_mining_data, val_buy, val_bcv, val_sell)
+        if val_buy > 0:
+            await asyncio.to_thread(save_mining_data, val_buy, val_bcv, val_sell)
 
-        # 6. ACTUALIZAR TIMESTAMP
-        if buy_pm or new_bcv:
+        # 6. LOGGING
+        if buy_pm:
             now = datetime.now(TIMEZONE)
-            MARKET_DATA["last_updated"] = now.strftime("%d/%m/%Y %I:%M:%S %p")
-            logging.info(f"🔄 Mercado Actualizado: Buy={val_buy:.2f} | Sell={val_sell:.2f} | BCV={val_bcv:.2f}")
+            MARKET_DATA["last_updated"] = now.strftime("%d/%m %I:%M %p")
+            logging.info(f"🔄 Update: Buy={val_buy:.2f} | Sell={val_sell:.2f} | BCV={val_bcv:.2f}")
 
     except Exception as e:
         logging.error(f"❌ Error CRÍTICO en update_price_task: {e}")
-
 # --- NEW: COMANDO DEBUG ---
 async def debug_mining(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if update.effective_user.id != ADMIN_ID: return
