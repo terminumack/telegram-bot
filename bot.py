@@ -138,15 +138,22 @@ async def send_daily_report(context: ContextTypes.DEFAULT_TYPE):
 # ==============================================================================
 #  COMANDO PRINCIPAL: /PRECIO
 # ==============================================================================
+# Importa la nueva función arriba en bot.py
+from utils.formatting import build_price_message, get_sentiment_keyboard # <--- AGREGA ESTO
+
 async def precio(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    user_id = update.effective_user.id
     req_count = await asyncio.to_thread(get_daily_requests_count)
+    
     msg = build_price_message(MARKET_DATA, requests_count=req_count)
-    kb = [[InlineKeyboardButton("🔄 Actualizar", callback_data='refresh')]]
+    
+    # 👇 AQUÍ ESTÁ EL CAMBIO: Usamos el teclado dinámico
+    markup = await asyncio.to_thread(get_sentiment_keyboard, user_id, MARKET_DATA["price"])
     
     if random.random() < 0.2:
         pass 
 
-    await update.message.reply_html(msg, reply_markup=InlineKeyboardMarkup(kb))
+    await update.message.reply_html(msg, reply_markup=markup)
 
 # ==============================================================================
 #  MAIN: EL CEREBRO DE ARRANQUE
