@@ -4,6 +4,7 @@ import asyncio
 import urllib3
 import random
 from datetime import datetime, time as dt_time
+from services.worker import background_worker
 import pytz
 
 from telegram import Update, InlineKeyboardMarkup, InlineKeyboardButton
@@ -191,7 +192,22 @@ if __name__ == "__main__":
         jq.run_daily(send_daily_report, time=dt_time(hour=13, minute=0, tzinfo=TIMEZONE))
 
     print(f"🚀 Tasabinance Bot V51 (MODULAR) INICIADO CORRECTAMENTE")
-    
+    # ... (código anterior de job_queue) ...
+
+    print(f"🚀 Tasabinance Bot V51 (MODULAR) INICIADO CORRECTAMENTE")
+
+    # 🔥 ENCENDER EL WORKER DE DIFUSIÓN EN SEGUNDO PLANO 🔥
+    loop = asyncio.get_event_loop()
+    loop.create_task(background_worker())
+
+    # --- MODO DE EJECUCIÓN ---
+    WEBHOOK_URL = os.getenv("WEBHOOK_URL")
+    if WEBHOOK_URL:
+        # ... (código webhook) ...
+    else:
+        print("📡 Iniciando modo POLLING...")
+        app.run_polling()
+        
     # --- MODO DE EJECUCIÓN (Polling vs Webhook) ---
     WEBHOOK_URL = os.getenv("WEBHOOK_URL")
     if WEBHOOK_URL:
