@@ -6,13 +6,40 @@ import random
 from datetime import datetime, time as dt_time
 import pytz
 
+# --- 1. IMPORTS DE MEMORIA Y CONFIGURACIÓN ---
+from shared import MARKET_DATA, TIMEZONE
+from database.setup import init_db
 from database.stats import (
     get_daily_requests_count, 
     queue_broadcast, 
     save_mining_data, 
-    save_market_state,      # <--- NUEVO
-    load_last_market_state  # <--- NUEVO
+    save_market_state,      # <--- Persistencia
+    load_last_market_state  # <--- Persistencia
 )
+from database.alerts import get_triggered_alerts
+
+# --- 2. SERVICIOS ---
+from services.binance_service import get_binance_price
+from services.bcv_service import get_bcv_rates
+from services.worker import background_worker  # <--- Cartero
+
+# --- 3. UTILIDADES VISUALES ---
+from utils.formatting import build_price_message
+
+# --- 4. HANDLERS ---
+from handlers.commands import (
+    start_command, 
+    help_command, 
+    grafico, 
+    referidos, 
+    prediccion,    
+    stats,         
+    global_message,
+    debug_mining   
+)
+from handlers.callbacks import button_handler
+from handlers.calc import conv_usdt, conv_bs 
+from handlers.alerts import conv_alert
 
 # Imports de Telegram
 from telegram import Update, InlineKeyboardMarkup, InlineKeyboardButton
@@ -24,35 +51,6 @@ from telegram.ext import (
     ContextTypes,
     ConversationHandler
 )
-
-# --- 1. IMPORTS DE MEMORIA Y CONFIGURACIÓN ---
-from shared import MARKET_DATA, TIMEZONE
-from database.setup import init_db
-from database.stats import get_daily_requests_count, queue_broadcast, save_mining_data
-from database.alerts import get_triggered_alerts
-
-# --- 2. SERVICIOS (Conexión a Binance y BCV y Worker) ---
-from services.binance_service import get_binance_price
-from services.bcv_service import get_bcv_rates
-from services.worker import background_worker  # <--- Importante para el cartero
-
-# --- 3. UTILIDADES VISUALES ---
-from utils.formatting import build_price_message
-
-# --- 4. HANDLERS ---
-from handlers.commands import (
-    start_command, 
-    help_command, 
-    grafico, 
-    referidos, 
-    prediccion,    # Comando /ia
-    stats,         # Admin
-    global_message,# Admin
-    debug_mining   # Admin
-)
-from handlers.callbacks import button_handler
-from handlers.calc import conv_usdt, conv_bs 
-from handlers.alerts import conv_alert
 
 # --- CONFIGURACIÓN ---
 urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
@@ -88,13 +86,10 @@ async def update_price_task(context: ContextTypes.DEFAULT_TYPE):
         val_sell = sell_pm if (isinstance(sell_pm, float) and sell_pm > 0) else 0
         
         if val_buy > 0:
-            await asyncio.to_thread(save_mining_data, val_buy, val_bcv, val_sell)
-        if val_buy > 0:
             # 1. Guardar Histórico (Gráficos)
             await asyncio.to_thread(save_mining_data, val_buy, val_bcv, val_sell)
             
-            # 2. Guardar Estado Actual (Para que sobreviva al reinicio)
-            # Guardamos silenciosamente en segundo plano
+            # 2. Guardar Estado Actual (Persistencia)
             await asyncio.to_thread(save_market_state, val_buy, val_bcv, MARKET_DATA["bcv"].get("euro", 0))
 
         MARKET_DATA["last_updated"] = datetime.now(TIMEZONE).strftime("%d/%m %I:%M %p")
@@ -157,18 +152,20 @@ async def precio(update: Update, context: ContextTypes.DEFAULT_TYPE):
 #  MAIN: EL CEREBRO DE ARRANQUE
 # ==============================================================================
 if __name__ == "__main__":
-    init_db()
-    if __name__ == "__main__":
+    # 1. Inicializar Base de Datos
     init_db()
 
     # --- CARGA SILENCIOSA DE MEMORIA ---
-    # Si el bot se reinicia, recordará el precio anterior inmediatamente.
-    last_state = load_last_market_state()
-    if last_state and last_state["price"] > 0:
-        MARKET_DATA["price"] = last_state["price"]
-        MARKET_DATA["bcv"] = last_state["bcv"]
-        MARKET_DATA["last_updated"] = last_state["last_updated"]
-        print(f"🧠 Memoria restaurada: {MARKET_DATA['price']} Bs")
+    # Si el bot se reinicia, recordará el precio anterior.
+    try:
+        last_state = load_last_market_state()
+        if last_state and last_state["price"] > 0:
+            MARKET_DATA["price"] = last_state["price"]
+            MARKET_DATA["bcv"] = last_state["bcv"]
+            MARKET_DATA["last_updated"] = last_state["last_updated"]
+            print(f"🧠 Memoria restaurada: {MARKET_DATA['price']} Bs")
+    except Exception as e:
+        print(f"⚠️ Error cargando memoria: {e}")
     # -----------------------------------
     
     if not TOKEN:
@@ -202,7 +199,7 @@ if __name__ == "__main__":
         jq.run_daily(send_daily_report, time=dt_time(hour=9, minute=0, tzinfo=TIMEZONE))
         jq.run_daily(send_daily_report, time=dt_time(hour=13, minute=0, tzinfo=TIMEZONE))
 
-    print(f"🚀 Tasabinance Bot V51 (MODULAR) INICIADO CORRECTAMENTE")
+    print(f"🚀 Tasabinance Bot V51 (MODULAR + PERSISTENCIA) INICIADO")
 
     # 🔥 ENCENDER EL WORKER DE DIFUSIÓN 🔥
     loop = asyncio.get_event_loop()
