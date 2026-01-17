@@ -1,7 +1,7 @@
 from telegram import InlineKeyboardButton, InlineKeyboardMarkup
 from urllib.parse import quote
 from datetime import datetime
-from database.stats import has_user_voted, get_vote_results # <--- Importante
+from database.stats import has_user_voted, get_vote_results 
 
 # Emojis
 EMOJI_STATS = "📊"
@@ -26,7 +26,7 @@ def build_price_message(market_data, user_id=None, requests_count=0):
     # 1. Encabezado y Binance
     text = f"{EMOJI_STATS} <b>MONITOR DE TASAS</b>\n\n{EMOJI_BINANCE} <b>Tasa Binance:</b> {price:,.2f} Bs\n\n"
     
-    # 2. Bloque BCV (Con tu lógica de colores y brecha)
+    # 2. Bloque BCV
     if bcv_data and bcv_data.get('dolar'):
         bcv_usd = bcv_data['dolar']
         text += f"🏛️ <b>BCV (Dólar):</b> {bcv_usd:,.2f} Bs\n"
@@ -53,7 +53,7 @@ def build_price_message(market_data, user_id=None, requests_count=0):
     else: 
         text += "\n"
 
-    # --- 4. INTEGRACIÓN DE TU ENCUESTA (AQUÍ ESTÁ LA MAGIA) ---
+    # --- 4. INTEGRACIÓN DE TU ENCUESTA ---
     if user_id and has_user_voted(user_id):
         # Si YA votó: Mostramos resultados en el texto
         up, down = get_vote_results()
@@ -75,25 +75,31 @@ def build_price_message(market_data, user_id=None, requests_count=0):
 def get_sentiment_keyboard(user_id, current_price):
     """
     Genera los BOTONES.
-    Si no votó: [Subirá] [Bajará]
-    Si votó: [Compartir]
-    Siempre: [Actualizar]
+    Orden ajustado para memoria muscular:
+    - Si ya votó: 1. Actualizar, 2. Compartir.
+    - Si no votó: 1. Votar, 2. Actualizar.
     """
     keyboard = []
     
+    # Preparamos el botón de actualizar (se usa en ambos casos)
+    btn_refresh = [InlineKeyboardButton("🔄 Actualizar Precio", callback_data='refresh')]
+
     if has_user_voted(user_id):
-        # Ya votó: Botón compartir
+        # CASO 1: YA VOTÓ
+        # Orden solicitado: Primero Actualizar, luego Compartir
+        keyboard.append(btn_refresh)
+        
         share_text = quote(f"🔥 Dólar en {current_price:,.2f} Bs. Revisa la tasa real aquí:")
         share_url = f"https://t.me/share/url?url=https://t.me/tasabinance_bot&text={share_text}"
         keyboard.append([InlineKeyboardButton("📤 Compartir con Amigos", url=share_url)])
+        
     else:
-        # No votó: Botones de votación
+        # CASO 2: NO VOTÓ
+        # Orden estándar: Primero Votar, luego Actualizar
         keyboard.append([
             InlineKeyboardButton("🚀 Subirá", callback_data='vote_UP'), 
             InlineKeyboardButton("📉 Bajará", callback_data='vote_DOWN')
         ])
-    
-    # Botón siempre presente
-    keyboard.append([InlineKeyboardButton("🔄 Actualizar Precio", callback_data='refresh')])
+        keyboard.append(btn_refresh)
     
     return InlineKeyboardMarkup(keyboard)
