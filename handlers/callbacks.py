@@ -21,7 +21,7 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         text = build_price_message(MARKET_DATA, requests_count=req_count)
         
         # 3. Reconstruimos el botón (ESTO ES LO QUE FALTABA)
-        keyboard = [[InlineKeyboardButton("🔄 Actualizar", callback_data='refresh')]]
+        keyboard = [[InlineKeyboardButton("🔄 Actualizar Precio", callback_data='refresh')]]
         reply_markup = InlineKeyboardMarkup(keyboard)
 
         try:
