@@ -1,87 +1,76 @@
-import logging
-import asyncio
-import random
 import requests
 from bs4 import BeautifulSoup
-from functools import partial
+import urllib3
+import logging
+import asyncio
 
-# --- CONFIGURACIÓN ---
-BCV_URL = "https://www.bcv.org.ve/"
-USER_AGENTS = [
-    "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36",
-    "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/14.0.3 Safari/605.1.15",
-    "Mozilla/5.0 (Linux; Android 10; SM-G960U) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/88.0.4324.181 Mobile Safari/537.36"
-]
-
-# --- MEMORIA (Cache) ---
-# Guardamos el último valor válido aquí para usarlo si la página del BCV se cae.
-_LAST_KNOWN_RATES = {"usd": None, "eur": None}
-
-def _scrape_sync():
-    """
-    Función SÍNCRONA (Bloqueante) interna.
-    Realiza la petición HTTP y el parsing.
-    """
-    headers = {"User-Agent": random.choice(USER_AGENTS)}
-    # verify=False es necesario porque el certificado del BCV suele estar vencido
-    response = requests.get(BCV_URL, headers=headers, timeout=10, verify=False)
-    
-    if response.status_code != 200:
-        raise ValueError(f"Status Code BCV: {response.status_code}")
-
-    soup = BeautifulSoup(response.content, "html.parser")
-    
-    # Selectores específicos del BCV
-    dolar_div = soup.find("div", id="dolar")
-    euro_div = soup.find("div", id="euro")
-    
-    new_rates = {}
-
-    if dolar_div:
-        text_usd = dolar_div.find("strong").text.strip().replace(",", ".")
-        new_rates["usd"] = float(text_usd)
-        
-    if euro_div:
-        text_eur = euro_div.find("strong").text.strip().replace(",", ".")
-        new_rates["eur"] = float(text_eur)
-
-    if not new_rates.get("usd"):
-        raise ValueError("No se pudo parsear el precio del HTML")
-
-    return new_rates
+# Desactivar advertencias de seguridad (El BCV tiene certificados malos)
+urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
 
 async def get_bcv_rates():
     """
-    Función PRINCIPAL (Asíncrona).
-    Llama al scraper en un hilo separado para no congelar el bot.
-    Incluye lógica de reintentos y fallback.
+    Obtiene las tasas del BCV (Dólar y Euro) haciendo Web Scraping.
+    Si falla, retorna None rápidamente para no colgar al bot.
     """
-    loop = asyncio.get_running_loop()
-    max_retries = 3
+    url = "https://www.bcv.org.ve"
     
-    for attempt in range(1, max_retries + 1):
-        try:
-            # 🚀 MAGIA: Ejecutamos la petición bloqueante en un hilo aparte (executor)
-            # Esto evita que el bot se congele mientras espera al BCV.
-            rates = await loop.run_in_executor(None, _scrape_sync)
+    headers = {
+        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36",
+        "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8",
+        "Accept-Language": "es-ES,es;q=0.9,en;q=0.8"
+    }
+
+    try:
+        # Ejecutamos la petición en un hilo aparte para no bloquear al bot
+        # Timeout reducido a 5 segundos (Si en 5s no responde, abortamos)
+        response = await asyncio.to_thread(
+            requests.get, 
+            url, 
+            headers=headers, 
+            timeout=5, 
+            verify=False 
+        )
+        
+        response.raise_for_status()
+        
+        soup = BeautifulSoup(response.content, "html.parser")
+        rates = {}
+
+        # Buscamos el Dólar (ID: dolar)
+        usd_tag = soup.find("div", {"id": "dolar"})
+        if usd_tag:
+            rates["dolar"] = _parse_value(usd_tag)
+
+        # Buscamos el Euro (ID: euro)
+        euro_tag = soup.find("div", {"id": "euro"})
+        if euro_tag:
+            rates["euro"] = _parse_value(euro_tag)
+
+        # Si no encontramos nada, devolvemos None
+        if not rates:
+            logging.warning("⚠️ BCV respondió pero no se encontraron las tasas en el HTML.")
+            return None
+
+        return rates
+
+    except requests.exceptions.Timeout:
+        logging.warning("⚠️ Timeout conectando con BCV (La página está lenta).")
+        return None
+    except Exception as e:
+        logging.error(f"❌ Error obteniendo BCV: {e}")
+        return None
+
+def _parse_value(tag):
+    """Función auxiliar para limpiar el texto del HTML."""
+    try:
+        # Buscamos la etiqueta <strong> dentro del div
+        value_tag = tag.find("strong")
+        if not value_tag:
+            return 0.0
             
-            # Si tuvimos éxito, actualizamos la memoria y retornamos
-            if rates:
-                global _LAST_KNOWN_RATES
-                _LAST_KNOWN_RATES = rates
-                logging.info(f"✅ Tasa BCV Actualizada: {rates['usd']}")
-                return rates
-
-        except Exception as e:
-            wait_time = attempt * 2  # Espera 2s, luego 4s...
-            logging.warning(f"⚠️ Intento {attempt} fallido BCV: {e}. Reintentando en {wait_time}s...")
-            await asyncio.sleep(wait_time)
-
-    # Si fallan todos los intentos, devolvemos el último valor conocido
-    if _LAST_KNOWN_RATES["usd"]:
-        logging.error("❌ BCV Caído. Usando última tasa conocida (Fallback).")
-        return _LAST_KNOWN_RATES
-    
-    # Si no hay ni nuevo ni viejo (ej. acabamos de reiniciar el bot y no hay internet)
-    logging.critical("☠️ No se pudo obtener tasa BCV y no hay caché.")
-    return None
+        text = value_tag.text.strip()
+        # Reemplazamos coma por punto (Formato Venezuela 45,50 -> 45.50)
+        clean_text = text.replace(',', '.')
+        return float(clean_text)
+    except Exception:
+        return 0.0
