@@ -89,6 +89,13 @@ async def update_price_task(context: ContextTypes.DEFAULT_TYPE):
         
         if val_buy > 0:
             await asyncio.to_thread(save_mining_data, val_buy, val_bcv, val_sell)
+        if val_buy > 0:
+            # 1. Guardar Histórico (Gráficos)
+            await asyncio.to_thread(save_mining_data, val_buy, val_bcv, val_sell)
+            
+            # 2. Guardar Estado Actual (Para que sobreviva al reinicio)
+            # Guardamos silenciosamente en segundo plano
+            await asyncio.to_thread(save_market_state, val_buy, val_bcv, MARKET_DATA["bcv"].get("euro", 0))
 
         MARKET_DATA["last_updated"] = datetime.now(TIMEZONE).strftime("%d/%m %I:%M %p")
         logging.info(f"🔄 Update: Buy={val_buy:.2f} | BCV={val_bcv:.2f}")
@@ -151,6 +158,18 @@ async def precio(update: Update, context: ContextTypes.DEFAULT_TYPE):
 # ==============================================================================
 if __name__ == "__main__":
     init_db()
+    if __name__ == "__main__":
+    init_db()
+
+    # --- CARGA SILENCIOSA DE MEMORIA ---
+    # Si el bot se reinicia, recordará el precio anterior inmediatamente.
+    last_state = load_last_market_state()
+    if last_state and last_state["price"] > 0:
+        MARKET_DATA["price"] = last_state["price"]
+        MARKET_DATA["bcv"] = last_state["bcv"]
+        MARKET_DATA["last_updated"] = last_state["last_updated"]
+        print(f"🧠 Memoria restaurada: {MARKET_DATA['price']} Bs")
+    # -----------------------------------
     
     if not TOKEN:
         print("❌ Error: No hay TOKEN definido.")
