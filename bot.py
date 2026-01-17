@@ -6,6 +6,14 @@ import random
 from datetime import datetime, time as dt_time
 import pytz
 
+from database.stats import (
+    get_daily_requests_count, 
+    queue_broadcast, 
+    save_mining_data, 
+    save_market_state,      # <--- NUEVO
+    load_last_market_state  # <--- NUEVO
+)
+
 # Imports de Telegram
 from telegram import Update, InlineKeyboardMarkup, InlineKeyboardButton
 from telegram.constants import ParseMode
