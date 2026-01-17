@@ -1,45 +1,9 @@
-from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
-from telegram.ext import ContextTypes
-from telegram.error import BadRequest
-import asyncio
-
-# Imports de nuestra estructura
-from utils.formatting import build_price_message
-from shared import MARKET_DATA
-from database.stats import get_daily_requests_count
-
-async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    query = update.callback_query
-    await query.answer("Actualizando...") # Mensaje flotante pequeño
-
-    if query.data == "refresh":
-        # 1. Obtenemos contadores frescos de la BD (para que salga en el mensaje)
-        # Usamos to_thread porque es una llamada a base de datos
-        req_count = await asyncio.to_thread(get_daily_requests_count)
-        
-        # 2. Generamos el texto con el formato ORIGINAL
-        text = build_price_message(MARKET_DATA, requests_count=req_count)
-        
-        # 3. Reconstruimos el botón (ESTO ES LO QUE FALTABA)
-        keyboard = [[InlineKeyboardButton("🔄 Actualizar Precio", callback_data='refresh')]]
-        reply_markup = InlineKeyboardMarkup(keyboard)
-
-        try:
-            # 4. Editamos texto Y botones
-            await query.edit_message_text(
-                text=text,
-                parse_mode="HTML",
-                reply_markup=reply_markup # <--- ¡Aquí está la magia!
-            )
-        except BadRequest:
-            # Si el precio no cambió, Telegram lanza error. Lo ignoramos.
-            pass
-
 from telegram import Update
 from telegram.ext import ContextTypes
 from telegram.error import BadRequest
 import asyncio
 
+# Imports de nuestra estructura
 from utils.formatting import build_price_message, get_sentiment_keyboard
 from shared import MARKET_DATA
 from database.stats import get_daily_requests_count, cast_vote
@@ -50,39 +14,50 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     data = query.data
 
     # --- CASO 1: VOTACIÓN ---
+    # Si el botón empieza por "vote_", es que el usuario pulsó Subirá o Bajará
     if data.startswith("vote_"):
-        vote_type = data.split("_")[1] # 'UP' o 'DOWN'
+        vote_type = data.split("_")[1] # Extraemos 'UP' o 'DOWN'
         
-        # Guardar voto en DB
+        # Guardamos el voto en la BD en un hilo aparte
         await asyncio.to_thread(cast_vote, user_id, vote_type)
         
+        # Feedback rápido al usuario
         await query.answer("✅ ¡Voto registrado!")
         
-        # Refrescar el mensaje para mostrar resultados
-        # (Esto hace que caiga en el CASO 2 automáticamente al regenerar el teclado)
-        
-    # --- CASO 2: ACTUALIZAR (Refresh) ---
+        # NOTA: No hacemos return aquí porque queremos que el código siga bajando
+        # para regenerar el mensaje y mostrar los resultados inmediatamente.
+
+    # --- CASO 2: ACTUALIZAR (Refresh) O MOSTRAR RESULTADOS ---
     if data == "refresh" or data.startswith("vote_"):
         if data == "refresh":
             await query.answer("Actualizando...")
 
+        # 1. Obtenemos contadores frescos
         req_count = await asyncio.to_thread(get_daily_requests_count)
         
-        # Texto Nuevo
-        text = build_price_message(MARKET_DATA, requests_count=req_count)
+        # 2. Generamos el TEXTO NUEVO
+        # IMPORTANTE: Pasamos 'user_id' para que build_price_message sepa
+        # que el usuario ya votó y cambie el "👇" por los porcentajes "🚀 80%".
+        text = build_price_message(MARKET_DATA, user_id=user_id, requests_count=req_count)
         
-        # Teclado Nuevo (Ahora sabe que el usuario votó)
-        reply_markup = await asyncio.to_thread(get_sentiment_keyboard, user_id, MARKET_DATA["price"])
+        # 3. Generamos los BOTONES NUEVOS
+        # get_sentiment_keyboard sabrá que ya votó y pondrá el botón "Compartir"
+        current_price = MARKET_DATA.get("price", 0)
+        reply_markup = await asyncio.to_thread(get_sentiment_keyboard, user_id, current_price)
 
         try:
+            # 4. Editamos el mensaje con la nueva info
             await query.edit_message_text(
                 text=text,
                 parse_mode="HTML",
-                reply_markup=reply_markup
+                reply_markup=reply_markup,
+                disable_web_page_preview=True
             )
         except BadRequest:
-            pass # Si el precio es idéntico, Telegram da error, lo ignoramos.
+            # Si el precio y los votos no han cambiado nada, Telegram da error.
+            # Lo ignoramos silenciosamente.
+            pass
     
-    # --- CASO 3: IGNORAR (Botones de adorno) ---
+    # --- CASO 3: BOTONES PASIVOS (Ignorar) ---
     elif data == "ignore":
         await query.answer()
