@@ -28,6 +28,15 @@ def init_db():
                     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
                 )
             """)
+            # Tabla de Votos Diarios (Encuesta)
+            cur.execute("""
+            CREATE TABLE IF NOT EXISTS daily_votes (
+                user_id BIGINT,
+                vote_type VARCHAR(10), -- 'UP' o 'DOWN'
+                vote_date DATE DEFAULT CURRENT_DATE,
+                PRIMARY KEY (user_id, vote_date)
+            );
+        """)
             # ... (Puedes agregar aquí el resto de tablas si quieres ser exhaustivo, 
             # pero con user y logs basta para empezar, el resto ya existen en tu DB de prod)
 # ... (después de crear la tabla users, alerts, etc.) ...
