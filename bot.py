@@ -138,16 +138,18 @@ async def send_daily_report(context: ContextTypes.DEFAULT_TYPE):
 # ==============================================================================
 #  COMANDO PRINCIPAL: /PRECIO
 # ==============================================================================
-# Importa la nueva función arriba en bot.py
-from utils.formatting import build_price_message, get_sentiment_keyboard # <--- AGREGA ESTO
+# Asegúrate de importar esto arriba
+from utils.formatting import build_price_message, get_sentiment_keyboard
 
 async def precio(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    user_id = update.effective_user.id
+    user_id = update.effective_user.id # <--- CAPTURAMOS EL ID
+    
     req_count = await asyncio.to_thread(get_daily_requests_count)
     
-    msg = build_price_message(MARKET_DATA, requests_count=req_count)
+    # Pasamos el user_id a la función de texto
+    msg = build_price_message(MARKET_DATA, user_id=user_id, requests_count=req_count)
     
-    # 👇 AQUÍ ESTÁ EL CAMBIO: Usamos el teclado dinámico
+    # Generamos el teclado dinámico
     markup = await asyncio.to_thread(get_sentiment_keyboard, user_id, MARKET_DATA["price"])
     
     if random.random() < 0.2:
