@@ -2,12 +2,11 @@ import os
 import logging
 import psycopg2
 import asyncio
-import time
-from telegram import Bot
+# 👇 IMPORTANTE: Importamos los botones aquí
+from telegram import Bot, InlineKeyboardMarkup, InlineKeyboardButton
 from telegram.constants import ParseMode
 
-logging.basicConfig(format='%(asctime)s - WORKER - %(message)s', level=logging.INFO)
-
+# Configuración
 TOKEN = os.getenv("TOKEN")
 DATABASE_URL = os.getenv("DATABASE_URL")
 ADMIN_ID = int(os.getenv("ADMIN_ID", "533888411"))
@@ -21,23 +20,29 @@ async def get_all_users():
     conn.close()
     return users
 
-async def process_queue():
+async def background_worker():
+    """Función principal del Worker con Botón Actualizar"""
+    logging.info("👷 Worker de Difusión: INICIADO")
+    
     bot = Bot(token=TOKEN)
+    
+    # 👇 PREPARAMOS EL BOTÓN DE UNA VEZ (Para usarlo siempre)
+    keyboard = [[InlineKeyboardButton("🔄 Actualizar", callback_data='refresh')]]
+    markup_button = InlineKeyboardMarkup(keyboard)
     
     while True:
         try:
             conn = psycopg2.connect(DATABASE_URL)
             cur = conn.cursor()
             
-            # Buscar trabajo pendiente
+            # 1. Buscar trabajo pendiente
             cur.execute("SELECT id, message FROM broadcast_queue WHERE status = 'pending' LIMIT 1")
             job = cur.fetchone()
             
             if job:
                 job_id, message = job
-                logging.info(f"🚀 Iniciando trabajo #{job_id}")
+                logging.info(f"🚀 Iniciando difusión #{job_id}")
                 
-                # Marcar como procesando
                 cur.execute("UPDATE broadcast_queue SET status = 'processing' WHERE id = %s", (job_id,))
                 conn.commit()
                 
@@ -52,35 +57,36 @@ async def process_queue():
                     tasks = []
                     for uid in batch:
                         tasks.append(
-                            bot.send_message(chat_id=uid, text=message, parse_mode=ParseMode.HTML, disable_notification=True)
+                            bot.send_message(
+                                chat_id=uid, 
+                                text=message, 
+                                parse_mode=ParseMode.HTML, 
+                                disable_notification=True,
+                                reply_markup=markup_button # 👈 AQUÍ AGREGAMOS EL BOTÓN
+                            )
                         )
+                    
                     results = await asyncio.gather(*tasks, return_exceptions=True)
                     
                     for res in results:
                         if isinstance(res, Exception): fallidos += 1
                         else: enviados += 1
                     
-                    await asyncio.sleep(1) # Respetar límites
+                    await asyncio.sleep(1) 
                 
-                # Marcar como terminado
                 cur.execute("UPDATE broadcast_queue SET status = 'done' WHERE id = %s", (job_id,))
                 conn.commit()
                 
-                # Reporte al Admin
                 await bot.send_message(
                     chat_id=ADMIN_ID,
-                    text=f"✅ <b>Worker Finalizado</b>\n\n📨 Enviados: {enviados}\n❌ Fallidos: {fallidos}",
+                    text=f"✅ <b>Difusión Finalizada</b>\n\n📨 Enviados: {enviados}\n❌ Fallidos: {fallidos}",
                     parse_mode=ParseMode.HTML
                 )
-                
+            
             cur.close()
             conn.close()
             
         except Exception as e:
-            logging.error(f"Error worker loop: {e}")
+            logging.error(f"⚠️ Error en worker loop: {e}")
             
-        await asyncio.sleep(5) # Descansar 5 segundos antes de buscar de nuevo
-
-if __name__ == "__main__":
-    logging.info("👷 Worker iniciado...")
-    asyncio.run(process_queue())
+        await asyncio.sleep(10)
