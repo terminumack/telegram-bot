@@ -9,6 +9,9 @@ import urllib3      # <--- NECESARIO para silenciar alertas del BCV
 from datetime import datetime, time as dt_time
 import pytz
 from collections import deque
+# ... otros imports ...
+from shared import MARKET_DATA, TIMEZONE, MAX_HISTORY_POINTS # <--- IMPORTANTE
+# Borra: from collections import deque
 
 # --- TELEGRAM IMPORTS ---
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
@@ -144,14 +147,6 @@ EMOJI_ALERTA  = '🔔'
 MAX_HISTORY_POINTS = 20  # Cuántos precios guardamos en memoria RAM
 TIMEZONE = pytz.timezone('America/Caracas') # Asegúrate de tener pytz importado
 
-# --- MEMORIA DEL BOT ---
-MARKET_DATA = {
-    "price": None,       # Aquí se guarda el precio actual de Binance
-    "bcv": {},           # Aquí se guardan las tasas del BCV (Dólar, Euro)
-    "last_updated": "Esperando actualización...",
-    # 👇 ESTO ES LO NUEVO: Una lista inteligente que borra los datos viejos sola
-    "history": deque(maxlen=MAX_HISTORY_POINTS) 
-}
 # ==============================================================================
 #  BASE DE DATOS
 # ==============================================================================
@@ -454,21 +449,21 @@ def queue_broadcast(message):
     except Exception: pass
 
 async def precio(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    user_id = update.effective_user.id
-    await asyncio.to_thread(track_user, update.effective_user)
-    await asyncio.to_thread(log_activity, user_id, "/precio")
-    binance = MARKET_DATA["price"]
-    bcv = MARKET_DATA["bcv"]
-    time_str = MARKET_DATA["last_updated"]
-    if binance:
-        req_count = await asyncio.to_thread(get_daily_requests_count)
-        text = build_price_message(binance, bcv, time_str, user_id, req_count)
-        keyboard = get_sentiment_keyboard(user_id, binance)
-        if random.random() < 0.2:
-            days, refs = await asyncio.to_thread(get_user_loyalty, user_id)
-            if days > 3 and refs == 0: text += "\n\n🎁 <i>¡Gana $10 USDT invitando amigos! Toca /referidos</i>"
-        await update.message.reply_text(text, parse_mode=ParseMode.HTML, reply_markup=InlineKeyboardMarkup(keyboard))
-    else: await update.message.reply_text("🔄 Iniciando sistema... intenta en unos segundos.")
+    # 1. Construir mensaje (Ahora pasamos MARKET_DATA completo)
+    msg = build_price_message(MARKET_DATA)
+    
+    # 2. Botón de Actualizar
+    keyboard = [[InlineKeyboardButton("🔄 Actualizar", callback_data='refresh')]]
+    reply_markup = InlineKeyboardMarkup(keyboard)
+
+    # 3. Publicidad Aleatoria (20%)
+    if random.random() < 0.2:
+        try:
+            # Aquí puedes poner tu lógica de publicidad o borrar este bloque
+            pass 
+        except Exception: pass
+
+    await update.message.reply_text(msg, parse_mode=ParseMode.HTML, reply_markup=reply_markup)
 
 async def prediccion(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await asyncio.to_thread(track_user, update.effective_user)
