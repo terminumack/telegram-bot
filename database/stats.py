@@ -235,3 +235,74 @@ def queue_broadcast(message):
         logging.error(f"Error queue_broadcast: {e}")
     finally:
         put_conn(conn)
+
+# --- FUNCIONES DE REPORTE Y ADMIN (Mudadas desde bot.py) ---
+
+def get_detailed_report_text():
+    """Genera el reporte ejecutivo para el Admin."""
+    conn = get_conn()
+    if not conn: return "⚠️ Error de conexión DB"
+    try:
+        with conn.cursor() as cur:
+            # 1. KPI Principales
+            cur.execute("SELECT COUNT(*) FROM users")
+            total = cur.fetchone()[0]
+            cur.execute("SELECT COUNT(*) FROM users WHERE status = 'blocked'")
+            blocked = cur.fetchone()[0]
+            active_real = total - blocked
+            churn_rate = (blocked / total * 100) if total > 0 else 0
+            
+            # 2. Actividad Reciente
+            cur.execute("SELECT COUNT(*) FROM users WHERE joined_at >= CURRENT_DATE")
+            new_today = cur.fetchone()[0]
+            cur.execute("SELECT COUNT(*) FROM activity_logs WHERE created_at >= CURRENT_DATE")
+            requests_today = cur.fetchone()[0]
+            
+            # 3. Listas Top
+            cur.execute("SELECT command, COUNT(*) FROM activity_logs GROUP BY command ORDER BY 2 DESC LIMIT 5")
+            top_commands = cur.fetchall()
+
+        text = (
+            f"📊 <b>REPORTE EJECUTIVO</b>\n\n"
+            f"👥 <b>Total:</b> {total} | ✅ <b>Activos:</b> {active_real}\n"
+            f"🚫 <b>Bloqueados:</b> {blocked} ({churn_rate:.1f}%)\n"
+            f"📈 <b>Nuevos Hoy:</b> +{new_today}\n"
+            f"📥 <b>Consultas Hoy:</b> {requests_today}\n\n"
+        )
+        
+        if top_commands:
+            text += "🤖 <b>Top Comandos:</b>\n"
+            for cmd, cnt in top_commands:
+                text += f"• {cmd}: {cnt}\n"
+                
+        return text
+    except Exception as e:
+        logging.error(f"Error reporte detallado: {e}")
+        return "❌ Error calculando métricas."
+    finally:
+        put_conn(conn)
+
+def get_referral_stats(user_id):
+    """Obtiene estadísticas de referidos de un usuario."""
+    conn = get_conn()
+    if not conn: return (0, 0, [])
+    try:
+        with conn.cursor() as cur:
+            cur.execute("SELECT referral_count FROM users WHERE user_id = %s", (user_id,))
+            res = cur.fetchone()
+            my_count = res[0] if res else 0
+            
+            # Ranking
+            cur.execute("SELECT COUNT(*) + 1 FROM users WHERE referral_count > %s", (my_count,))
+            my_rank = cur.fetchone()[0]
+            
+            # Top 3 Global
+            cur.execute("SELECT first_name, referral_count FROM users ORDER BY referral_count DESC LIMIT 3")
+            top_3 = cur.fetchall()
+            
+        return (my_count, my_rank, top_3)
+    except Exception as e:
+        logging.error(f"Error referidos: {e}")
+        return (0, 0, [])
+    finally:
+        put_conn(conn)
