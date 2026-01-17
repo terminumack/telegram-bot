@@ -306,3 +306,47 @@ def get_referral_stats(user_id):
         return (0, 0, [])
     finally:
         put_conn(conn)
+# --- PERSISTENCIA DE ESTADO (Carga Silenciosa) ---
+
+def save_market_state(binance, bcv_usd, bcv_eur):
+    """Guarda la foto del mercado en la BD."""
+    conn = get_conn()
+    if not conn: return
+    try:
+        with conn.cursor() as cur:
+            # Actualizamos siempre la fila 1
+            cur.execute("""
+                UPDATE market_state 
+                SET price_binance = %s, 
+                    bcv_usd = %s, 
+                    bcv_eur = %s, 
+                    last_updated = NOW() 
+                WHERE id = 1 OR id = (SELECT id FROM market_state LIMIT 1)
+            """, (binance, bcv_usd, bcv_eur))
+            conn.commit()
+    except Exception:
+        pass # Si falla guardar el estado, no es crítico, seguimos.
+    finally:
+        put_conn(conn)
+
+def load_last_market_state():
+    """Recupera los precios al arrancar."""
+    conn = get_conn()
+    if not conn: return None
+    try:
+        with conn.cursor() as cur:
+            cur.execute("SELECT price_binance, bcv_usd, bcv_eur, last_updated FROM market_state LIMIT 1")
+            row = cur.fetchone()
+            if row:
+                # Retornamos los datos limpios
+                return {
+                    "price": row[0],
+                    "bcv": {"dolar": row[1], "euro": row[2]},
+                    # Formateamos la fecha normal, sin textos extraños
+                    "last_updated": row[3].strftime("%d/%m %I:%M %p") if row[3] else "N/A"
+                }
+            return None
+    except Exception:
+        return None
+    finally:
+        put_conn(conn)
