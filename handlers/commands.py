@@ -8,15 +8,19 @@ from telegram.ext import ContextTypes
 # Imports de nuestra estructura
 from shared import MARKET_DATA
 from database.users import track_user
+
+# 1. AQUÍ ESTABA EL ERROR: Quitamos generate_stats_chart de aquí
 from database.stats import (
     log_activity, 
     get_referral_stats, 
     queue_broadcast, 
-    generate_stats_chart, # Asegúrate que esta función exista en database/stats o utils/charts
-    get_conn, put_conn    # Necesarios para la IA y Debug
+    get_conn, put_conn,
+    save_mining_data
 )
 from database.alerts import add_alert
-from utils.charts import generate_public_price_chart
+
+# 2. Y LO PONEMOS AQUÍ (Junto con generate_public_price_chart)
+from utils.charts import generate_public_price_chart, generate_stats_chart
 
 # Configuración
 ADMIN_ID = 533888411 # Tu ID real
