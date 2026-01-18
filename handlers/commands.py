@@ -101,7 +101,37 @@ async def start_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
             await update.message.reply_text("❌ Ocurrió un error al iniciar el bot. Por favor, intenta más tarde.")
         except:
             pass
+================================================ #global
+async def global_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    # SEGURIDAD: Solo tú puedes usarlo (cambia el ID por el tuyo)
+    ADMIN_ID = 533888411 
+    if update.effective_user.id != ADMIN_ID:
+        return
 
+    # Extraer el mensaje: /global Hola a todos -> "Hola a todos"
+    msg_to_send = update.message.text.replace('/global', '').strip()
+    
+    if not msg_to_send:
+        await update.message.reply_text("❌ Formato: /global [mensaje]")
+        return
+
+    users = await asyncio.to_thread(get_all_user_ids)
+    await update.message.reply_text(f"🚀 Iniciando envío a {len(users)} usuarios...")
+
+    exitos = 0
+    errores = 0
+
+    for uid in users:
+        try:
+            await context.bot.send_message(chat_id=uid, text=msg_to_send, parse_mode='HTML')
+            exitos += 1
+            # Pequeña pausa para no saturar el API de Telegram (Anti-flood)
+            await asyncio.sleep(0.05) 
+        except Exception:
+            errores += 1
+
+    await update.message.reply_text(f"✅ Envío finalizado.\n✨ Éxitos: {exitos}\n❌ Fallidos: {errores}")
+    ======================================================================
 @rate_limited(2)
 async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     print("DEBUG: Ejecutando /help")
