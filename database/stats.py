@@ -86,6 +86,19 @@ def get_daily_requests_count():
     except Exception: return 0
     finally: put_conn(conn)
 
+# --- REFERIDOS (La función que faltaba) ---
+def get_referral_stats(user_id):
+    """Devuelve el número de referidos de un usuario."""
+    conn = get_conn()
+    if not conn: return 0
+    try:
+        with conn.cursor() as cur:
+            cur.execute("SELECT referral_count FROM users WHERE user_id = %s", (user_id,))
+            res = cur.fetchone()
+            return res[0] if res else 0
+    except Exception: return 0
+    finally: put_conn(conn)
+
 # --- VOTOS (Sube/Baja) ---
 def cast_vote(user_id, vote_type):
     conn = get_conn()
@@ -114,10 +127,7 @@ def has_user_voted(user_id):
     finally: put_conn(conn)
 
 def get_vote_results():
-    """
-    Cuenta los votos de HOY para calcular porcentajes.
-    Retorna: (votos_sube, votos_baja)
-    """
+    """Retorna: (votos_sube, votos_baja)"""
     conn = get_conn()
     if not conn: return 0, 0
     
@@ -125,25 +135,18 @@ def get_vote_results():
         today = datetime.now().date()
         with conn.cursor() as cur:
             cur.execute("SELECT vote_type, COUNT(*) FROM daily_votes WHERE vote_date = %s GROUP BY vote_type", (today,))
-            rows = dict(cur.fetchall()) # Ejemplo: {'UP': 10, 'DOWN': 5}
-            
-            up = rows.get('UP', 0)
-            down = rows.get('DOWN', 0)
-            return up, down
-    except Exception as e:
-        logging.error(f"⚠️ Error obteniendo votos: {e}")
-        return 0, 0
-    finally:
-        put_conn(conn)
+            rows = dict(cur.fetchall())
+            return rows.get('UP', 0), rows.get('DOWN', 0)
+    except Exception: return 0, 0
+    finally: put_conn(conn)
 
 # --- MINERÍA DE DATOS ---
 def save_mining_data(banks_data):
-    """Guarda una foto del mercado bancario en la tabla arbitrage_data."""
+    """Guarda una foto del mercado bancario."""
     conn = get_conn()
     if not conn: return
     
     try:
-        # Extraer datos con seguridad
         pm = banks_data.get("pm", {})
         ban = banks_data.get("banesco", {})
         mer = banks_data.get("mercantil", {})
@@ -152,7 +155,6 @@ def save_mining_data(banks_data):
         buy_pm = pm.get("buy", 0)
         sell_pm = pm.get("sell", 0)
         
-        # Calcular spread de Pago Móvil
         spread = 0
         if buy_pm > 0:
             spread = ((buy_pm - sell_pm) / buy_pm) * 100
@@ -162,40 +164,29 @@ def save_mining_data(banks_data):
                 INSERT INTO arbitrage_data 
                 (buy_pm, sell_pm, buy_banesco, buy_mercantil, buy_provincial, spread_pct)
                 VALUES (%s, %s, %s, %s, %s, %s)
-            """, (
-                buy_pm, 
-                sell_pm, 
-                ban.get("buy", 0), 
-                mer.get("buy", 0), 
-                pro.get("buy", 0), 
-                spread
-            ))
+            """, (buy_pm, sell_pm, ban.get("buy", 0), mer.get("buy", 0), pro.get("buy", 0), spread))
             conn.commit()
-            
     except Exception as e:
-        logging.error(f"⚠️ Error guardando minería: {e}")
+        logging.error(f"⚠️ Error minería: {e}")
     finally:
         put_conn(conn)
 
-# EL TRUCO DEL ALIAS (Para que bot.py no se queje)
+# ALIAS PARA COMPATIBILIDAD
 save_arbitrage_snapshot = save_mining_data
 
-# --- SISTEMA DE DIFUSIÓN (BROADCAST) ---
+# --- SISTEMA DE DIFUSIÓN ---
 def queue_broadcast(message):
-    """Agrega un mensaje a la cola para que el Worker lo envíe."""
+    """Encola mensajes para el worker."""
     conn = get_conn()
     if not conn: return False
     
     try:
         with conn.cursor() as cur:
-            cur.execute("""
-                INSERT INTO broadcast_queue (message, status) 
-                VALUES (%s, 'pending')
-            """, (message,))
+            cur.execute("INSERT INTO broadcast_queue (message, status) VALUES (%s, 'pending')", (message,))
             conn.commit()
         return True
     except Exception as e:
-        logging.error(f"⚠️ Error encolando mensaje: {e}")
+        logging.error(f"⚠️ Error broadcast: {e}")
         return False
     finally:
         put_conn(conn)
