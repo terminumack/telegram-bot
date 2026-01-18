@@ -16,7 +16,8 @@ from database.stats import (
     save_mining_data, 
     save_market_state,      
     load_last_market_state,  
-    save_arbitrage_snapshot
+    save_arbitrage_snapshot,
+    log_activity
 )
 from database.alerts import get_triggered_alerts
 
