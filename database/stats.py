@@ -83,14 +83,17 @@ def get_referral_stats(user_id):
             rank_res = cur.fetchone()
             rank = rank_res[0] if rank_res else 0
 
-            # 3. Top 3
-            cur.execute("SELECT first_name, referral_count FROM users ORDER BY referral_count DESC LIMIT 3")
-            top_3 = cur.fetchall()
-            print(f"🏆 GANADORES ACTUALES: {top_3}")
+            # 3. Top 3 (Pedimos el ID, el Nombre y los Puntos)
+cur.execute("SELECT user_id, first_name, referral_count FROM users ORDER BY referral_count DESC LIMIT 3")
+datos_completos = cur.fetchall()
 
-            return count, rank, top_3
-    except Exception: return 0, 0, []
-    finally: put_conn(conn)
+# ESTO LO VES TÚ EN LA CONSOLA (ID, Nombre, Puntos)
+print(f"🏆 GANADORES ACTUALES (LOGS): {datos_completos}")
+
+# ESTO SE LO MANDAMOS AL MENSAJE (Solo Nombre y Puntos para no romper tu diseño)
+top_3_para_mensaje = [(row[1], row[2]) for row in datos_completos]
+
+return count, rank, top_3_para_mensaje
 
 # --- REPORTE DETALLADO (La función que faltaba) ---
 def get_detailed_report_text():
