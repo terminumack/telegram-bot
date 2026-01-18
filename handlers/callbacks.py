@@ -59,6 +59,27 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
             # Si el precio y los votos no han cambiado nada, Telegram da error.
             # Lo ignoramos silenciosamente.
             pass
+
+    # ... (código anterior del bloque refresh) ...
+
+    # --- CASO 3: VER MERCADO (O ACTUALIZAR MERCADO) ---
+    elif data == "cmd_mercado":
+        # Importamos aquí dentro para evitar errores de importación circular
+        from handlers.market import mercado_text_logic
+        
+        # Generamos el texto fresco
+        text, markup = await mercado_text_logic()
+        
+        try:
+            # Editamos el mensaje
+            await query.edit_message_text(
+                text=text,
+                reply_markup=markup,
+                parse_mode="HTML"
+            )
+        except Exception:
+            # Si los montos no cambiaron, Telegram da error. Avisamos con toast.
+            await query.answer("✅ Ya está actualizado.")
     
     # --- CASO 3: BOTONES PASIVOS (Ignorar) ---
     elif data == "ignore":
