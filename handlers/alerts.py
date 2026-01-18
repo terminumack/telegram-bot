@@ -6,30 +6,36 @@ from telegram.constants import ParseMode
 from database.users import track_user
 from database.stats import log_activity
 from database.alerts import add_alert
-from services.binance_service import get_binance_price
+
+# ⚠️ CAMBIO CLAVE: Importamos la memoria RAM (Velocidad de la luz)
+from shared import MARKET_DATA
 
 # Estado
 ESPERANDO_PRECIO_ALERTA = 1
 
 async def process_alert_logic(update: Update, target):
     """Lógica interna para validar y guardar la alerta."""
-    current_price = await get_binance_price()
     
+    # 1. LEER PRECIO DE MEMORIA
+    current_price = MARKET_DATA["price"]
+    
+    # Validación de seguridad si el bot acaba de arrancar
     if not current_price:
         await update.message.reply_text("⚠️ Esperando actualización de precios... intenta en 1 minuto.")
         return ConversationHandler.END
 
+    # 2. Lógica de Dirección (Subida/Bajada)
     if target > current_price:
         condition = "ABOVE"
-        msg = f"📈 <b>ALERTA DE SUBIDA</b>\n\nTe avisaré cuando el dólar <b>SUPERE</b> los {target} Bs."
+        msg = f"📈 <b>ALERTA DE SUBIDA</b>\n\nTe avisaré cuando el dólar <b>SUPERE</b> los {target:,.2f} Bs."
     elif target < current_price:
         condition = "BELOW"
-        msg = f"📉 <b>ALERTA DE BAJADA</b>\n\nTe avisaré cuando el dólar <b>BAJE</b> de {target} Bs."
+        msg = f"📉 <b>ALERTA DE BAJADA</b>\n\nTe avisaré cuando el dólar <b>BAJE</b> de {target:,.2f} Bs."
     else:
-        await update.message.reply_text(f"⚠️ El precio actual ya es {current_price}. Define un valor distinto.")
+        await update.message.reply_text(f"⚠️ El precio actual ya es {current_price:,.2f} Bs. Define un valor distinto para que la alerta tenga sentido.")
         return ConversationHandler.END
 
-    # Guardar en DB
+    # 3. Guardar en DB
     success = await asyncio.to_thread(add_alert, update.effective_user.id, target, condition)
     
     if success:
@@ -45,21 +51,25 @@ async def start_alert(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await asyncio.to_thread(track_user, update.effective_user)
     await asyncio.to_thread(log_activity, update.effective_user.id, "/alerta")
     
-    # Si el usuario ya puso el numero (/alerta 600)
+    # Caso directo: /alerta 600
     if context.args:
         try:
-            target = float(context.args[0].replace(',', '.'))
+            # Limpieza básica de input (cambiar comas por puntos)
+            clean_arg = context.args[0].replace(',', '.')
+            target = float(clean_arg)
             return await process_alert_logic(update, target)
         except ValueError:
             await update.message.reply_text("🔢 Error: Ingresa un número válido.", parse_mode=ParseMode.HTML)
             return ConversationHandler.END
 
-    await update.message.reply_text(f"🔔 <b>CONFIGURAR ALERTA</b>\n\n¿A qué precio quieres que te avise?\n\n<i>Escribe el monto abajo (Ej: 600):</i>", parse_mode=ParseMode.HTML)
+    # Caso interactivo: Preguntar precio
+    await update.message.reply_text(f"🔔 <b>CONFIGURAR ALERTA</b>\n\n¿A qué precio quieres que te avise?\n\n<i>Escribe el monto abajo (Ej: 75.50):</i>", parse_mode=ParseMode.HTML)
     return ESPERANDO_PRECIO_ALERTA
 
 async def process_alert_input(update: Update, context: ContextTypes.DEFAULT_TYPE):
     try:
-        target = float(update.message.text.replace(',', '.'))
+        clean_text = update.message.text.replace(',', '.')
+        target = float(clean_text)
         return await process_alert_logic(update, target)
     except ValueError:
         await update.message.reply_text("🔢 Por favor ingresa solo números válidos.", parse_mode=ParseMode.HTML)
