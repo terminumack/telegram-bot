@@ -101,7 +101,7 @@ async def start_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
             await update.message.reply_text("❌ Ocurrió un error al iniciar el bot. Por favor, intenta más tarde.")
         except:
             pass
-================================================ #global
+#global
 async def global_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     # SEGURIDAD: Solo tú puedes usarlo
     ADMIN_ID = 533888411 
