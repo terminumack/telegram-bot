@@ -113,7 +113,30 @@ def has_user_voted(user_id):
     except Exception: return False
     finally: put_conn(conn)
 
-# --- MINERÍA DE DATOS (LA SOLUCIÓN DOBLE NOMBRE) ---
+def get_vote_results():
+    """
+    Cuenta los votos de HOY para calcular porcentajes.
+    Retorna: (votos_sube, votos_baja)
+    """
+    conn = get_conn()
+    if not conn: return 0, 0
+    
+    try:
+        today = datetime.now().date()
+        with conn.cursor() as cur:
+            cur.execute("SELECT vote_type, COUNT(*) FROM daily_votes WHERE vote_date = %s GROUP BY vote_type", (today,))
+            rows = dict(cur.fetchall()) # Ejemplo: {'UP': 10, 'DOWN': 5}
+            
+            up = rows.get('UP', 0)
+            down = rows.get('DOWN', 0)
+            return up, down
+    except Exception as e:
+        logging.error(f"⚠️ Error obteniendo votos: {e}")
+        return 0, 0
+    finally:
+        put_conn(conn)
+
+# --- MINERÍA DE DATOS ---
 def save_mining_data(banks_data):
     """Guarda una foto del mercado bancario en la tabla arbitrage_data."""
     conn = get_conn()
@@ -154,9 +177,8 @@ def save_mining_data(banks_data):
     finally:
         put_conn(conn)
 
-# ¡¡EL TRUCO MÁGICO!! 👇
+# EL TRUCO DEL ALIAS (Para que bot.py no se queje)
 save_arbitrage_snapshot = save_mining_data
-# Ahora responde a los dos nombres
 
 # --- SISTEMA DE DIFUSIÓN (BROADCAST) ---
 def queue_broadcast(message):
