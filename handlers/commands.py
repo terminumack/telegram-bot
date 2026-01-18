@@ -195,7 +195,6 @@ async def grafico(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 # --- COMANDO /REFERIDOS ---
 @rate_limited(2)
-@rate_limited(2)
 async def referidos(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id = update.effective_user.id
     print(f"DEBUG: Ejecutando /referidos para {user_id}")
