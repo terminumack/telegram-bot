@@ -27,14 +27,10 @@ def put_conn(conn):
 
 # --- GUARDADO DE ESTADO (MEMORIA RAM) ---
 def save_market_state(state_data):
-    """Guarda el estado completo de la RAM en la tabla 'market_memory' (JSON)."""
     conn = get_conn()
     if not conn: return
-
     try:
-        # Convertimos todo el diccionario a JSON texto
         json_data = json.dumps(state_data, default=str)
-        
         with conn.cursor() as cur:
             cur.execute("""
                 INSERT INTO market_memory (key_name, value_json, updated_at)
@@ -43,26 +39,19 @@ def save_market_state(state_data):
                 DO UPDATE SET value_json = EXCLUDED.value_json, updated_at = NOW()
             """, (json_data,))
             conn.commit()
-    except Exception as e:
-        logging.error(f"⚠️ Error guardando estado: {e}")
-    finally:
-        put_conn(conn)
+    except Exception as e: logging.error(f"Error save_state: {e}")
+    finally: put_conn(conn)
 
 def load_last_market_state():
-    """Recupera el estado al iniciar el bot."""
     conn = get_conn()
     if not conn: return None
-
     try:
         with conn.cursor() as cur:
             cur.execute("SELECT value_json FROM market_memory WHERE key_name = 'main_state'")
             row = cur.fetchone()
-            if row and row[0]:
-                return json.loads(row[0])
-    except Exception as e:
-        logging.error(f"⚠️ Error cargando estado: {e}")
-    finally:
-        put_conn(conn)
+            if row and row[0]: return json.loads(row[0])
+    except Exception: pass
+    finally: put_conn(conn)
     return None
 
 # --- ESTADÍSTICAS Y LOGS ---
@@ -86,9 +75,7 @@ def get_daily_requests_count():
     except Exception: return 0
     finally: put_conn(conn)
 
-# --- REFERIDOS (La función que faltaba) ---
 def get_referral_stats(user_id):
-    """Devuelve el número de referidos de un usuario."""
     conn = get_conn()
     if not conn: return 0
     try:
@@ -99,7 +86,39 @@ def get_referral_stats(user_id):
     except Exception: return 0
     finally: put_conn(conn)
 
-# --- VOTOS (Sube/Baja) ---
+# --- REPORTE DETALLADO (LA FUNCIÓN QUE FALTABA) ---
+def get_detailed_report_text():
+    """Genera un resumen para el admin."""
+    conn = get_conn()
+    if not conn: return "❌ Sin conexión a DB"
+    try:
+        with conn.cursor() as cur:
+            # Total Usuarios
+            cur.execute("SELECT COUNT(*) FROM users")
+            total = cur.fetchone()[0]
+            
+            # Nuevos Hoy
+            cur.execute("SELECT COUNT(*) FROM users WHERE joined_at >= CURRENT_DATE")
+            new_users = cur.fetchone()[0]
+            
+            # Actividad Hoy
+            cur.execute("SELECT COUNT(*) FROM activity_logs WHERE created_at >= CURRENT_DATE")
+            activity = cur.fetchone()[0]
+            
+            return (
+                f"📊 <b>ESTADO DEL SISTEMA</b>\n"
+                f"━━━━━━━━━━━━━━━━\n"
+                f"👥 <b>Usuarios Totales:</b> {total}\n"
+                f"🆕 <b>Nuevos Hoy:</b> {new_users}\n"
+                f"📉 <b>Interacciones Hoy:</b> {activity}\n"
+                f"🤖 <b>Bot Activo:</b> ✅"
+            )
+    except Exception as e:
+        return f"⚠️ Error reporte: {e}"
+    finally:
+        put_conn(conn)
+
+# --- VOTOS ---
 def cast_vote(user_id, vote_type):
     conn = get_conn()
     if not conn: return
@@ -126,79 +145,47 @@ def has_user_voted(user_id):
     except Exception: return False
     finally: put_conn(conn)
 
-# --- VOTOS (Esta es la parte que te está fallando) ---
-
 def get_vote_results():
-    """
-    Cuenta los votos de HOY para calcular porcentajes.
-    Retorna: (votos_sube, votos_baja)
-    """
     conn = get_conn()
     if not conn: return 0, 0
-    
     try:
         today = datetime.now().date()
         with conn.cursor() as cur:
             cur.execute("SELECT vote_type, COUNT(*) FROM daily_votes WHERE vote_date = %s GROUP BY vote_type", (today,))
-            # Convertimos lista de tuplas a diccionario
-            rows = dict(cur.fetchall()) 
-            
-            up = rows.get('UP', 0)
-            down = rows.get('DOWN', 0)
-            return up, down
-    except Exception as e:
-        logging.error(f"⚠️ Error obteniendo votos: {e}")
-        return 0, 0
-    finally:
-        put_conn(conn)
+            rows = dict(cur.fetchall())
+            return rows.get('UP', 0), rows.get('DOWN', 0)
+    except Exception: return 0, 0
+    finally: put_conn(conn)
 
-# --- MINERÍA DE DATOS ---
+# --- MINERÍA ---
 def save_mining_data(banks_data):
-    """Guarda una foto del mercado bancario."""
     conn = get_conn()
     if not conn: return
-    
     try:
         pm = banks_data.get("pm", {})
         ban = banks_data.get("banesco", {})
         mer = banks_data.get("mercantil", {})
         pro = banks_data.get("provincial", {})
-        
-        buy_pm = pm.get("buy", 0)
-        sell_pm = pm.get("sell", 0)
-        
-        spread = 0
-        if buy_pm > 0:
-            spread = ((buy_pm - sell_pm) / buy_pm) * 100
-
+        buy_pm, sell_pm = pm.get("buy", 0), pm.get("sell", 0)
+        spread = ((buy_pm - sell_pm) / buy_pm) * 100 if buy_pm > 0 else 0
         with conn.cursor() as cur:
             cur.execute("""
-                INSERT INTO arbitrage_data 
-                (buy_pm, sell_pm, buy_banesco, buy_mercantil, buy_provincial, spread_pct)
+                INSERT INTO arbitrage_data (buy_pm, sell_pm, buy_banesco, buy_mercantil, buy_provincial, spread_pct)
                 VALUES (%s, %s, %s, %s, %s, %s)
             """, (buy_pm, sell_pm, ban.get("buy", 0), mer.get("buy", 0), pro.get("buy", 0), spread))
             conn.commit()
-    except Exception as e:
-        logging.error(f"⚠️ Error minería: {e}")
-    finally:
-        put_conn(conn)
+    except Exception: pass
+    finally: put_conn(conn)
 
-# ALIAS PARA COMPATIBILIDAD
 save_arbitrage_snapshot = save_mining_data
 
-# --- SISTEMA DE DIFUSIÓN ---
 def queue_broadcast(message):
-    """Encola mensajes para el worker."""
     conn = get_conn()
     if not conn: return False
-    
     try:
         with conn.cursor() as cur:
             cur.execute("INSERT INTO broadcast_queue (message, status) VALUES (%s, 'pending')", (message,))
             conn.commit()
         return True
-    except Exception as e:
-        logging.error(f"⚠️ Error broadcast: {e}")
-        return False
-    finally:
-        put_conn(conn)
+    except Exception: return False
+    finally: put_conn(conn)
