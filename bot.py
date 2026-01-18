@@ -9,6 +9,7 @@ from database.users import track_user, get_user_loyalty # <--- AGREGAR AQUÍ
 from services.binance_service import get_market_snapshot
 from database.stats import save_arbitrage_snapshot
 from handlers.market import mercado
+from handlers.analytics import horario
 
 # --- 1. IMPORTS DE MEMORIA Y CONFIGURACIÓN ---
 from shared import MARKET_DATA, TIMEZONE
@@ -268,6 +269,7 @@ if __name__ == "__main__":
     app.add_handler(CommandHandler("global", global_message))
     app.add_handler(CommandHandler("debug", debug_mining))
     app.add_handler(CommandHandler("mercado", mercado))
+    app.add_handler(CommandHandler("horario", horario))
     app.add_handler(ChatMemberHandler(track_my_chat_member, ChatMemberHandler.MY_CHAT_MEMBER))
     
     app.add_handler(conv_usdt)
