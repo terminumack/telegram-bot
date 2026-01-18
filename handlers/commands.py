@@ -4,6 +4,9 @@ from datetime import datetime
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.constants import ParseMode
 from telegram.ext import ContextTypes
+from urllib.parse import quote
+from telegram.constants import ParseMode
+from telegram import InlineKeyboardButton, InlineKeyboardMarkup
 
 # --- IMPORTS DE NUESTRA ESTRUCTURA ---
 from shared import MARKET_DATA, TIMEZONE
