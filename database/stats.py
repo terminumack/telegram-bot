@@ -115,3 +115,22 @@ def has_user_voted(user_id):
             return cur.fetchone() is not None
     except Exception: return False
     finally: put_conn(conn)
+# --- SISTEMA DE DIFUSIÓN (BROADCAST) ---
+def queue_broadcast(message):
+    """Agrega un mensaje a la cola para que el Worker lo envíe."""
+    conn = get_conn()
+    if not conn: return False
+    
+    try:
+        with conn.cursor() as cur:
+            cur.execute("""
+                INSERT INTO broadcast_queue (message, status) 
+                VALUES (%s, 'pending')
+            """, (message,))
+            conn.commit()
+        return True
+    except Exception as e:
+        logging.error(f"⚠️ Error encolando mensaje: {e}")
+        return False
+    finally:
+        put_conn(conn)
