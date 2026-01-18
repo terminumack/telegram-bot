@@ -5,6 +5,7 @@ import urllib3
 import random
 from datetime import datetime, time as dt_time
 import pytz
+from database.users import track_user, get_user_loyalty # <--- AGREGAR AQUÍ
 
 # --- 1. IMPORTS DE MEMORIA Y CONFIGURACIÓN ---
 from shared import MARKET_DATA, TIMEZONE
@@ -138,24 +139,47 @@ async def send_daily_report(context: ContextTypes.DEFAULT_TYPE):
 # ==============================================================================
 #  COMANDO PRINCIPAL: /PRECIO
 # ==============================================================================
-# Asegúrate de importar esto arriba
+# 1. Asegúrate de tener estos imports arriba en bot.py
+from database.users import track_user, get_user_loyalty
+from database.stats import get_daily_requests_count, log_activity
 from utils.formatting import build_price_message, get_sentiment_keyboard
 
+# 2. Reemplaza tu función precio por esta:
 async def precio(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    user_id = update.effective_user.id # <--- CAPTURAMOS EL ID
+    user_id = update.effective_user.id
     
+    # --- TRACKING (Vital para tus estadísticas) ---
+    # Registramos que el usuario está activo y usó el comando
+    await asyncio.to_thread(track_user, update.effective_user)
+    await asyncio.to_thread(log_activity, user_id, "/precio")
+    
+    # Validamos que tengamos precio en memoria
+    binance = MARKET_DATA["price"]
+    if not binance:
+        await update.message.reply_text("🔄 Iniciando sistema... intenta en unos segundos.")
+        return
+
+    # 1. Obtener contador de visitas
     req_count = await asyncio.to_thread(get_daily_requests_count)
     
-    # Pasamos el user_id a la función de texto
+    # 2. Generar el TEXTO (Pasamos user_id para que decida si muestra la encuesta)
     msg = build_price_message(MARKET_DATA, user_id=user_id, requests_count=req_count)
     
-    # Generamos el teclado dinámico
-    markup = await asyncio.to_thread(get_sentiment_keyboard, user_id, MARKET_DATA["price"])
+    # 3. Generar los BOTONES (Pasamos user_id para saber si ya votó)
+    markup = await asyncio.to_thread(get_sentiment_keyboard, user_id, binance)
     
+    # --- 4. ESTRATEGIA DE GROWTH HACKING (Tu código) ---
+    # 20% de probabilidad de chequear lealtad
     if random.random() < 0.2:
-        pass 
-
-    await update.message.reply_html(msg, reply_markup=markup)
+        # Consultamos a la DB: ¿Qué tan antiguo es y cuántos referidos tiene?
+        days, refs = await asyncio.to_thread(get_user_loyalty, user_id)
+        
+        # Si tiene más de 3 días usándote Y tiene 0 referidos:
+        if days > 3 and refs == 0:
+            msg += "\n\n🎁 <i>¡Gana premios invitando amigos! Toca /referidos</i>"
+    
+    # 5. Enviar mensaje final
+    await update.message.reply_html(msg, reply_markup=markup, disable_web_page_preview=True)
 
 # ==============================================================================
 #  MAIN: EL CEREBRO DE ARRANQUE
