@@ -51,7 +51,7 @@ def save_market_state(state_data):
         put_conn(conn)
 
 def load_last_market_state():
-    """Recupera el estado al iniciar el bot (Renombrado para coincidir con bot.py)."""
+    """Recupera el estado al iniciar el bot."""
     conn = get_conn()
     if not conn: return None
 
@@ -115,8 +115,8 @@ def has_user_voted(user_id):
     except Exception: return False
     finally: put_conn(conn)
 
-# --- MINERÍA DE DATOS (HISTORIAL BANCARIO) ---
-def save_mining_data(banks_data):
+# --- MINERÍA DE DATOS (Renombrado para coincidir con bot.py) ---
+def save_arbitrage_snapshot(banks_data):
     """Guarda una foto del mercado bancario en la tabla arbitrage_data."""
     conn = get_conn()
     if not conn: return
@@ -152,7 +152,7 @@ def save_mining_data(banks_data):
             conn.commit()
             
     except Exception as e:
-        logging.error(f"⚠️ Error guardando minería: {e}")
+        logging.error(f"⚠️ Error guardando snapshot: {e}")
     finally:
         put_conn(conn)
 
