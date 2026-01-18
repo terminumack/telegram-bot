@@ -4,6 +4,7 @@ import asyncio
 import urllib3
 import random
 from datetime import datetime, time as dt_time
+from handlers.commands import close_announcement
 import pytz
 
 # --- 1. IMPORTS DE MEMORIA Y CONFIGURACIÓN ---
