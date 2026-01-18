@@ -71,52 +71,44 @@ ADMIN_ID = int(os.getenv("ADMIN_ID", "533888411"))
 # ==============================================================================
 #  TAREA DE FONDO: ACTUALIZADOR DE PRECIOS
 # ==============================================================================
+# Asegúrate de tener este import arriba en bot.py
+from database.stats import save_market_state, save_arbitrage_snapshot, save_mining_data
+
 async def update_price_task(context: ContextTypes.DEFAULT_TYPE):
     try:
         # 1. ESCANEO MASIVO (Binance Multi-banco + BCV)
-        # Se ejecutan en paralelo. Total aprox: 2 a 3 segundos.
         results = await asyncio.gather(
-            get_market_snapshot(), # Trae PM, Banesco, Mercantil, etc.
-            get_bcv_rates(),       # Trae BCV
+            get_market_snapshot(), 
+            get_bcv_rates(),       
             return_exceptions=True
         )
         
-        market_data = results[0] # Diccionario con todos los bancos
-        bcv_data = results[1]    # Diccionario BCV
+        market_data = results[0]
+        bcv_data = results[1]
 
-        # 2. PROCESAR BINANCE
+        # 2. PROCESAR DATOS
         if isinstance(market_data, dict):
             pm_buy = market_data.get("pm_buy", 0)
             pm_sell = market_data.get("pm_sell", 0)
-            # Actualizamos la memoria de BANCOS (Ahora con SELL)
-            MARKET_DATA["banks"]["pm"]["buy"]   = market_data.get("pm_buy", 0)
-            MARKET_DATA["banks"]["pm"]["sell"]  = market_data.get("pm_sell", 0)
             
-            MARKET_DATA["banks"]["banesco"]["buy"]  = market_data.get("ban_buy", 0)
-            MARKET_DATA["banks"]["banesco"]["sell"] = market_data.get("ban_sell", 0) # Nuevo
-            
-            MARKET_DATA["banks"]["mercantil"]["buy"]  = market_data.get("mer_buy", 0)
-            MARKET_DATA["banks"]["mercantil"]["sell"] = market_data.get("mer_sell", 0) # Nuevo
-            
-            MARKET_DATA["banks"]["provincial"]["buy"]  = market_data.get("pro_buy", 0)
-            MARKET_DATA["banks"]["provincial"]["sell"] = market_data.get("pro_sell", 0) # Nuevo
-
-            # --- AQUI MANTENEMOS TU ALGORITMO ORIGINAL ---
-            # La "Tasa Binance" principal sigue siendo PagoMóvil Compra
-            if pm_buy > 0:
-                MARKET_DATA["price"] = pm_buy
-                MARKET_DATA["history"].append(pm_buy)
-                # Chequeo de Alertas (Usando el precio principal)
-                asyncio.create_task(check_alerts_async(context, pm_buy))
-            
-            # Actualizamos la memoria de BANCOS (Para el comando /mercado)
+            # Actualizamos Memoria RAM (Bancos)
             MARKET_DATA["banks"]["pm"]["buy"] = pm_buy
             MARKET_DATA["banks"]["pm"]["sell"] = pm_sell
             MARKET_DATA["banks"]["banesco"]["buy"] = market_data.get("ban_buy", 0)
+            MARKET_DATA["banks"]["banesco"]["sell"] = market_data.get("ban_sell", 0)
             MARKET_DATA["banks"]["mercantil"]["buy"] = market_data.get("mer_buy", 0)
+            MARKET_DATA["banks"]["mercantil"]["sell"] = market_data.get("mer_sell", 0)
             MARKET_DATA["banks"]["provincial"]["buy"] = market_data.get("pro_buy", 0)
+            MARKET_DATA["banks"]["provincial"]["sell"] = market_data.get("pro_sell", 0)
 
-            # Guardamos la FOTO COMPLETA en DB (Para minería de datos)
+            # Actualizamos Memoria RAM (Principal)
+            if pm_buy > 0:
+                MARKET_DATA["price"] = pm_buy
+                MARKET_DATA["history"].append(pm_buy)
+                # Alertas
+                asyncio.create_task(check_alerts_async(context, pm_buy))
+            
+            # Guardamos Snapshot Completo (Para /mercado)
             await asyncio.to_thread(
                 save_arbitrage_snapshot,
                 pm_buy, pm_sell,
@@ -125,43 +117,31 @@ async def update_price_task(context: ContextTypes.DEFAULT_TYPE):
                 market_data.get("pro_buy", 0)
             )
             
-            # Guardamos DATA SIMPLE para gráficos históricos (Compatibilidad Legacy)
-            val_bcv = MARKET_DATA["bcv"].get("dolar", 0) if MARKET_DATA["bcv"] else 0
-            if pm_buy > 0:
-                await asyncio.to_thread(save_mining_data, pm_buy, val_bcv, pm_sell)
+            # Guardamos Data Minería (Para gráficos y /ia)
+            val_bcv_usd = 0
+            val_bcv_eur = 0
+            if isinstance(bcv_data, dict):
+                 val_bcv_usd = bcv_data.get("dolar", 0)
+                 val_bcv_eur = bcv_data.get("euro", 0)
 
-        # 3. PROCESAR BCV
+            if pm_buy > 0:
+                await asyncio.to_thread(save_mining_data, pm_buy, val_bcv_usd, pm_sell)
+
+            # 👇👇 ESTO ERA LO QUE FALTABA PARA LA PERSISTENCIA REAL 👇👇
+            await asyncio.to_thread(save_market_state, pm_buy, val_bcv_usd, val_bcv_eur)
+
+        # 3. PROCESAR BCV EN RAM
         if isinstance(bcv_data, dict) and bcv_data:
             MARKET_DATA["bcv"] = bcv_data
 
-        # 4. ACTUALIZAR FECHA (Con tu formato de Año y Segundos)
+        # 4. ACTUALIZAR TIMESTAMP
         now = datetime.now(TIMEZONE)
         MARKET_DATA["last_updated"] = now.strftime("%d/%m/%Y %I:%M:%S %p")
         
-        logging.info(f"🔄 Snapshot: PM={market_data.get('pm_buy'):.2f} | Ban={market_data.get('ban_buy'):.2f}")
+        logging.info(f"🔄 Snapshot: PM={market_data.get('pm_buy'):.2f} | BCV={MARKET_DATA['bcv'].get('dolar')}")
 
     except Exception as e:
         logging.error(f"❌ Error Update Task: {e}")
-        # --------------------------------------------------------
-        
-        logging.info(f"🔄 Update: Buy={val_buy:.2f} | BCV={val_bcv:.2f}")
-
-    except Exception as e:
-        logging.error(f"❌ Error Update Task: {e}")
-
-async def check_alerts_async(context, price):
-    try:
-        alerts = await asyncio.to_thread(get_triggered_alerts, price)
-        for alert in alerts:
-            try:
-                chat_id, target = alert[1], alert[2]
-                await context.bot.send_message(
-                    chat_id, 
-                    f"🚨 <b>¡ALERTA DE PRECIO!</b>\n\nEl dólar tocó: <b>{target:,.2f} Bs</b>\nActual: <b>{price:,.2f} Bs</b>", 
-                    parse_mode="HTML"
-                )
-            except: pass
-    except: pass
 
 # ==============================================================================
 #  TAREA DE FONDO: REPORTE DIARIO AUTOMÁTICO
