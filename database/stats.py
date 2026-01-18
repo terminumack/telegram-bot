@@ -126,8 +126,13 @@ def has_user_voted(user_id):
     except Exception: return False
     finally: put_conn(conn)
 
+# --- VOTOS (Esta es la parte que te está fallando) ---
+
 def get_vote_results():
-    """Retorna: (votos_sube, votos_baja)"""
+    """
+    Cuenta los votos de HOY para calcular porcentajes.
+    Retorna: (votos_sube, votos_baja)
+    """
     conn = get_conn()
     if not conn: return 0, 0
     
@@ -135,10 +140,17 @@ def get_vote_results():
         today = datetime.now().date()
         with conn.cursor() as cur:
             cur.execute("SELECT vote_type, COUNT(*) FROM daily_votes WHERE vote_date = %s GROUP BY vote_type", (today,))
-            rows = dict(cur.fetchall())
-            return rows.get('UP', 0), rows.get('DOWN', 0)
-    except Exception: return 0, 0
-    finally: put_conn(conn)
+            # Convertimos lista de tuplas a diccionario
+            rows = dict(cur.fetchall()) 
+            
+            up = rows.get('UP', 0)
+            down = rows.get('DOWN', 0)
+            return up, down
+    except Exception as e:
+        logging.error(f"⚠️ Error obteniendo votos: {e}")
+        return 0, 0
+    finally:
+        put_conn(conn)
 
 # --- MINERÍA DE DATOS ---
 def save_mining_data(banks_data):
