@@ -5,13 +5,66 @@ from telegram.constants import ParseMode
 
 from database.users import track_user
 from database.stats import log_activity
-from database.alerts import add_alert # Asegúrate de haber creado este archivo con la lógica nueva
+# IMPORTANTE: Importamos add_alert, pero también las funciones de lectura y borrado
+from database.alerts import add_alert, get_triggered_alerts, delete_alert
 
 # Importamos la memoria RAM
 from shared import MARKET_DATA
 
 # Estado para ConversationHandler
 ESPERANDO_PRECIO_ALERTA = 1
+
+# ==============================================================================
+# 1. LÓGICA DE FONDO (TAREA AUTOMÁTICA)
+# ==============================================================================
+async def check_alerts_async(context: ContextTypes.DEFAULT_TYPE, current_price):
+    """
+    Función llamada automáticamente por bot.py cada minuto.
+    Revisa si hay alertas que disparar, envía el mensaje y las borra.
+    """
+    try:
+        # 1. Consultar DB en hilo separado
+        triggered = await asyncio.to_thread(get_triggered_alerts, current_price)
+        
+        if not triggered: return
+
+        # 2. Procesar cada alerta disparada
+        for alert in triggered:
+            user_id = alert['user_id']
+            target = alert['target_price']
+            condition = alert['condition']
+            alert_id = alert['id']
+            
+            # Preparar mensaje visual
+            emoji = "🚀" if condition == 'ABOVE' else "🔻"
+            direction = "SUBIÓ" if condition == 'ABOVE' else "BAJÓ"
+            
+            msg = (
+                f"🚨 <b>¡ALERTA DE PRECIO!</b>\n\n"
+                f"{emoji} El dólar <b>{direction}</b> y tocó tu objetivo.\n"
+                f"🎯 Objetivo: <b>{target:,.2f} Bs</b>\n"
+                f"💵 Actual: <b>{current_price:,.2f} Bs</b>"
+            )
+            
+            try:
+                # A. Enviar mensaje al usuario
+                await context.bot.send_message(chat_id=user_id, text=msg, parse_mode=ParseMode.HTML)
+                
+                # B. Borrar alerta (Para que no suene infinitamente)
+                await asyncio.to_thread(delete_alert, alert_id)
+                
+            except Exception as e:
+                print(f"⚠️ No se pudo notificar a {user_id} (posible bloqueo): {e}")
+                # Si el usuario bloqueó el bot, igual borramos la alerta para limpiar la DB
+                await asyncio.to_thread(delete_alert, alert_id)
+
+    except Exception as e:
+        print(f"❌ Error crítico en check_alerts_async: {e}")
+
+
+# ==============================================================================
+# 2. LÓGICA DE INTERACCIÓN (CREAR ALERTA)
+# ==============================================================================
 
 async def process_alert_logic(update: Update, target):
     """Lógica interna para validar y guardar la alerta con límites Premium."""
@@ -36,7 +89,6 @@ async def process_alert_logic(update: Update, target):
         return ConversationHandler.END
 
     # 3. Guardar en DB (Manejo de estados)
-    # add_alert ahora devuelve: "SUCCESS", "LIMIT_REACHED" o "ERROR"
     result = await asyncio.to_thread(add_alert, update.effective_user.id, target, condition)
     
     if result == "SUCCESS":
@@ -60,7 +112,7 @@ async def process_alert_logic(update: Update, target):
     
     return ConversationHandler.END
 
-# --- HANDLERS ---
+# --- HANDLERS DEL COMANDO /ALERTA ---
 
 async def start_alert(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await asyncio.to_thread(track_user, update.effective_user)
