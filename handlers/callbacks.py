@@ -28,8 +28,10 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         # para regenerar el mensaje y mostrar los resultados inmediatamente.
 
     # --- CASO 2: ACTUALIZAR (Refresh) O MOSTRAR RESULTADOS ---
-    if data == "refresh" or data.startswith("vote_"):
-        if data == "refresh":
+    # AQUI ESTÁ EL CAMBIO: Aceptamos "refresh" Y TAMBIÉN "refresh_price" (del Worker)
+    if data in ["refresh", "refresh_price"] or data.startswith("vote_"):
+        
+        if data in ["refresh", "refresh_price"]:
             await query.answer("Actualizando...")
 
         # 1. Obtenemos contadores frescos
