@@ -6,10 +6,8 @@ from telegram.constants import ParseMode
 from telegram.ext import ContextTypes
 
 # Imports de nuestra estructura
-from shared import MARKET_DATA
+from shared import MARKET_DATA, TIMEZONE # <--- AGREGAR TIMEZONE
 from database.users import track_user
-
-# 1. AQUÍ ESTABA EL ERROR: Quitamos generate_stats_chart de aquí
 from database.stats import (
     log_activity, 
     get_referral_stats, 
@@ -19,11 +17,11 @@ from database.stats import (
 )
 from database.alerts import add_alert
 
-# 2. Y LO PONEMOS AQUÍ (Junto con generate_public_price_chart)
+# Importamos la lógica de gráficos (que crearemos en el paso 2)
 from utils.charts import generate_public_price_chart, generate_stats_chart
 
 # Configuración
-ADMIN_ID = 533888411 # Tu ID real
+ADMIN_ID = 533888411 
 GRAPH_CACHE = {"date": None, "photo_id": None}
 EMOJI_SUBIDA = "🚀"
 EMOJI_BAJADA = "📉"
@@ -33,10 +31,8 @@ async def start_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await asyncio.to_thread(track_user, update.effective_user)
     user = update.effective_user
     
-    # Lógica de referidos (si viene con ?start=123)
     args = context.args
     if args and args[0].isdigit() and int(args[0]) != user.id:
-        # Aquí podrías agregar la lógica para registrar el referido si track_user no lo hace automático
         pass
 
     await update.message.reply_html(
@@ -59,16 +55,17 @@ async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
         parse_mode=ParseMode.HTML
     )
 
-# --- COMANDO /GRAFICO (Con Caché de tu extras.py) ---
+# --- COMANDO /GRAFICO (Con Caché y Timezone) ---
 async def grafico(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id = update.effective_user.id
     await asyncio.to_thread(track_user, update.effective_user)
     await asyncio.to_thread(log_activity, user_id, "/grafico")
     
     global GRAPH_CACHE
-    today_str = datetime.now().date().isoformat()
+    # USA TIMEZONE PARA QUE COINCIDA CON VENEZUELA
+    today_str = datetime.now(TIMEZONE).date().isoformat()
     
-    # 1. Intentar usar cache
+    # 1. Intentar usar cache (Ruta Rápida)
     if GRAPH_CACHE["date"] == today_str and GRAPH_CACHE["photo_id"]:
         try:
             await update.message.reply_photo(
@@ -80,8 +77,10 @@ async def grafico(update: Update, context: ContextTypes.DEFAULT_TYPE):
         except Exception:
             GRAPH_CACHE["photo_id"] = None
             
-    # 2. Generar nuevo
-    msg = await update.message.reply_text("📊 Generando gráfico...")
+    # 2. Generar nuevo (Ruta Lenta)
+    # Usamos chat_action en lugar de texto para que se vea "enviando foto..."
+    await update.message.reply_chat_action("upload_photo")
+    
     img_buf = await asyncio.to_thread(generate_public_price_chart)
     
     if img_buf:
@@ -90,15 +89,14 @@ async def grafico(update: Update, context: ContextTypes.DEFAULT_TYPE):
             caption="📉 <b>Promedio Diario (Semanal)</b>\n\n<i>Precio promedio ponderado.</i>", 
             parse_mode=ParseMode.HTML
         )
-        await msg.delete()
         
         if sent_msg.photo:
             GRAPH_CACHE["date"] = today_str
             GRAPH_CACHE["photo_id"] = sent_msg.photo[-1].file_id
     else:
-        await msg.edit_text("⚠️ No hay suficientes datos históricos.")
+        await update.message.reply_text("⚠️ No hay suficientes datos históricos.")
 
-# --- COMANDO /REFERIDOS (Completo de tu extras.py) ---
+# --- COMANDO /REFERIDOS ---
 async def referidos(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id = update.effective_user.id
     await asyncio.to_thread(track_user, update.effective_user)
@@ -125,11 +123,10 @@ async def referidos(update: Update, context: ContextTypes.DEFAULT_TYPE):
     kb = [[InlineKeyboardButton("📤 Compartir Enlace", url=share_url)]]
     await update.message.reply_html(text, reply_markup=InlineKeyboardMarkup(kb), disable_web_page_preview=True)
 
-# --- COMANDO /IA (Conexión a BD Real) ---
+# --- COMANDO /IA ---
 async def prediccion(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await asyncio.to_thread(track_user, update.effective_user)
     
-    # Consultar historial DB
     conn = get_conn()
     history = []
     try:
@@ -161,14 +158,12 @@ async def prediccion(update: Update, context: ContextTypes.DEFAULT_TYPE):
         f"⚠️ <i>No es consejo financiero.</i>"
     )
 
-# --- COMANDO /ALERTA (Básico, por si falla el avanzado) ---
 async def alerta(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text("🔔 Usa el menú para configurar alertas.")
 
 # --- COMANDOS ADMIN ---
 async def stats(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if update.effective_user.id != ADMIN_ID: return
-    # Asegúrate de importar generate_stats_chart desde utils.charts
     # chart = await asyncio.to_thread(generate_stats_chart)
     # if chart: await context.bot.send_photo(ADMIN_ID, chart)
     await update.message.reply_text("📊 Stats Admin (Gráfico pendiente de config).")
