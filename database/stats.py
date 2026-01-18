@@ -26,7 +26,6 @@ def put_conn(conn):
             pass
 
 # --- PERSISTENCIA (Argumentos: precio, bcv_usd, bcv_eur) ---
-# Adaptado a la línea 128 de tu bot.py: save_market_state(pm_buy, val_bcv_usd, val_bcv_eur)
 def save_market_state(price, bcv_usd, bcv_eur):
     conn = get_conn()
     if not conn: return
@@ -62,8 +61,7 @@ def load_last_market_state():
     finally: 
         put_conn(conn)
 
-# --- MINERÍA Y ARBITRAJE ---
-# Adaptado a la línea 124 de tu bot.py: save_arbitrage_snapshot(pm_buy, pm_sell, ban, mer, pro)
+# --- MINERÍA Y ARBITRAJE (Nombres exactos de bot.py) ---
 def save_arbitrage_snapshot(pm_b, pm_s, ban, mer, pro):
     conn = get_conn()
     if not conn: return
@@ -77,7 +75,6 @@ def save_arbitrage_snapshot(pm_b, pm_s, ban, mer, pro):
     except Exception: pass
     finally: put_conn(conn)
 
-# Adaptado a la línea 121 de tu bot.py: save_mining_data(pm_buy, val_bcv_usd, pm_sell)
 def save_mining_data(pm_buy, bcv_usd, pm_sell):
     conn = get_conn()
     if not conn: return
@@ -87,6 +84,20 @@ def save_mining_data(pm_buy, bcv_usd, pm_sell):
                 INSERT INTO arbitrage_data (buy_pm, sell_pm, bcv_price) 
                 VALUES (%s, %s, %s)
             """, (pm_buy, pm_sell, bcv_usd))
+            conn.commit()
+    except Exception: pass
+    finally: put_conn(conn)
+
+# --- CALCULADORA (Requerido por calc.py) ---
+def log_calc(user_id, amount, currency, result):
+    conn = get_conn()
+    if not conn: return
+    try:
+        with conn.cursor() as cur:
+            cur.execute("""
+                INSERT INTO calc_logs (user_id, amount, currency_type, result) 
+                VALUES (%s, %s, %s, %s)
+            """, (user_id, amount, currency, result))
             conn.commit()
     except Exception: pass
     finally: put_conn(conn)
@@ -163,7 +174,7 @@ def queue_broadcast(message):
     except Exception: return False
     finally: put_conn(conn)
 
-# Funciones de compatibilidad para handlers
+# Funciones de compatibilidad
 def get_referral_stats(user_id):
     conn = get_conn()
     if not conn: return 0
