@@ -46,9 +46,6 @@ from handlers.alerts import conv_alert
 from telegram.ext import ChatMemberHandler
 from handlers.commands import track_my_chat_member # <--- Impórtalo
 
-# ... (junto a los otros add_handler)
-app.add_handler(ChatMemberHandler(track_my_chat_member, ChatMemberHandler.MY_CHAT_MEMBER))
-
 # Imports de Telegram
 from telegram import Update, InlineKeyboardMarkup, InlineKeyboardButton
 from telegram.constants import ParseMode
@@ -225,6 +222,7 @@ if __name__ == "__main__":
     app.add_handler(CommandHandler("stats", stats))
     app.add_handler(CommandHandler("global", global_message))
     app.add_handler(CommandHandler("debug", debug_mining))
+    app.add_handler(ChatMemberHandler(track_my_chat_member, ChatMemberHandler.MY_CHAT_MEMBER))
     
     app.add_handler(conv_usdt)
     app.add_handler(conv_bs)
