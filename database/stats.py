@@ -7,7 +7,6 @@ from contextlib import contextmanager
 
 # Configuración
 DATABASE_URL = os.getenv("DATABASE_URL")
-TIMEZONE = None # Se configurará desde shared.py si hace falta, o usa UTC por defecto
 
 # --- GESTIÓN DE CONEXIÓN ---
 def get_conn():
@@ -17,7 +16,7 @@ def get_conn():
         conn = psycopg2.connect(DATABASE_URL)
         return conn
     except Exception as e:
-        logging.error(f"❌ Error conectando a DB: {e}")
+        logging.error(f"❌ Error conectando a BD: {e}")
         return None
 
 def put_conn(conn):
@@ -27,7 +26,7 @@ def put_conn(conn):
         except Exception:
             pass
 
-# --- GUARDADO DE ESTADO (MEMORIA) ---
+# --- GUARDADO DE ESTADO (MEMORIA RAM) ---
 def save_market_state(state_data):
     """Guarda el estado completo de la RAM en la tabla 'market_memory' (JSON)."""
     conn = get_conn()
@@ -115,6 +114,48 @@ def has_user_voted(user_id):
             return cur.fetchone() is not None
     except Exception: return False
     finally: put_conn(conn)
+
+# --- MINERÍA DE DATOS (HISTORIAL BANCARIO) ---
+def save_mining_data(banks_data):
+    """Guarda una foto del mercado bancario en la tabla arbitrage_data."""
+    conn = get_conn()
+    if not conn: return
+    
+    try:
+        # Extraer datos con seguridad
+        pm = banks_data.get("pm", {})
+        ban = banks_data.get("banesco", {})
+        mer = banks_data.get("mercantil", {})
+        pro = banks_data.get("provincial", {})
+        
+        buy_pm = pm.get("buy", 0)
+        sell_pm = pm.get("sell", 0)
+        
+        # Calcular spread de Pago Móvil
+        spread = 0
+        if buy_pm > 0:
+            spread = ((buy_pm - sell_pm) / buy_pm) * 100
+
+        with conn.cursor() as cur:
+            cur.execute("""
+                INSERT INTO arbitrage_data 
+                (buy_pm, sell_pm, buy_banesco, buy_mercantil, buy_provincial, spread_pct)
+                VALUES (%s, %s, %s, %s, %s, %s)
+            """, (
+                buy_pm, 
+                sell_pm, 
+                ban.get("buy", 0), 
+                mer.get("buy", 0), 
+                pro.get("buy", 0), 
+                spread
+            ))
+            conn.commit()
+            
+    except Exception as e:
+        logging.error(f"⚠️ Error guardando minería: {e}")
+    finally:
+        put_conn(conn)
+
 # --- SISTEMA DE DIFUSIÓN (BROADCAST) ---
 def queue_broadcast(message):
     """Agrega un mensaje a la cola para que el Worker lo envíe."""
