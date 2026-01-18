@@ -139,7 +139,7 @@ async def grafico(update: Update, context: ContextTypes.DEFAULT_TYPE):
         if img_buf:
             sent_msg = await update.message.reply_photo(
                 photo=img_buf, 
-                caption="📉 <b>Promedio Diario (Semanal)</b>\n\n<i>Precio promedio ponderado.</i>", 
+                caption="📉 <b>Promedio Diario (Semanal)</b>\n\n📲 ¡Compártelo en tus estados!\n\n@tasabinance_bot", 
                 parse_mode=ParseMode.HTML
             )
             
