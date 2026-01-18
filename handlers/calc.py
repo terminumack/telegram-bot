@@ -3,29 +3,41 @@ from telegram import Update
 from telegram.ext import ContextTypes, ConversationHandler, CommandHandler, MessageHandler, filters
 from telegram.constants import ParseMode
 
+# Imports de base de datos
 from database.users import track_user
 from database.stats import log_calc, log_activity
-from services.binance_service import get_binance_price
+
+# ⚠️ CAMBIO CLAVE: Importamos la memoria RAM, no el servicio
+from shared import MARKET_DATA
 
 # Estados de la conversación
 ESPERANDO_INPUT_USDT = 1
 ESPERANDO_INPUT_BS = 2
 
 async def calculate_conversion(update: Update, text_amount, currency_type):
-    """Función auxiliar que hace la matemática."""
-    # Obtenemos precio rápido (de memoria/cache)
-    rate = await get_binance_price() 
+    """Función auxiliar que hace la matemática usando memoria RAM."""
+    
+    # 1. LEER PRECIO DE MEMORIA (Instantáneo)
+    rate = MARKET_DATA["price"]
     
     if not rate:
-        await update.message.reply_text("⏳ Actualizando tasas... intenta en unos segundos.")
+        await update.message.reply_text("⏳ Iniciando sistema... intenta en 5 segundos.")
         return ConversationHandler.END
 
     try:
-        # Limpiar texto (cambiar comas por puntos, quitar letras)
+        # Limpiar texto (Soporta formatos como "1.200,50" o "1200.50")
         clean_text = ''.join(c for c in text_amount if c.isdigit() or c in '.,')
-        amount = float(clean_text.replace(',', '.'))
         
-        # Guardar en DB
+        # Normalizar coma a punto para Python
+        if ',' in clean_text and '.' in clean_text:
+            # Caso complejo: 1.500,50 -> Quitamos punto, cambiamos coma
+            clean_text = clean_text.replace('.', '').replace(',', '.')
+        elif ',' in clean_text:
+            clean_text = clean_text.replace(',', '.')
+            
+        amount = float(clean_text)
+        
+        # Guardar en DB (Log de uso)
         await asyncio.to_thread(log_calc, update.effective_user.id, amount, currency_type, 0)
         
         if currency_type == "USDT":
@@ -38,7 +50,7 @@ async def calculate_conversion(update: Update, text_amount, currency_type):
         await update.message.reply_text(msg, parse_mode=ParseMode.HTML)
         
     except ValueError:
-        await update.message.reply_text("🔢 Número inválido.")
+        await update.message.reply_text("🔢 Número inválido. Usa solo números (ej: 100 o 50.5)")
     
     return ConversationHandler.END
 
@@ -48,6 +60,7 @@ async def start_usdt_calc(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await asyncio.to_thread(track_user, update.effective_user)
     await asyncio.to_thread(log_activity, update.effective_user.id, "/calc")
     
+    # Si el usuario escribió "/usdt 100"
     if context.args: 
         return await calculate_conversion(update, context.args[0], "USDT")
         
@@ -58,6 +71,7 @@ async def start_bs_calc(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await asyncio.to_thread(track_user, update.effective_user)
     await asyncio.to_thread(log_activity, update.effective_user.id, "/calc")
     
+    # Si el usuario escribió "/bs 5000"
     if context.args: 
         return await calculate_conversion(update, context.args[0], "BS")
         
@@ -74,10 +88,10 @@ async def cancel(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text("Cancelado.")
     return ConversationHandler.END
 
-# --- DEFINICIÓN DE CONVERSACIONES (Para exportar al bot) ---
+# --- DEFINICIÓN DE CONVERSACIONES ---
 
 conv_usdt = ConversationHandler(
-    entry_points=[CommandHandler("usdt", start_usdt_calc)],
+    entry_points=[CommandHandler("usdt", start_usdt_calc), CommandHandler("calc", start_usdt_calc)], # Alias /calc
     states={ESPERANDO_INPUT_USDT: [MessageHandler(filters.TEXT & ~filters.COMMAND, process_usdt_input)]},
     fallbacks=[CommandHandler("cancel", cancel)]
 )
