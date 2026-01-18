@@ -50,8 +50,8 @@ def save_market_state(state_data):
     finally:
         put_conn(conn)
 
-def load_market_state():
-    """Recupera el estado al iniciar el bot."""
+def load_last_market_state():
+    """Recupera el estado al iniciar el bot (Renombrado para coincidir con bot.py)."""
     conn = get_conn()
     if not conn: return None
 
