@@ -108,16 +108,18 @@ async def global_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if update.effective_user.id != ADMIN_ID:
         return
 
+    # Extraemos el mensaje quitando el comando /global
     msg_to_send = update.message.text.replace('/global', '').strip()
     
     if not msg_to_send:
         await update.message.reply_text("❌ Formato: /global [mensaje]")
         return
 
+    # Obtenemos la lista de IDs de la DB
     users = await asyncio.to_thread(get_all_user_ids)
     await update.message.reply_text(f"🚀 Iniciando envío a {len(users)} usuarios...")
 
-    # Creamos el botón de "Entendido"
+    # Teclado con el botón de "Entendido"
     keyboard = [[InlineKeyboardButton("✅ Entendido", callback_data="delete_announcement")]]
     reply_markup = InlineKeyboardMarkup(keyboard)
 
@@ -130,14 +132,24 @@ async def global_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 chat_id=uid, 
                 text=msg_to_send, 
                 parse_mode='HTML',
-                reply_markup=reply_markup # <--- Añadimos el botón aquí
+                reply_markup=reply_markup
             )
             exitos += 1
-            await asyncio.to_thread(time.sleep, 0.05) # Pausa anti-flood
+            # Pausa obligatoria para evitar baneo de Telegram (Anti-flood)
+            await asyncio.sleep(0.08) 
         except Exception:
             errores += 1
 
     await update.message.reply_text(f"✅ Envío finalizado.\n✨ Éxitos: {exitos}\n❌ Fallidos: {errores}")
+
+async def close_announcement(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Borra el mensaje global cuando el usuario toca 'Entendido'"""
+    query = update.callback_query
+    try:
+        await query.answer()
+        await query.message.delete()
+    except Exception:
+        pass
 
 # Función para que el botón borre el mensaje
 async def close_announcement(update: Update, context: ContextTypes.DEFAULT_TYPE):
