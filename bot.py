@@ -71,6 +71,7 @@ async def update_price_task(context: ContextTypes.DEFAULT_TYPE):
     try:
         current_ref = MARKET_DATA["price"] or 65.0
         
+        # Consultar servicios en paralelo
         task_buy = get_binance_price("BUY", "PagoMovil", reference_price=current_ref)
         task_sell = get_binance_price("SELL", "PagoMovil", reference_price=current_ref)
         task_bcv = get_bcv_rates()
@@ -78,26 +79,34 @@ async def update_price_task(context: ContextTypes.DEFAULT_TYPE):
         results = await asyncio.gather(task_buy, task_sell, task_bcv, return_exceptions=True)
         buy_pm, sell_pm, new_bcv = results
 
+        # 1. Actualizar Precio Binance en Memoria
         if isinstance(buy_pm, float) and buy_pm > 0:
             MARKET_DATA["price"] = buy_pm
             MARKET_DATA["history"].append(buy_pm)
+            # Chequear alertas en segundo plano
             asyncio.create_task(check_alerts_async(context, buy_pm))
 
+        # 2. Actualizar BCV en Memoria
         if isinstance(new_bcv, dict) and new_bcv:
             MARKET_DATA["bcv"] = new_bcv
         
+        # Preparar datos para guardar
         val_buy = MARKET_DATA["price"] or 0
         val_bcv = MARKET_DATA["bcv"].get("dolar", 0) if MARKET_DATA["bcv"] else 0
         val_sell = sell_pm if (isinstance(sell_pm, float) and sell_pm > 0) else 0
         
+        # 3. Guardar en Base de Datos (Persistencia)
         if val_buy > 0:
-            # 1. Guardar Histórico (Gráficos)
+            # Guardar histórico para gráficos
             await asyncio.to_thread(save_mining_data, val_buy, val_bcv, val_sell)
             
-            # 2. Guardar Estado Actual (Persistencia)
+            # Guardar estado actual (para reinicios)
             await asyncio.to_thread(save_market_state, val_buy, val_bcv, MARKET_DATA["bcv"].get("euro", 0))
 
-        MARKET_DATA["last_updated"] = datetime.now(TIMEZONE).strftime("%d/%m %I:%M %p")
+        # --- CAMBIO AQUÍ: FORMATO COMPLETO CON AÑO Y SEGUNDOS ---
+        MARKET_DATA["last_updated"] = datetime.now(TIMEZONE).strftime("%d/%m/%Y %I:%M:%S %p")
+        # --------------------------------------------------------
+        
         logging.info(f"🔄 Update: Buy={val_buy:.2f} | BCV={val_bcv:.2f}")
 
     except Exception as e:
