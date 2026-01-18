@@ -4,24 +4,33 @@ import json
 import os
 from datetime import datetime
 
+# Configuración
 DATABASE_URL = os.getenv("DATABASE_URL")
 
+# --- GESTIÓN DE CONEXIÓN ---
 def get_conn():
-    if not DATABASE_URL: return None
-    try: return psycopg2.connect(DATABASE_URL)
+    if not DATABASE_URL:
+        return None
+    try:
+        conn = psycopg2.connect(DATABASE_URL)
+        return conn
     except Exception as e:
-        logging.error(f"❌ Error DB: {e}")
+        logging.error(f"❌ Error conectando a DB: {e}")
         return None
 
 def put_conn(conn):
-    if conn: conn.close()
+    if conn:
+        try:
+            conn.close()
+        except Exception:
+            pass
 
 # --- PERSISTENCIA (Argumentos: precio, bcv_usd, bcv_eur) ---
+# Adaptado a la línea 128 de tu bot.py: save_market_state(pm_buy, val_bcv_usd, val_bcv_eur)
 def save_market_state(price, bcv_usd, bcv_eur):
     conn = get_conn()
     if not conn: return
     try:
-        # Creamos el diccionario que tu bot espera recuperar luego
         state_data = {
             "price": price,
             "bcv": {"dolar": bcv_usd, "euro": bcv_eur},
@@ -35,8 +44,10 @@ def save_market_state(price, bcv_usd, bcv_eur):
                 ON CONFLICT (key_name) DO UPDATE SET value_json = EXCLUDED.value_json, updated_at = NOW()
             """, (json_data,))
             conn.commit()
-    except Exception as e: logging.error(f"Error save_market_state: {e}")
-    finally: put_conn(conn)
+    except Exception as e: 
+        logging.error(f"Error save_market_state: {e}")
+    finally: 
+        put_conn(conn)
 
 def load_last_market_state():
     conn = get_conn()
@@ -46,24 +57,13 @@ def load_last_market_state():
             cur.execute("SELECT value_json FROM market_memory WHERE key_name = 'main_state'")
             row = cur.fetchone()
             return json.loads(row[0]) if row else None
-    except Exception: return None
-    finally: put_conn(conn)
+    except Exception: 
+        return None
+    finally: 
+        put_conn(conn)
 
-# --- MINERÍA (Argumentos: pm_buy, bcv_usd, pm_sell) ---
-def save_mining_data(pm_buy, bcv_usd, pm_sell):
-    conn = get_conn()
-    if not conn: return
-    try:
-        with conn.cursor() as cur:
-            cur.execute("""
-                INSERT INTO arbitrage_data (buy_pm, sell_pm, bcv_price) 
-                VALUES (%s, %s, %s)
-            """, (pm_buy, pm_sell, bcv_usd))
-            conn.commit()
-    except Exception: pass
-    finally: put_conn(conn)
-
-# --- ARBITRAJE (Argumentos: pm_b, pm_s, ban, mer, pro) ---
+# --- MINERÍA Y ARBITRAJE ---
+# Adaptado a la línea 124 de tu bot.py: save_arbitrage_snapshot(pm_buy, pm_sell, ban, mer, pro)
 def save_arbitrage_snapshot(pm_b, pm_s, ban, mer, pro):
     conn = get_conn()
     if not conn: return
@@ -77,7 +77,60 @@ def save_arbitrage_snapshot(pm_b, pm_s, ban, mer, pro):
     except Exception: pass
     finally: put_conn(conn)
 
-# --- OTRAS FUNCIONES ---
+# Adaptado a la línea 121 de tu bot.py: save_mining_data(pm_buy, val_bcv_usd, pm_sell)
+def save_mining_data(pm_buy, bcv_usd, pm_sell):
+    conn = get_conn()
+    if not conn: return
+    try:
+        with conn.cursor() as cur:
+            cur.execute("""
+                INSERT INTO arbitrage_data (buy_pm, sell_pm, bcv_price) 
+                VALUES (%s, %s, %s)
+            """, (pm_buy, pm_sell, bcv_usd))
+            conn.commit()
+    except Exception: pass
+    finally: put_conn(conn)
+
+# --- VOTOS (Requeridos por formatting.py) ---
+def cast_vote(user_id, vote_type):
+    conn = get_conn()
+    if not conn: return
+    try:
+        today = datetime.now().date()
+        with conn.cursor() as cur:
+            cur.execute("""
+                INSERT INTO daily_votes (user_id, vote_date, vote_type)
+                VALUES (%s, %s, %s)
+                ON CONFLICT (user_id, vote_date) DO NOTHING
+            """, (user_id, today, vote_type))
+            conn.commit()
+    except Exception: pass
+    finally: put_conn(conn)
+
+def has_user_voted(user_id):
+    conn = get_conn()
+    if not conn: return False
+    try:
+        today = datetime.now().date()
+        with conn.cursor() as cur:
+            cur.execute("SELECT 1 FROM daily_votes WHERE user_id = %s AND vote_date = %s", (user_id, today))
+            return cur.fetchone() is not None
+    except Exception: return False
+    finally: put_conn(conn)
+
+def get_vote_results():
+    conn = get_conn()
+    if not conn: return 0, 0
+    try:
+        today = datetime.now().date()
+        with conn.cursor() as cur:
+            cur.execute("SELECT vote_type, COUNT(*) FROM daily_votes WHERE vote_date = %s GROUP BY vote_type", (today,))
+            rows = dict(cur.fetchall())
+            return rows.get('UP', 0), rows.get('DOWN', 0)
+    except Exception: return 0, 0
+    finally: put_conn(conn)
+
+# --- ESTADÍSTICAS Y LOGS ---
 def log_activity(user_id, command):
     conn = get_conn()
     if not conn: return
@@ -98,6 +151,7 @@ def get_daily_requests_count():
     except Exception: return 0
     finally: put_conn(conn)
 
+# --- SISTEMA DE DIFUSIÓN ---
 def queue_broadcast(message):
     conn = get_conn()
     if not conn: return False
@@ -109,6 +163,17 @@ def queue_broadcast(message):
     except Exception: return False
     finally: put_conn(conn)
 
-# Para evitar errores en handlers que busquen estas funciones
-def get_referral_stats(user_id): return 0
-def get_detailed_report_text(): return "Reporte activo"
+# Funciones de compatibilidad para handlers
+def get_referral_stats(user_id):
+    conn = get_conn()
+    if not conn: return 0
+    try:
+        with conn.cursor() as cur:
+            cur.execute("SELECT referral_count FROM users WHERE user_id = %s", (user_id,))
+            res = cur.fetchone()
+            return res[0] if res else 0
+    except Exception: return 0
+    finally: put_conn(conn)
+
+def get_detailed_report_text():
+    return "📊 Reporte Estadístico Activo"
