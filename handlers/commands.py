@@ -162,11 +162,17 @@ async def alerta(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text("🔔 Usa el menú para configurar alertas.")
 
 # --- COMANDOS ADMIN ---
+# En handlers/commands.py
+from database.stats import get_detailed_report_text # <--- IMPORTA LA NUEVA FUNCION
+
 async def stats(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if update.effective_user.id != ADMIN_ID: return
-    # chart = await asyncio.to_thread(generate_stats_chart)
-    # if chart: await context.bot.send_photo(ADMIN_ID, chart)
-    await update.message.reply_text("📊 Stats Admin (Gráfico pendiente de config).")
+    
+    # Usamos la función poderosa que acabamos de crear
+    report = await asyncio.to_thread(get_detailed_report_text)
+    
+    # Si tienes el gráfico de stats activo, úsalo, si no, solo manda el texto
+    await update.message.reply_html(report)
 
 async def global_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if update.effective_user.id != ADMIN_ID: return
