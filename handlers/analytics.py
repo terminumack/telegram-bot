@@ -1,3 +1,10 @@
+import asyncio
+from telegram import Update
+from telegram.constants import ParseMode
+from telegram.ext import ContextTypes
+from database.stats import get_conn, put_conn, log_activity
+from database.users import track_user
+
 async def horario(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id = update.effective_user.id
     await asyncio.to_thread(track_user, update.effective_user)
