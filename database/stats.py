@@ -3,7 +3,6 @@ import logging
 import json
 import os
 from datetime import datetime
-from contextlib import contextmanager
 
 # Configuración
 DATABASE_URL = os.getenv("DATABASE_URL")
@@ -37,7 +36,6 @@ def save_market_state(state_data):
         json_data = json.dumps(state_data, default=str)
         
         with conn.cursor() as cur:
-            # Usamos UPSET (Insertar o Actualizar)
             cur.execute("""
                 INSERT INTO market_memory (key_name, value_json, updated_at)
                 VALUES ('main_state', %s, NOW())
@@ -115,8 +113,8 @@ def has_user_voted(user_id):
     except Exception: return False
     finally: put_conn(conn)
 
-# --- MINERÍA DE DATOS (Renombrado para coincidir con bot.py) ---
-def save_arbitrage_snapshot(banks_data):
+# --- MINERÍA DE DATOS (LA SOLUCIÓN DOBLE NOMBRE) ---
+def save_mining_data(banks_data):
     """Guarda una foto del mercado bancario en la tabla arbitrage_data."""
     conn = get_conn()
     if not conn: return
@@ -152,9 +150,13 @@ def save_arbitrage_snapshot(banks_data):
             conn.commit()
             
     except Exception as e:
-        logging.error(f"⚠️ Error guardando snapshot: {e}")
+        logging.error(f"⚠️ Error guardando minería: {e}")
     finally:
         put_conn(conn)
+
+# ¡¡EL TRUCO MÁGICO!! 👇
+save_arbitrage_snapshot = save_mining_data
+# Ahora responde a los dos nombres
 
 # --- SISTEMA DE DIFUSIÓN (BROADCAST) ---
 def queue_broadcast(message):
