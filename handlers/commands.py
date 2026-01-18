@@ -192,3 +192,33 @@ async def debug_mining(update: Update, context: ContextTypes.DEFAULT_TYPE):
         else: await update.message.reply_text("❌ No data.")
     except Exception as e: await update.message.reply_text(f"❌ Error: {e}")
     finally: put_conn(conn)
+
+# --- EVENTOS DE USUARIO ---
+from telegram import ChatMember
+
+async def track_my_chat_member(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """
+    Detecta cuando un usuario bloquea o desbloquea el bot.
+    Actualiza el estado en la base de datos para métricas reales.
+    """
+    if not update.my_chat_member: return
+    
+    user_id = update.my_chat_member.from_user.id
+    new_status = update.my_chat_member.new_chat_member.status
+    
+    # Definir estado
+    db_status = 'active'
+    if new_status in [ChatMember.BANNED, ChatMember.LEFT, ChatMember.KICKED]:
+        db_status = 'blocked'
+    
+    # Actualizar DB
+    conn = get_conn() # Asegúrate de tener get_conn importado arriba
+    if not conn: return
+    try:
+        with conn.cursor() as cur:
+            cur.execute("UPDATE users SET status = %s WHERE user_id = %s", (db_status, user_id))
+            conn.commit()
+    except Exception as e:
+        logging.error(f"Error tracking chat member: {e}")
+    finally:
+        put_conn(conn)
