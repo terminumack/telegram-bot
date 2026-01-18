@@ -41,6 +41,7 @@ from handlers.commands import (
     debug_mining,
     track_my_chat_member
 )
+from handlers.commands import start_command
 from handlers.market import mercado
 from handlers.analytics import horario
 from handlers.callbacks import button_handler
