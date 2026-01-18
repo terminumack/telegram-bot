@@ -5,21 +5,21 @@ from telegram.constants import ParseMode
 
 from database.users import track_user
 from database.stats import log_activity
-from database.alerts import add_alert
+from database.alerts import add_alert # Asegúrate de haber creado este archivo con la lógica nueva
 
-# ⚠️ CAMBIO CLAVE: Importamos la memoria RAM (Velocidad de la luz)
+# Importamos la memoria RAM
 from shared import MARKET_DATA
 
-# Estado
+# Estado para ConversationHandler
 ESPERANDO_PRECIO_ALERTA = 1
 
 async def process_alert_logic(update: Update, target):
-    """Lógica interna para validar y guardar la alerta."""
+    """Lógica interna para validar y guardar la alerta con límites Premium."""
     
     # 1. LEER PRECIO DE MEMORIA
     current_price = MARKET_DATA["price"]
     
-    # Validación de seguridad si el bot acaba de arrancar
+    # Validación de seguridad
     if not current_price:
         await update.message.reply_text("⚠️ Esperando actualización de precios... intenta en 1 minuto.")
         return ConversationHandler.END
@@ -32,16 +32,31 @@ async def process_alert_logic(update: Update, target):
         condition = "BELOW"
         msg = f"📉 <b>ALERTA DE BAJADA</b>\n\nTe avisaré cuando el dólar <b>BAJE</b> de {target:,.2f} Bs."
     else:
-        await update.message.reply_text(f"⚠️ El precio actual ya es {current_price:,.2f} Bs. Define un valor distinto para que la alerta tenga sentido.")
+        await update.message.reply_text(f"⚠️ El precio actual ya es {current_price:,.2f} Bs. Define un valor distinto.")
         return ConversationHandler.END
 
-    # 3. Guardar en DB
-    success = await asyncio.to_thread(add_alert, update.effective_user.id, target, condition)
+    # 3. Guardar en DB (Manejo de estados)
+    # add_alert ahora devuelve: "SUCCESS", "LIMIT_REACHED" o "ERROR"
+    result = await asyncio.to_thread(add_alert, update.effective_user.id, target, condition)
     
-    if success:
+    if result == "SUCCESS":
         await update.message.reply_text(f"✅ {msg}", parse_mode=ParseMode.HTML)
+
+    elif result == "LIMIT_REACHED":
+        # --- AQUÍ ESTÁ EL MENSAJE DE VENTA PREMIUM ---
+        text = (
+            "🚫 <b>Límite de Alertas Alcanzado (3/3)</b>\n\n"
+            "Los usuarios gratuitos solo pueden tener <b>3 alertas activas</b>.\n\n"
+            "💎 <b>¡Pásate a PREMIUM!</b>\n"
+            "• 🔔 Hasta <b>20 Alertas</b> simultáneas.\n"
+            "• 🏦 Alertas de Arbitraje (Bancos).\n"
+            "• ⚡ Soporte Prioritario.\n\n"
+            "🔜 <i>Suscripción automática con Binance Pay próximamente.</i>"
+        )
+        await update.message.reply_html(text)
+
     else:
-        await update.message.reply_text("⛔ <b>Límite alcanzado</b>\nSolo puedes tener 3 alertas activas al mismo tiempo.", parse_mode=ParseMode.HTML)
+        await update.message.reply_text("⚠️ Error de base de datos. Intenta más tarde.")
     
     return ConversationHandler.END
 
@@ -54,7 +69,6 @@ async def start_alert(update: Update, context: ContextTypes.DEFAULT_TYPE):
     # Caso directo: /alerta 600
     if context.args:
         try:
-            # Limpieza básica de input (cambiar comas por puntos)
             clean_arg = context.args[0].replace(',', '.')
             target = float(clean_arg)
             return await process_alert_logic(update, target)
@@ -62,8 +76,11 @@ async def start_alert(update: Update, context: ContextTypes.DEFAULT_TYPE):
             await update.message.reply_text("🔢 Error: Ingresa un número válido.", parse_mode=ParseMode.HTML)
             return ConversationHandler.END
 
-    # Caso interactivo: Preguntar precio
-    await update.message.reply_text(f"🔔 <b>CONFIGURAR ALERTA</b>\n\n¿A qué precio quieres que te avise?\n\n<i>Escribe el monto abajo (Ej: 75.50):</i>", parse_mode=ParseMode.HTML)
+    # Caso interactivo
+    await update.message.reply_text(
+        f"🔔 <b>CONFIGURAR ALERTA</b>\n\n¿A qué precio quieres que te avise?\n\n<i>Escribe el monto abajo (Ej: 75.50):</i>", 
+        parse_mode=ParseMode.HTML
+    )
     return ESPERANDO_PRECIO_ALERTA
 
 async def process_alert_input(update: Update, context: ContextTypes.DEFAULT_TYPE):
