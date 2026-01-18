@@ -82,3 +82,16 @@ def get_user_loyalty(user_id):
         return 0, 0
     finally:
         put_conn(conn)
+def get_all_user_ids():
+    """Obtiene todos los IDs de la base de datos para envíos globales."""
+    conn = get_conn()
+    if not conn: return []
+    try:
+        with conn.cursor() as cur:
+            cur.execute("SELECT user_id FROM users WHERE status = 'active'")
+            return [row[0] for row in cur.fetchall()]
+    except Exception as e:
+        print(f"Error obteniendo IDs: {e}")
+        return []
+    finally:
+        put_conn(conn)
