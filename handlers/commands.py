@@ -200,32 +200,59 @@ async def grafico(update: Update, context: ContextTypes.DEFAULT_TYPE):
 @rate_limited(2)
 async def referidos(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id = update.effective_user.id
-    print(f"DEBUG: Ejecutando /referidos para {user_id}")
     
-    try:
-        # Aquí es donde fallaba porque stats.py solo mandaba un número
-        count, rank, top_3 = await asyncio.to_thread(get_referral_stats, user_id)
-        
-        bot_username = (await context.bot.get_me()).username
-        link = f"https://t.me/{bot_username}?start={user_id}"
-        
-        msg = (
-            f"🎁 <b>SISTEMA DE REFERIDOS</b>\n\n"
-            f"Tu enlace personal:\n<code>{link}</code>\n\n"
-            f"👤 <b>Tus invitados:</b> {count}\n"
-            f"🏆 <b>Tu posición:</b> #{rank}\n\n"
-            f"🥇 <b>TOP REFERIDORES:</b>\n"
-        )
-        
-        for i, top in enumerate(top_3, 1):
-            msg += f"{i}. {top[0]} ({top[1]} invitados)\n"
+    # 1. Registro de actividad
+    await asyncio.to_thread(track_user, update.effective_user)
+    await asyncio.to_thread(log_activity, user_id, "/referidos")
+    
+    # 2. Obtener datos (Nuestra función en stats.py ya devuelve count, rank y top_3)
+    count, rank, top_3 = await asyncio.to_thread(get_referral_stats, user_id)
+    
+    # 3. Construir el Ranking Visual
+    ranking_text = ""
+    medals = ["🥇", "🥈", "🥉"]
+    for i, (name, score) in enumerate(top_3):
+        medal = medals[i] if i < 3 else f"#{i+1}"
+        # Limpiamos el nombre para que no sea muy largo
+        clean_name = name.split()[0] if name else "Usuario"
+        ranking_text += f"{medal} <b>{clean_name}</b> — {score} refs\n"
 
-        await update.message.reply_html(msg)
-        print("DEBUG: /referidos enviado con éxito")
-        
-    except Exception as e:
-        print(f"DEBUG ERROR EN REFERIDOS: {e}")
-        await update.message.reply_text("❌ Error al cargar estadísticas de referidos.")
+    # 4. Lógica de Enlace y Compartir
+    bot_username = context.bot.username
+    invite_link = f"https://t.me/{bot_username}?start={user_id}"
+    
+    # Mensaje que se pre-escribe al darle al botón de compartir
+    share_text = f"🎁 ¡Gana 10 USDT con este bot! Entra aquí y participa:\n\n{invite_link}"
+    share_url = f"https://t.me/share/url?url={quote(share_text)}"
+    
+    # 5. Teclado y Mensaje Final (Tu diseño original)
+    keyboard = [[InlineKeyboardButton("📤 Comparte y Gana $10", url=share_url)]]
+    
+    text = (
+        f"🎁 <b>PROGRAMA DE REFERIDOS (PREMIOS USDT)</b>\n\n"
+        f"¡Gana dinero real invitando a tus amigos!\n"
+        f"📅 <b>Corte y Pago:</b> Día 30 de cada mes.\n\n"
+        f"🏆 <b>PREMIOS MENSUALES:</b>\n"
+        f"🥇 1er Lugar: <b>$10 USDT</b>\n"
+        f"🥈 2do Lugar: <b>$5 USDT</b>\n"
+        f"🥉 3er Lugar: <b>$5 USDT</b>\n\n"
+        f"👤 <b>TUS ESTADÍSTICAS:</b>\n"
+        f"👥 Invitados: <b>{count}</b>\n"
+        f"🏆 Tu Rango: <b>#{rank}</b>\n\n"
+        f"🔗 <b>TU ENLACE ÚNICO:</b>\n"
+        f"<code>{invite_link}</code>\n"
+        f"<i>(Toca para copiar y compartir)</i>\n\n"
+        f"📊 <b>TOP 3 LÍDERES:</b>\n"
+        f"{ranking_text}\n"
+        f"👇 <b>¡Compártelo ahora!</b>"
+    )
+
+    await update.message.reply_text(
+        text, 
+        parse_mode=ParseMode.HTML, 
+        disable_web_page_preview=True, 
+        reply_markup=InlineKeyboardMarkup(keyboard)
+    )
 
 # --- COMANDO /IA ---
 @rate_limited(3)
