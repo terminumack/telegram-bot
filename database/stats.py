@@ -61,7 +61,61 @@ def load_last_market_state():
     finally: 
         put_conn(conn)
 
-# --- MINERÍA Y ARBITRAJE (Nombres exactos de bot.py) ---
+# --- REFERIDOS VITAMINADOS (Para que /referidos no explote) ---
+def get_referral_stats(user_id):
+    """Devuelve count, rank y top_3."""
+    conn = get_conn()
+    if not conn: return 0, 0, []
+    try:
+        with conn.cursor() as cur:
+            # 1. Conteo
+            cur.execute("SELECT referral_count FROM users WHERE user_id = %s", (user_id,))
+            res = cur.fetchone()
+            count = res[0] if res else 0
+
+            # 2. Ranking
+            cur.execute("""
+                SELECT position FROM (
+                    SELECT user_id, RANK() OVER (ORDER BY referral_count DESC) as position 
+                    FROM users
+                ) AS ranking WHERE user_id = %s
+            """, (user_id,))
+            rank_res = cur.fetchone()
+            rank = rank_res[0] if rank_res else 0
+
+            # 3. Top 3
+            cur.execute("SELECT first_name, referral_count FROM users ORDER BY referral_count DESC LIMIT 3")
+            top_3 = cur.fetchall()
+
+            return count, rank, top_3
+    except Exception: return 0, 0, []
+    finally: put_conn(conn)
+
+# --- REPORTE DETALLADO (La función que faltaba) ---
+def get_detailed_report_text():
+    """Genera el texto para el panel de administración."""
+    conn = get_conn()
+    if not conn: return "❌ Sin conexión"
+    try:
+        with conn.cursor() as cur:
+            cur.execute("SELECT COUNT(*) FROM users")
+            total = cur.fetchone()[0]
+            cur.execute("SELECT COUNT(*) FROM users WHERE joined_at >= CURRENT_DATE")
+            hoy = cur.fetchone()[0]
+            cur.execute("SELECT COUNT(*) FROM activity_logs WHERE created_at >= CURRENT_DATE")
+            act = cur.fetchone()[0]
+            
+            return (
+                f"📊 <b>ESTADÍSTICAS DEL BOT</b>\n"
+                f"━━━━━━━━━━━━━━━━\n"
+                f"👥 Usuarios Totales: {total}\n"
+                f"🆕 Registros Hoy: {hoy}\n"
+                f"📉 Actividad Hoy: {act}\n"
+            )
+    except Exception: return "⚠️ Error al generar reporte"
+    finally: put_conn(conn)
+
+# --- MINERÍA Y ARBITRAJE ---
 def save_arbitrage_snapshot(pm_b, pm_s, ban, mer, pro):
     conn = get_conn()
     if not conn: return
@@ -88,32 +142,56 @@ def save_mining_data(pm_buy, bcv_usd, pm_sell):
     except Exception: pass
     finally: put_conn(conn)
 
-# --- CALCULADORA (Requerido por calc.py) ---
+# --- OTRAS FUNCIONES REQUERIDAS ---
 def log_calc(user_id, amount, currency, result):
     conn = get_conn()
     if not conn: return
     try:
         with conn.cursor() as cur:
-            cur.execute("""
-                INSERT INTO calc_logs (user_id, amount, currency_type, result) 
-                VALUES (%s, %s, %s, %s)
-            """, (user_id, amount, currency, result))
+            cur.execute("INSERT INTO calc_logs (user_id, amount, currency_type, result) VALUES (%s, %s, %s, %s)", (user_id, amount, currency, result))
             conn.commit()
     except Exception: pass
     finally: put_conn(conn)
 
-# --- VOTOS (Requeridos por formatting.py) ---
+def log_activity(user_id, command):
+    conn = get_conn()
+    if not conn: return
+    try:
+        with conn.cursor() as cur:
+            cur.execute("INSERT INTO activity_logs (user_id, command) VALUES (%s, %s)", (user_id, command))
+            conn.commit()
+    except Exception: pass
+    finally: put_conn(conn)
+
+def get_daily_requests_count():
+    conn = get_conn()
+    if not conn: return 0
+    try:
+        with conn.cursor() as cur:
+            cur.execute("SELECT COUNT(*) FROM activity_logs WHERE created_at >= CURRENT_DATE")
+            return cur.fetchone()[0]
+    except Exception: return 0
+    finally: put_conn(conn)
+
+def queue_broadcast(message):
+    conn = get_conn()
+    if not conn: return False
+    try:
+        with conn.cursor() as cur:
+            cur.execute("INSERT INTO broadcast_queue (message, status) VALUES (%s, 'pending')", (message,))
+            conn.commit()
+        return True
+    except Exception: return False
+    finally: put_conn(conn)
+
+# --- VOTOS ---
 def cast_vote(user_id, vote_type):
     conn = get_conn()
     if not conn: return
     try:
         today = datetime.now().date()
         with conn.cursor() as cur:
-            cur.execute("""
-                INSERT INTO daily_votes (user_id, vote_date, vote_type)
-                VALUES (%s, %s, %s)
-                ON CONFLICT (user_id, vote_date) DO NOTHING
-            """, (user_id, today, vote_type))
+            cur.execute("INSERT INTO daily_votes (user_id, vote_date, vote_type) VALUES (%s, %s, %s) ON CONFLICT DO NOTHING", (user_id, today, vote_type))
             conn.commit()
     except Exception: pass
     finally: put_conn(conn)
@@ -140,74 +218,3 @@ def get_vote_results():
             return rows.get('UP', 0), rows.get('DOWN', 0)
     except Exception: return 0, 0
     finally: put_conn(conn)
-
-# --- ESTADÍSTICAS Y LOGS ---
-def log_activity(user_id, command):
-    conn = get_conn()
-    if not conn: return
-    try:
-        with conn.cursor() as cur:
-            cur.execute("INSERT INTO activity_logs (user_id, command) VALUES (%s, %s)", (user_id, command))
-            conn.commit()
-    except Exception: pass
-    finally: put_conn(conn)
-
-def get_daily_requests_count():
-    conn = get_conn()
-    if not conn: return 0
-    try:
-        with conn.cursor() as cur:
-            cur.execute("SELECT COUNT(*) FROM activity_logs WHERE created_at >= CURRENT_DATE")
-            return cur.fetchone()[0]
-    except Exception: return 0
-    finally: put_conn(conn)
-
-# --- SISTEMA DE DIFUSIÓN ---
-def queue_broadcast(message):
-    conn = get_conn()
-    if not conn: return False
-    try:
-        with conn.cursor() as cur:
-            cur.execute("INSERT INTO broadcast_queue (message, status) VALUES (%s, 'pending')", (message,))
-            conn.commit()
-        return True
-    except Exception: return False
-    finally: put_conn(conn)
-
-# Funciones de compatibilidad
-def get_referral_stats(user_id):
-    """Calcula el total, el ranking y el top 3 de referidores."""
-    conn = get_conn()
-    if not conn: return 0, 0, []
-    try:
-        with conn.cursor() as cur:
-            # 1. Total de este usuario
-            cur.execute("SELECT referral_count FROM users WHERE user_id = %s", (user_id,))
-            res = cur.fetchone()
-            count = res[0] if res else 0
-
-            # 2. Ranking (Posición basada en quién tiene más)
-            cur.execute("""
-                SELECT position FROM (
-                    SELECT user_id, RANK() OVER (ORDER BY referral_count DESC) as position 
-                    FROM users
-                ) AS ranking WHERE user_id = %s
-            """, (user_id,))
-            rank_res = cur.fetchone()
-            rank = rank_res[0] if rank_res else 0
-
-            # 3. Top 3 (Los mejores para mostrar en el mensaje)
-            cur.execute("""
-                SELECT first_name, referral_count 
-                FROM users 
-                ORDER BY referral_count DESC 
-                LIMIT 3
-            """)
-            top_3 = cur.fetchall() # Esto devuelve una lista de tuplas [(nombre, puntos), ...]
-
-            return count, rank, top_3
-    except Exception as e:
-        logging.error(f"Error en get_referral_stats: {e}")
-        return 0, 0, []
-    finally:
-        put_conn(conn)
