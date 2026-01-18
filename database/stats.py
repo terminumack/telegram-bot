@@ -176,15 +176,38 @@ def queue_broadcast(message):
 
 # Funciones de compatibilidad
 def get_referral_stats(user_id):
+    """Calcula el total, el ranking y el top 3 de referidores."""
     conn = get_conn()
-    if not conn: return 0
+    if not conn: return 0, 0, []
     try:
         with conn.cursor() as cur:
+            # 1. Total de este usuario
             cur.execute("SELECT referral_count FROM users WHERE user_id = %s", (user_id,))
             res = cur.fetchone()
-            return res[0] if res else 0
-    except Exception: return 0
-    finally: put_conn(conn)
+            count = res[0] if res else 0
 
-def get_detailed_report_text():
-    return "📊 Reporte Estadístico Activo"
+            # 2. Ranking (Posición basada en quién tiene más)
+            cur.execute("""
+                SELECT position FROM (
+                    SELECT user_id, RANK() OVER (ORDER BY referral_count DESC) as position 
+                    FROM users
+                ) AS ranking WHERE user_id = %s
+            """, (user_id,))
+            rank_res = cur.fetchone()
+            rank = rank_res[0] if rank_res else 0
+
+            # 3. Top 3 (Los mejores para mostrar en el mensaje)
+            cur.execute("""
+                SELECT first_name, referral_count 
+                FROM users 
+                ORDER BY referral_count DESC 
+                LIMIT 3
+            """)
+            top_3 = cur.fetchall() # Esto devuelve una lista de tuplas [(nombre, puntos), ...]
+
+            return count, rank, top_3
+    except Exception as e:
+        logging.error(f"Error en get_referral_stats: {e}")
+        return 0, 0, []
+    finally:
+        put_conn(conn)
