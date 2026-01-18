@@ -28,73 +28,85 @@ EMOJI_BAJADA = "📉"
 # Caché y Semáforo para Gráficos (Evita colapso de RAM)
 GRAPH_CACHE = {"date": None, "photo_id": None}
 GRAPH_LOCK = asyncio.Lock() 
-
-# --- COMANDO /START ---
-@rate_limited(2)
 # --- COMANDO /START ---
 @rate_limited(2)
 async def start_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    # 1. Lógica de Referidos (Detectar si viene invitado por alguien)
-    referrer_id = None
-    if context.args and context.args[0].isdigit():
+    print("DEBUG: >>> Entrando al comando /start")
+    try:
+        user = update.effective_user
+        print(f"DEBUG: Usuario: {user.id} - {user.first_name}")
+
+        # 1. Lógica de Referidos
+        referrer_id = None
+        if context.args:
+            print(f"DEBUG: Argumentos del start: {context.args}")
+            if context.args[0].isdigit():
+                potential_id = int(context.args[0])
+                if potential_id != user.id:
+                    referrer_id = potential_id
+                    print(f"DEBUG: Referido por: {referrer_id}")
+
+        # 2. Registrar Usuario en DB
+        print("DEBUG: Intentando guardar en DB (track_user)...")
+        await asyncio.to_thread(track_user, user, referrer_id)
+        print("DEBUG: track_user OK")
+        
+        await asyncio.to_thread(log_activity, user.id, "/start")
+        print("DEBUG: log_activity OK")
+
+        # 3. Enlaces
+        LINK_CANAL = "https://t.me/tasabinance"
+        LINK_GRUPO = "https://t.me/tasabinancegrupo"
+        LINK_SOPORTE = "https://t.me/tasabinancesoporte"
+
+        # 4. El Mensaje Completo
+        msg = (
+            f"👋 <b>¡Hola, {user.mention_html()}!</b>\n\n"
+            f"Soy tu asistente financiero conectado a 🔶 <b>Binance P2P</b> y al <b>BCV</b>.\n\n"
+            f"🚀 <b>HERRAMIENTAS PRINCIPALES:</b>\n"
+            f"💵 <b>/precio</b> → Tasa Promedio Instantánea.\n"
+            f"🏦 <b>/mercado</b> → Comparativa por Bancos.\n"
+            f"📊 <b>/grafico</b> → Tendencia Semanal Viral.\n\n"
+            f"🧠 <b>INTELIGENCIA:</b>\n"
+            f"🕒 <b>/horario</b> → ¿Mejor hora para cambiar?\n"
+            f"🤖 <b>/ia</b> → Predicción (Sube o Baja).\n"
+            f"🔔 <b>/alerta</b> → Avisos de precio.\n\n"
+            f"🎁 <b>/referidos</b> → ¡Invita y Gana!\n\n"
+            f"🧮 <b>CALCULADORA:</b>\n"
+            f"• <b>/usdt 100</b> → 100$ a Bs.\n"
+            f"• <b>/bs 5000</b> → 5000Bs a $."
+        )
+        
+        # 5. Botones
+        keyboard = [
+            [InlineKeyboardButton("📢 Canal", url=LINK_CANAL), InlineKeyboardButton("💬 Grupo", url=LINK_GRUPO)],
+            [InlineKeyboardButton("🆘 Soporte", url=LINK_SOPORTE)]
+        ]
+        
+        print("DEBUG: Enviando respuesta al usuario...")
+        await update.message.reply_html(
+            msg, 
+            reply_markup=InlineKeyboardMarkup(keyboard),
+            disable_web_page_preview=True
+        )
+        print("DEBUG: <<< Comando /start finalizado con éxito ✅")
+
+    except Exception as e:
+        print(f"DEBUG ERROR EN START: {str(e)}")
+        # Intentamos avisar al usuario si algo falló
         try:
-            potential_id = int(context.args[0])
-            # Evitar auto-referirse
-            if potential_id != update.effective_user.id:
-                referrer_id = potential_id
-        except ValueError:
+            await update.message.reply_text("❌ Ocurrió un error al iniciar el bot. Por favor, intenta más tarde.")
+        except:
             pass
-
-    # 2. Registrar Usuario en DB (Hilo separado)
-    await asyncio.to_thread(track_user, update.effective_user, referrer_id)
-    await asyncio.to_thread(log_activity, update.effective_user.id, "/start")
-
-    # 3. Enlaces (Puedes cambiarlos por los tuyos)
-    LINK_CANAL = "https://t.me/tasabinance"
-    LINK_GRUPO = "https://t.me/tasabinancegrupo"
-    LINK_SOPORTE = "https://t.me/tasabinancesoporte"
-
-    # 4. El Mensaje Completo
-    msg = (
-        f"👋 <b>¡Hola, {update.effective_user.mention_html()}!</b>\n\n"
-        f"Soy tu asistente financiero conectado a 🔶 <b>Binance P2P</b> y al <b>BCV</b>.\n\n"
-        
-        f"🚀 <b>HERRAMIENTAS PRINCIPALES:</b>\n"
-        f"💵 <b>/precio</b> → Tasa Promedio Instantánea.\n"
-        f"🏦 <b>/mercado</b> → Comparativa por Bancos.\n"
-        f"📊 <b>/grafico</b> → Tendencia Semanal Viral.\n\n"
-        
-        f"🧠 <b>INTELIGENCIA:</b>\n"
-        f"🕒 <b>/horario</b> → ¿Mejor hora para cambiar?\n"
-        f"🤖 <b>/ia</b> → Predicción (Sube o Baja).\n"
-        f"🔔 <b>/alerta</b> → Avisos de precio.\n\n"
-        
-        f"🎁 <b>/referidos</b> → ¡Invita y Gana!\n\n"
-        
-        f"🧮 <b>CALCULADORA:</b>\n"
-        f"• <b>/usdt 100</b> → 100$ a Bs.\n"
-        f"• <b>/bs 5000</b> → 5000Bs a $."
-    )
-    
-    # 5. Botones de Comunidad
-    keyboard = [
-        [InlineKeyboardButton("📢 Canal", url=LINK_CANAL), InlineKeyboardButton("💬 Grupo", url=LINK_GRUPO)],
-        [InlineKeyboardButton("🆘 Soporte", url=LINK_SOPORTE)]
-    ]
-    
-    await update.message.reply_html(
-        msg, 
-        reply_markup=InlineKeyboardMarkup(keyboard),
-        disable_web_page_preview=True
-    )
 
 @rate_limited(2)
 async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    print("DEBUG: Ejecutando /help")
     await update.message.reply_html(
         "🆘 <b>Ayuda Rápida:</b>\n\n"
         "• Usa /precio para ver el promedio general.\n"
         "• Usa /mercado para ver precios por banco.\n"
-        "• Canal oficial: @tasabinance_channel"
+        "• Canal oficial: @tasabinance"
     )
 
 # --- COMANDO /PRECIO (Velocidad de la Luz) ---
