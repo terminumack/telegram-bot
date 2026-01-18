@@ -6,6 +6,8 @@ import random
 from datetime import datetime, time as dt_time
 import pytz
 from database.users import track_user, get_user_loyalty # <--- AGREGAR AQUÍ
+from services.binance_service import get_market_snapshot
+from database.stats import save_arbitrage_snapshot
 
 # --- 1. IMPORTS DE MEMORIA Y CONFIGURACIÓN ---
 from shared import MARKET_DATA, TIMEZONE
@@ -69,42 +71,63 @@ ADMIN_ID = int(os.getenv("ADMIN_ID", "533888411"))
 # ==============================================================================
 async def update_price_task(context: ContextTypes.DEFAULT_TYPE):
     try:
-        current_ref = MARKET_DATA["price"] or 65.0
+        # 1. ESCANEO MASIVO (Binance Multi-banco + BCV)
+        # Se ejecutan en paralelo. Total aprox: 2 a 3 segundos.
+        results = await asyncio.gather(
+            get_market_snapshot(), # Trae PM, Banesco, Mercantil, etc.
+            get_bcv_rates(),       # Trae BCV
+            return_exceptions=True
+        )
         
-        # Consultar servicios en paralelo
-        task_buy = get_binance_price("BUY", "PagoMovil", reference_price=current_ref)
-        task_sell = get_binance_price("SELL", "PagoMovil", reference_price=current_ref)
-        task_bcv = get_bcv_rates()
-        
-        results = await asyncio.gather(task_buy, task_sell, task_bcv, return_exceptions=True)
-        buy_pm, sell_pm, new_bcv = results
+        market_data = results[0] # Diccionario con todos los bancos
+        bcv_data = results[1]    # Diccionario BCV
 
-        # 1. Actualizar Precio Binance en Memoria
-        if isinstance(buy_pm, float) and buy_pm > 0:
-            MARKET_DATA["price"] = buy_pm
-            MARKET_DATA["history"].append(buy_pm)
-            # Chequear alertas en segundo plano
-            asyncio.create_task(check_alerts_async(context, buy_pm))
+        # 2. PROCESAR BINANCE
+        if isinstance(market_data, dict):
+            pm_buy = market_data.get("pm_buy", 0)
+            pm_sell = market_data.get("pm_sell", 0)
 
-        # 2. Actualizar BCV en Memoria
-        if isinstance(new_bcv, dict) and new_bcv:
-            MARKET_DATA["bcv"] = new_bcv
-        
-        # Preparar datos para guardar
-        val_buy = MARKET_DATA["price"] or 0
-        val_bcv = MARKET_DATA["bcv"].get("dolar", 0) if MARKET_DATA["bcv"] else 0
-        val_sell = sell_pm if (isinstance(sell_pm, float) and sell_pm > 0) else 0
-        
-        # 3. Guardar en Base de Datos (Persistencia)
-        if val_buy > 0:
-            # Guardar histórico para gráficos
-            await asyncio.to_thread(save_mining_data, val_buy, val_bcv, val_sell)
+            # --- AQUI MANTENEMOS TU ALGORITMO ORIGINAL ---
+            # La "Tasa Binance" principal sigue siendo PagoMóvil Compra
+            if pm_buy > 0:
+                MARKET_DATA["price"] = pm_buy
+                MARKET_DATA["history"].append(pm_buy)
+                # Chequeo de Alertas (Usando el precio principal)
+                asyncio.create_task(check_alerts_async(context, pm_buy))
             
-            # Guardar estado actual (para reinicios)
-            await asyncio.to_thread(save_market_state, val_buy, val_bcv, MARKET_DATA["bcv"].get("euro", 0))
+            # Actualizamos la memoria de BANCOS (Para el comando /mercado)
+            MARKET_DATA["banks"]["pm"]["buy"] = pm_buy
+            MARKET_DATA["banks"]["pm"]["sell"] = pm_sell
+            MARKET_DATA["banks"]["banesco"]["buy"] = market_data.get("ban_buy", 0)
+            MARKET_DATA["banks"]["mercantil"]["buy"] = market_data.get("mer_buy", 0)
+            MARKET_DATA["banks"]["provincial"]["buy"] = market_data.get("pro_buy", 0)
 
-        # --- CAMBIO AQUÍ: FORMATO COMPLETO CON AÑO Y SEGUNDOS ---
-        MARKET_DATA["last_updated"] = datetime.now(TIMEZONE).strftime("%d/%m/%Y %I:%M:%S %p")
+            # Guardamos la FOTO COMPLETA en DB (Para minería de datos)
+            await asyncio.to_thread(
+                save_arbitrage_snapshot,
+                pm_buy, pm_sell,
+                market_data.get("ban_buy", 0),
+                market_data.get("mer_buy", 0),
+                market_data.get("pro_buy", 0)
+            )
+            
+            # Guardamos DATA SIMPLE para gráficos históricos (Compatibilidad Legacy)
+            val_bcv = MARKET_DATA["bcv"].get("dolar", 0) if MARKET_DATA["bcv"] else 0
+            if pm_buy > 0:
+                await asyncio.to_thread(save_mining_data, pm_buy, val_bcv, pm_sell)
+
+        # 3. PROCESAR BCV
+        if isinstance(bcv_data, dict) and bcv_data:
+            MARKET_DATA["bcv"] = bcv_data
+
+        # 4. ACTUALIZAR FECHA (Con tu formato de Año y Segundos)
+        now = datetime.now(TIMEZONE)
+        MARKET_DATA["last_updated"] = now.strftime("%d/%m/%Y %I:%M:%S %p")
+        
+        logging.info(f"🔄 Snapshot: PM={market_data.get('pm_buy'):.2f} | Ban={market_data.get('ban_buy'):.2f}")
+
+    except Exception as e:
+        logging.error(f"❌ Error Update Task: {e}")
         # --------------------------------------------------------
         
         logging.info(f"🔄 Update: Buy={val_buy:.2f} | BCV={val_bcv:.2f}")
