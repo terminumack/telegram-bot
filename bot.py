@@ -41,6 +41,13 @@ from handlers.commands import (
 from handlers.callbacks import button_handler
 from handlers.calc import conv_usdt, conv_bs 
 from handlers.alerts import conv_alert
+# En bot.py, donde registras los handlers:
+
+from telegram.ext import ChatMemberHandler
+from handlers.commands import track_my_chat_member # <--- Impórtalo
+
+# ... (junto a los otros add_handler)
+app.add_handler(ChatMemberHandler(track_my_chat_member, ChatMemberHandler.MY_CHAT_MEMBER))
 
 # Imports de Telegram
 from telegram import Update, InlineKeyboardMarkup, InlineKeyboardButton
