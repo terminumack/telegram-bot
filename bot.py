@@ -87,6 +87,18 @@ async def update_price_task(context: ContextTypes.DEFAULT_TYPE):
         if isinstance(market_data, dict):
             pm_buy = market_data.get("pm_buy", 0)
             pm_sell = market_data.get("pm_sell", 0)
+            # Actualizamos la memoria de BANCOS (Ahora con SELL)
+            MARKET_DATA["banks"]["pm"]["buy"]   = market_data.get("pm_buy", 0)
+            MARKET_DATA["banks"]["pm"]["sell"]  = market_data.get("pm_sell", 0)
+            
+            MARKET_DATA["banks"]["banesco"]["buy"]  = market_data.get("ban_buy", 0)
+            MARKET_DATA["banks"]["banesco"]["sell"] = market_data.get("ban_sell", 0) # Nuevo
+            
+            MARKET_DATA["banks"]["mercantil"]["buy"]  = market_data.get("mer_buy", 0)
+            MARKET_DATA["banks"]["mercantil"]["sell"] = market_data.get("mer_sell", 0) # Nuevo
+            
+            MARKET_DATA["banks"]["provincial"]["buy"]  = market_data.get("pro_buy", 0)
+            MARKET_DATA["banks"]["provincial"]["sell"] = market_data.get("pro_sell", 0) # Nuevo
 
             # --- AQUI MANTENEMOS TU ALGORITMO ORIGINAL ---
             # La "Tasa Binance" principal sigue siendo PagoMóvil Compra
