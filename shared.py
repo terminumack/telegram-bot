@@ -4,17 +4,19 @@ import pytz
 TIMEZONE = pytz.timezone('America/Caracas')
 
 # Memoria Central (Accesible por todos los archivos)
+# shared.py (Solo actualiza la parte de MARKET_DATA)
+
 MARKET_DATA = {
-    "price": None,         # Precio Promedio General (PagoMóvil)
-    "bcv": {},             # Tasas BCV (Dólar/Euro)
-    "last_updated": "Esperando actualización...",
-    "history": [],         # Usamos lista simple para compatibilidad
-    
-    # 👇 ESTA ES LA SECCIÓN NUEVA VITAL PARA /MERCADO 👇
+    "price": None,
+    "bcv": {},
+    "last_updated": "Iniciando...",
+    "history": [],
     "banks": {
-        "pm": {"buy": 0, "sell": 0},
-        "banesco": {"buy": 0},
-        "mercantil": {"buy": 0},
-        "provincial": {"buy": 0}
+        "pm":        {"buy": 0, "sell": 0},
+        "banesco":   {"buy": 0, "sell": 0}, # <--- Agregamos sell
+        "mercantil": {"buy": 0, "sell": 0}, # <--- Agregamos sell
+        "provincial":{"buy": 0, "sell": 0}  # <--- Agregamos sell
     }
 }
+# shared.py (Solo actualiza la parte de MARKET_DATA)
+
