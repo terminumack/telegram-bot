@@ -403,3 +403,80 @@ def get_vote_results():
         return (0, 0)
     finally:
         put_conn(conn)
+
+# Agrega esto al final de database/stats.py
+
+def get_detailed_report_text():
+    """Genera el reporte ejecutivo detallado para el Admin."""
+    conn = get_conn()
+    if not conn: return "⚠️ Error de conexión DB"
+    
+    text = "⚠️ Error calculando data."
+    
+    try:
+        with conn.cursor() as cur:
+            # 1. KPI Principales
+            cur.execute("SELECT COUNT(*) FROM users")
+            total = cur.fetchone()[0]
+            
+            cur.execute("SELECT COUNT(*) FROM users WHERE status = 'blocked'")
+            blocked = cur.fetchone()[0]
+            
+            active_real = total - blocked
+            churn_rate = (blocked / total * 100) if total > 0 else 0
+            
+            # 2. Actividad Reciente
+            cur.execute("SELECT COUNT(*) FROM users WHERE joined_at >= CURRENT_DATE")
+            new_today = cur.fetchone()[0]
+            
+            cur.execute("SELECT COUNT(*) FROM users WHERE last_active >= NOW() - INTERVAL '24 HOURS'")
+            active_24h = cur.fetchone()[0]
+            
+            cur.execute("SELECT COUNT(*) FROM alerts")
+            active_alerts = cur.fetchone()[0]
+            
+            cur.execute("SELECT COUNT(*) FROM activity_logs WHERE created_at >= CURRENT_DATE")
+            requests_today = cur.fetchone()[0]
+            
+            # 3. Listas Top
+            cur.execute("SELECT source, COUNT(*) FROM users WHERE source IS NOT NULL GROUP BY source ORDER BY 2 DESC LIMIT 3")
+            top_sources = cur.fetchall()
+            
+            cur.execute("SELECT command, COUNT(*) FROM activity_logs GROUP BY command ORDER BY 2 DESC LIMIT 5")
+            top_commands = cur.fetchall()
+            
+            cur.execute("SELECT COUNT(*) FROM users WHERE referred_by IS NOT NULL")
+            total_referrals = cur.fetchone()[0]
+
+            # --- CONSTRUCCIÓN DEL MENSAJE (Tu formato original) ---
+            text = (
+                f"📊 <b>REPORTE EJECUTIVO V51 (Modular)</b>\n\n"
+                f"👥 <b>Total Histórico:</b> {total:,}\n"
+                f"✅ <b>Usuarios Reales:</b> {active_real:,}\n"
+                f"🚫 <b>Bloqueados:</b> {blocked:,} ({churn_rate:.2f}%)\n"
+                f"--------------------------\n"
+                f"📈 <b>Nuevos Hoy:</b> +{new_today}\n"
+                f"🔥 <b>Activos (24h):</b> {active_24h:,}\n"
+                f"🔔 <b>Alertas Activas:</b> {active_alerts}\n"
+                f"📥 <b>Consultas Hoy:</b> {requests_today:,}\n"
+                f"🤝 <b>Referidos Totales:</b> {total_referrals:,}\n"
+            )
+            
+            if top_sources:
+                text += "\n🎯 <b>Top Campañas:</b>\n"
+                for src, cnt in top_sources:
+                    text += f"• {src}: {cnt}\n"
+            
+            if top_commands:
+                text += "\n🤖 <b>Top Comandos:</b>\n"
+                for cmd, cnt in top_commands:
+                    text += f"• {cmd}: {cnt}\n"
+
+            text += f"\n<i>Sistema Modular Operativo.</i> ✅"
+
+    except Exception as e:
+        logging.error(f"Error reporte admin: {e}")
+    finally:
+        put_conn(conn)
+        
+    return text
