@@ -103,12 +103,11 @@ async def start_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
             pass
 ================================================ #global
 async def global_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    # SEGURIDAD: Solo tú puedes usarlo (cambia el ID por el tuyo)
+    # SEGURIDAD: Solo tú puedes usarlo
     ADMIN_ID = 533888411 
     if update.effective_user.id != ADMIN_ID:
         return
 
-    # Extraer el mensaje: /global Hola a todos -> "Hola a todos"
     msg_to_send = update.message.text.replace('/global', '').strip()
     
     if not msg_to_send:
@@ -118,19 +117,33 @@ async def global_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     users = await asyncio.to_thread(get_all_user_ids)
     await update.message.reply_text(f"🚀 Iniciando envío a {len(users)} usuarios...")
 
+    # Creamos el botón de "Entendido"
+    keyboard = [[InlineKeyboardButton("✅ Entendido", callback_data="delete_announcement")]]
+    reply_markup = InlineKeyboardMarkup(keyboard)
+
     exitos = 0
     errores = 0
 
     for uid in users:
         try:
-            await context.bot.send_message(chat_id=uid, text=msg_to_send, parse_mode='HTML')
+            await context.bot.send_message(
+                chat_id=uid, 
+                text=msg_to_send, 
+                parse_mode='HTML',
+                reply_markup=reply_markup # <--- Añadimos el botón aquí
+            )
             exitos += 1
-            # Pequeña pausa para no saturar el API de Telegram (Anti-flood)
-            await asyncio.sleep(0.05) 
+            await asyncio.to_thread(time.sleep, 0.05) # Pausa anti-flood
         except Exception:
             errores += 1
 
     await update.message.reply_text(f"✅ Envío finalizado.\n✨ Éxitos: {exitos}\n❌ Fallidos: {errores}")
+
+# Función para que el botón borre el mensaje
+async def close_announcement(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    query = update.callback_query
+    await query.answer() # Quita el relojito del botón
+    await query.message.delete() # Borra el mensaje del chat del usuario
     ======================================================================
 @rate_limited(2)
 async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
