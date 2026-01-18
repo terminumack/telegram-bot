@@ -156,7 +156,7 @@ async def close_announcement(update: Update, context: ContextTypes.DEFAULT_TYPE)
     query = update.callback_query
     await query.answer() # Quita el relojito del botón
     await query.message.delete() # Borra el mensaje del chat del usuario
-    ======================================================================
+    
 @rate_limited(2)
 async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     print("DEBUG: Ejecutando /help")
