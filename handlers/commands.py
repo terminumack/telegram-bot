@@ -195,31 +195,35 @@ async def grafico(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 # --- COMANDO /REFERIDOS ---
 @rate_limited(2)
+@rate_limited(2)
 async def referidos(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id = update.effective_user.id
-    await asyncio.to_thread(track_user, update.effective_user)
+    print(f"DEBUG: Ejecutando /referidos para {user_id}")
     
-    count, rank, top_3 = await asyncio.to_thread(get_referral_stats, user_id)
-    
-    ranking_text = ""
-    medals = ["🥇", "🥈", "🥉"]
-    for i, (name, score) in enumerate(top_3):
-        medal = medals[i] if i < 3 else f"#{i+1}"
-        clean_name = name.split()[0] if name else "Usuario"
-        ranking_text += f"{medal} <b>{clean_name}</b> — {score} refs\n"
+    try:
+        # Aquí es donde fallaba porque stats.py solo mandaba un número
+        count, rank, top_3 = await asyncio.to_thread(get_referral_stats, user_id)
         
-    invite_link = f"https://t.me/{context.bot.username}?start={user_id}"
-    share_url = f"https://t.me/share/url?url={invite_link}"
-    
-    text = (
-        f"🎁 <b>PROGRAMA DE REFERIDOS</b>\n\n"
-        f"👥 Invitados: <b>{count}</b> | 🏆 Rango: <b>#{rank}</b>\n\n"
-        f"🔗 <b>TU ENLACE:</b>\n<code>{invite_link}</code>\n\n"
-        f"📊 <b>TOP LÍDERES:</b>\n{ranking_text}"
-    )
-    
-    kb = [[InlineKeyboardButton("📤 Compartir Enlace", url=share_url)]]
-    await update.message.reply_html(text, reply_markup=InlineKeyboardMarkup(kb), disable_web_page_preview=True)
+        bot_username = (await context.bot.get_me()).username
+        link = f"https://t.me/{bot_username}?start={user_id}"
+        
+        msg = (
+            f"🎁 <b>SISTEMA DE REFERIDOS</b>\n\n"
+            f"Tu enlace personal:\n<code>{link}</code>\n\n"
+            f"👤 <b>Tus invitados:</b> {count}\n"
+            f"🏆 <b>Tu posición:</b> #{rank}\n\n"
+            f"🥇 <b>TOP REFERIDORES:</b>\n"
+        )
+        
+        for i, top in enumerate(top_3, 1):
+            msg += f"{i}. {top[0]} ({top[1]} invitados)\n"
+
+        await update.message.reply_html(msg)
+        print("DEBUG: /referidos enviado con éxito")
+        
+    except Exception as e:
+        print(f"DEBUG ERROR EN REFERIDOS: {e}")
+        await update.message.reply_text("❌ Error al cargar estadísticas de referidos.")
 
 # --- COMANDO /IA ---
 @rate_limited(3)
