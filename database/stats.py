@@ -65,6 +65,23 @@ def log_activity(user_id, command):
     except Exception: pass
     finally: put_conn(conn)
 
+# --- LOGS DE CALCULADORA (LA FUNCIÓN QUE FALTABA) ---
+def log_calc(user_id, amount, currency, result):
+    """Guarda el historial de cálculos."""
+    conn = get_conn()
+    if not conn: return
+    try:
+        with conn.cursor() as cur:
+            cur.execute("""
+                INSERT INTO calc_logs (user_id, amount, currency_type, result) 
+                VALUES (%s, %s, %s, %s)
+            """, (user_id, amount, currency, result))
+            conn.commit()
+    except Exception as e:
+        logging.error(f"⚠️ Error log_calc: {e}")
+    finally:
+        put_conn(conn)
+
 def get_daily_requests_count():
     conn = get_conn()
     if not conn: return 0
@@ -86,25 +103,18 @@ def get_referral_stats(user_id):
     except Exception: return 0
     finally: put_conn(conn)
 
-# --- REPORTE DETALLADO (LA FUNCIÓN QUE FALTABA) ---
+# --- REPORTE DETALLADO ---
 def get_detailed_report_text():
-    """Genera un resumen para el admin."""
     conn = get_conn()
     if not conn: return "❌ Sin conexión a DB"
     try:
         with conn.cursor() as cur:
-            # Total Usuarios
             cur.execute("SELECT COUNT(*) FROM users")
             total = cur.fetchone()[0]
-            
-            # Nuevos Hoy
             cur.execute("SELECT COUNT(*) FROM users WHERE joined_at >= CURRENT_DATE")
             new_users = cur.fetchone()[0]
-            
-            # Actividad Hoy
             cur.execute("SELECT COUNT(*) FROM activity_logs WHERE created_at >= CURRENT_DATE")
             activity = cur.fetchone()[0]
-            
             return (
                 f"📊 <b>ESTADO DEL SISTEMA</b>\n"
                 f"━━━━━━━━━━━━━━━━\n"
@@ -113,10 +123,8 @@ def get_detailed_report_text():
                 f"📉 <b>Interacciones Hoy:</b> {activity}\n"
                 f"🤖 <b>Bot Activo:</b> ✅"
             )
-    except Exception as e:
-        return f"⚠️ Error reporte: {e}"
-    finally:
-        put_conn(conn)
+    except Exception as e: return f"⚠️ Error reporte: {e}"
+    finally: put_conn(conn)
 
 # --- VOTOS ---
 def cast_vote(user_id, vote_type):
