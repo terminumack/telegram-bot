@@ -86,6 +86,7 @@ def get_referral_stats(user_id):
             # 3. Top 3
             cur.execute("SELECT first_name, referral_count FROM users ORDER BY referral_count DESC LIMIT 3")
             top_3 = cur.fetchall()
+            print(f"🏆 GANADORES ACTUALES: {top_3}")
 
             return count, rank, top_3
     except Exception: return 0, 0, []
