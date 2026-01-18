@@ -480,3 +480,27 @@ def get_detailed_report_text():
         put_conn(conn)
         
     return text
+
+def save_arbitrage_snapshot(pm_buy, pm_sell, ban_buy, mer_buy, pro_buy):
+    """Guarda la foto del mercado en la tabla arbitrage_data."""
+    conn = get_conn()
+    if not conn: return
+    
+    try:
+        # Calculamos el spread (Diferencia Compra/Venta PagoMóvil)
+        spread_pct = 0
+        if pm_buy > 0 and pm_sell > 0:
+            spread_pct = ((pm_buy - pm_sell) / pm_buy) * 100
+            
+        with conn.cursor() as cur:
+            cur.execute("""
+                INSERT INTO arbitrage_data 
+                (buy_pm, sell_pm, buy_banesco, buy_mercantil, buy_provincial, spread_pct)
+                VALUES (%s, %s, %s, %s, %s, %s)
+            """, (pm_buy, pm_sell, ban_buy, mer_buy, pro_buy, spread_pct))
+            conn.commit()
+            
+    except Exception as e:
+        logging.error(f"Error saving arbitrage: {e}")
+    finally:
+        put_conn(conn)
