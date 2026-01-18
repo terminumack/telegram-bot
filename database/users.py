@@ -6,7 +6,7 @@ from database.stats import get_conn, put_conn
 def track_user(user, referrer_id=None, source=None):
     """
     Registra usuario adaptado EXACTAMENTE a tu base de datos actual.
-    Columnas: user_id, first_name, referred_by, last_active, joined_at, status, source
+    Soporta llamadas con 1, 2 o 3 argumentos para no romper el bot.py.
     """
     user_id = user.id
     first_name = user.first_name[:50] if user.first_name else "Usuario"
@@ -27,13 +27,15 @@ def track_user(user, referrer_id=None, source=None):
                 final_referrer = None
                 
                 # Lógica de Referidos
-                if referrer_id and referrer_id != user_id:
-                    cur.execute("SELECT user_id FROM users WHERE user_id = %s", (referrer_id,))
-                    if cur.fetchone():
-                        valid_referrer = True
-                        final_referrer = referrer_id
+                if referrer_id and str(referrer_id).isdigit():
+                    ref_id = int(referrer_id)
+                    if ref_id != user_id:
+                        cur.execute("SELECT user_id FROM users WHERE user_id = %s", (ref_id,))
+                        if cur.fetchone():
+                            valid_referrer = True
+                            final_referrer = ref_id
 
-                # INSERT EXACTO (Sin username, con joined_at)
+                # INSERT EXACTO (Respetando tus columnas originales)
                 cur.execute("""
                     INSERT INTO users (user_id, first_name, referred_by, last_active, joined_at, status, source, referral_count) 
                     VALUES (%s, %s, %s, %s, %s, 'active', %s, 0)
@@ -48,7 +50,6 @@ def track_user(user, referrer_id=None, source=None):
 
             else:
                 # --- ACTUALIZAR EXISTENTE ---
-                # Solo actualizamos nombre y fecha
                 cur.execute("""
                     UPDATE users 
                     SET first_name = %s, last_active = %s, status = 'active' 
@@ -59,7 +60,7 @@ def track_user(user, referrer_id=None, source=None):
 
     except Exception as e:
         logging.error(f"Error track_user: {e}")
-        conn.rollback()
+        if conn: conn.rollback()
     finally:
         put_conn(conn)
 
