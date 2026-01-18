@@ -60,7 +60,6 @@ def load_last_market_state():
         return None
     finally: 
         put_conn(conn)
-
 # --- REFERIDOS VITAMINADOS (Para que /referidos no explote) ---
 def get_referral_stats(user_id):
     """Devuelve count, rank y top_3."""
@@ -83,17 +82,20 @@ def get_referral_stats(user_id):
             rank_res = cur.fetchone()
             rank = rank_res[0] if rank_res else 0
 
-            # 3. Top 3 (Pedimos el ID, el Nombre y los Puntos)
-cur.execute("SELECT user_id, first_name, referral_count FROM users ORDER BY referral_count DESC LIMIT 3")
-datos_completos = cur.fetchall()
+            # 3. Top 3 (Añadimos user_id para que lo veas en el print)
+            cur.execute("SELECT user_id, first_name, referral_count FROM users ORDER BY referral_count DESC LIMIT 3")
+            top_3_con_id = cur.fetchall()
+            
+            # --- EL PRINT PARA TI (Aparece en Railway) ---
+            print(f"🏆 GANADORES ACTUALES (ID, Nombre, Puntos): {top_3_con_id}")
 
-# ESTO LO VES TÚ EN LA CONSOLA (ID, Nombre, Puntos)
-print(f"🏆 GANADORES ACTUALES (LOGS): {datos_completos}")
+            # Limpiamos los datos para que el bot NO reciba el ID y no se rompa tu mensaje
+            top_3_limpio = [(row[1], row[2]) for row in top_3_con_id]
 
-# ESTO SE LO MANDAMOS AL MENSAJE (Solo Nombre y Puntos para no romper tu diseño)
-top_3_para_mensaje = [(row[1], row[2]) for row in datos_completos]
+            return count, rank, top_3_limpio
 
-return count, rank, top_3_para_mensaje
+    except Exception: return 0, 0, []
+    finally: put_conn(conn)
 
 # --- REPORTE DETALLADO (La función que faltaba) ---
 def get_detailed_report_text():
