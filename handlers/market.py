@@ -1,39 +1,40 @@
 import asyncio
-from telegram import Update
+from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.constants import ParseMode
 from telegram.ext import ContextTypes
+
+# Imports propios
 from shared import MARKET_DATA
 from database.users import track_user
 from database.stats import log_activity
 
-async def mercado(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    user = update.effective_user
-    await asyncio.to_thread(track_user, user)
-    await asyncio.to_thread(log_activity, user.id, "/mercado")
-    
+async def mercado_text_logic():
+    """
+    Genera el texto y los botones. 
+    Se usa en el comando /mercado y en el botón 'Actualizar'.
+    """
     banks = MARKET_DATA["banks"]
+    last_update = MARKET_DATA.get("last_updated", "Reciente")
     
-    # Extraemos datos para escribir menos código abajo
-    pm_b, pm_s = banks["pm"]["buy"], banks["pm"]["sell"]
-    ban_b, ban_s = banks["banesco"]["buy"], banks["banesco"]["sell"]
-    mer_b, mer_s = banks["mercantil"]["buy"], banks["mercantil"]["sell"]
-    pro_b, pro_s = banks["provincial"]["buy"], banks["provincial"]["sell"]
+    # Extraemos datos
+    pm_b = banks["pm"]["buy"]
+    pm_s = banks["pm"]["sell"]
+    ban_b = banks["banesco"]["buy"]
+    ban_s = banks["banesco"]["sell"]
+    mer_b = banks["mercantil"]["buy"]
+    mer_s = banks["mercantil"]["sell"]
+    pro_b = banks["provincial"]["buy"]
+    pro_s = banks["provincial"]["sell"]
     
+    # Validación de carga
     if pm_b == 0:
-        await update.message.reply_text("🔄 Escaneando mercado... intenta en 30 segundos.")
-        return
+        return "🔄 Escaneando mercado... intenta en 30 segundos.", None
 
-    # Icono de Spread (Diferencia entre Compra y Venta del mismo banco)
-    def get_spread_icon(buy, sell):
-        if buy == 0 or sell == 0: return ""
-        spread = ((buy - sell) / buy) * 100
-        # Si hay mucha ganancia (>5%) o poca (<1%)
-        if spread > 5: return "🔥"
-        return ""
+    # Cálculo de Spread (evitando división por cero)
+    spread_pm = ((pm_b - pm_s)/pm_b)*100 if pm_b > 0 else 0
+    spread_ban = ((ban_b - ban_s)/ban_b)*100 if ban_b > 0 else 0
 
-    # Tabla compacta para móviles
-    # CPR = A cuanto venden ellos (Tú compras)
-    # VTA = A cuanto compran ellos (Tú vendes)
+    # TU TABLA ORIGINAL (Idéntica)
     table = f"""
 <b>🏦 MERCADO P2P (Bidireccional)</b>
 
@@ -45,10 +46,29 @@ async def mercado(update: Update, context: ContextTypes.DEFAULT_TYPE):
 <code>{'Provincl':<8} | {pro_b:>6.2f} | {pro_s:>6.2f}</code>
 
 📉 <b>Spread (Ganancia Dealer):</b>
-• PagoMóvil: <b>{((pm_b - pm_s)/pm_b)*100:.2f}%</b>
-• Banesco: <b>{((ban_b - ban_s)/ban_b)*100:.2f}%</b>
+• PagoMóvil: <b>{spread_pm:.2f}%</b>
+• Banesco: <b>{spread_ban:.2f}%</b>
 
 <i>CPR: Tú Compras | VTA: Tú Vendes</i>
-🕐 <i>{MARKET_DATA['last_updated']}</i>
+🕐 <i>{last_update}</i>
 """
-    await update.message.reply_html(table)
+
+    # --- AGREGAMOS LOS BOTONES ---
+    kb = [
+        [InlineKeyboardButton("🔄 Actualizar", callback_data="cmd_mercado")],
+        [InlineKeyboardButton("⬅️ Volver al Promedio", callback_data="refresh_price")]
+    ]
+    
+    return table, InlineKeyboardMarkup(kb)
+
+async def mercado(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Handler principal del comando /mercado"""
+    user = update.effective_user
+    await asyncio.to_thread(track_user, user)
+    await asyncio.to_thread(log_activity, user.id, "/mercado")
+    
+    # Llamamos a la lógica compartida
+    text, markup = await mercado_text_logic()
+    
+    # Si markup es None (porque está cargando), no mandamos botones
+    await update.message.reply_html(text, reply_markup=markup)
