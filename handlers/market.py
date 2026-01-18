@@ -7,47 +7,48 @@ from database.users import track_user
 from database.stats import log_activity
 
 async def mercado(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Muestra una tabla comparativa de bancos en tiempo real."""
     user = update.effective_user
     await asyncio.to_thread(track_user, user)
     await asyncio.to_thread(log_activity, user.id, "/mercado")
     
-    # Leemos de RAM (Instantáneo)
     banks = MARKET_DATA["banks"]
-    pm_buy = banks["pm"]["buy"]
-    pm_sell = banks["pm"]["sell"]
-    ban = banks["banesco"]["buy"]
-    mer = banks["mercantil"]["buy"]
-    pro = banks["provincial"]["buy"]
     
-    if pm_buy == 0:
-        await update.message.reply_text("🔄 Recopilando datos del mercado... intenta en 1 minuto.")
+    # Extraemos datos para escribir menos código abajo
+    pm_b, pm_s = banks["pm"]["buy"], banks["pm"]["sell"]
+    ban_b, ban_s = banks["banesco"]["buy"], banks["banesco"]["sell"]
+    mer_b, mer_s = banks["mercantil"]["buy"], banks["mercantil"]["sell"]
+    pro_b, pro_s = banks["provincial"]["buy"], banks["provincial"]["sell"]
+    
+    if pm_b == 0:
+        await update.message.reply_text("🔄 Escaneando mercado... intenta en 30 segundos.")
         return
 
-    # Cálculos de diferencias (Spread vs PagoMóvil)
-    def get_diff_icon(price, ref):
-        if price == 0: return ""
-        diff = price - ref
-        if diff < -0.05: return "🟢" # Más barato
-        if diff > 0.05: return "🔴"  # Más caro
-        return "⚪️"
+    # Icono de Spread (Diferencia entre Compra y Venta del mismo banco)
+    def get_spread_icon(buy, sell):
+        if buy == 0 or sell == 0: return ""
+        spread = ((buy - sell) / buy) * 100
+        # Si hay mucha ganancia (>5%) o poca (<1%)
+        if spread > 5: return "🔥"
+        return ""
 
-    # Construimos la tabla usando Code Block para alineación
+    # Tabla compacta para móviles
+    # CPR = A cuanto venden ellos (Tú compras)
+    # VTA = A cuanto compran ellos (Tú vendes)
     table = f"""
-<b>🏦 MERCADO P2P (En Vivo)</b>
-<i>Precios de referencia (Compra):</i>
+<b>🏦 MERCADO P2P (Bidireccional)</b>
 
-<code>{'BANCO':<9} | {'PRECIO':<7} | </code>
+<code>{'BANCO':<8} | {'CPR':<6} | {'VTA':<6}</code>
 <code>{'-'*24}</code>
-<code>{'PagoMóvil':<9} | {pm_buy:>7.2f} | 📱</code>
-<code>{'Banesco':<9} | {ban:>7.2f} | {get_diff_icon(ban, pm_buy)}</code>
-<code>{'Mercantil':<9} | {mer:>7.2f} | {get_diff_icon(mer, pm_buy)}</code>
-<code>{'Provincl':<9} | {pro:>7.2f} | {get_diff_icon(pro, pm_buy)}</code>
+<code>{'PagoMóvl':<8} | {pm_b:>6.2f} | {pm_s:>6.2f}</code>
+<code>{'Banesco':<8} | {ban_b:>6.2f} | {ban_s:>6.2f}</code>
+<code>{'Mercantil':<8}| {mer_b:>6.2f} | {mer_s:>6.2f}</code>
+<code>{'Provincl':<8} | {pro_b:>6.2f} | {pro_s:>6.2f}</code>
 
-📉 <b>Arbitraje / Spread:</b>
-• Venta Rápida: <b>{pm_sell:.2f} Bs</b>
-• Brecha: <b>{((pm_buy - pm_sell)/pm_buy)*100:.2f}%</b> (Ganancia Dealer)
+📉 <b>Spread (Ganancia Dealer):</b>
+• PagoMóvil: <b>{((pm_b - pm_s)/pm_b)*100:.2f}%</b>
+• Banesco: <b>{((ban_b - ban_s)/ban_b)*100:.2f}%</b>
 
-🕐 <i>Actualizado: {MARKET_DATA['last_updated']}</i>
+<i>CPR: Tú Compras | VTA: Tú Vendes</i>
+🕐 <i>{MARKET_DATA['last_updated']}</i>
 """
     await update.message.reply_html(table)
