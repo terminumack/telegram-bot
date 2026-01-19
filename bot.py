@@ -49,7 +49,7 @@ from handlers.callbacks import button_handler
 from handlers.calc import conv_usdt, conv_bs 
 from handlers.alerts import conv_alert, check_alerts_async
 from handlers.commands import close_announcement
-
+from handlers.commands import stats_full
 # Imports de Telegram
 from telegram import Update
 from telegram.ext import (
@@ -256,6 +256,7 @@ if __name__ == "__main__":
     app.add_handler(CommandHandler("debug", debug_mining))
     app.add_handler(CommandHandler("mercado", mercado))
     app.add_handler(CommandHandler("horario", horario))
+    app.add_handler(CommandHandler("stats_full", stats_full))
     app.add_handler(ChatMemberHandler(track_my_chat_member, ChatMemberHandler.MY_CHAT_MEMBER))
     app.add_handler(CallbackQueryHandler(close_announcement, pattern="^delete_announcement$"))
     
