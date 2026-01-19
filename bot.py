@@ -7,7 +7,6 @@ from datetime import datetime, time as dt_time
 from handlers.commands import close_announcement
 import pytz
 TIMEZONE = pytz.timezone('America/Caracas')
-from telegram.constants import ChatMemberStatus
 
 # --- 1. IMPORTS DE MEMORIA Y CONFIGURACIÓN ---
 from shared import MARKET_DATA, TIMEZONE
@@ -73,12 +72,6 @@ TOKEN = os.getenv("TOKEN")
 # ==============================================================================
 #  TAREA DE FONDO: ACTUALIZADOR DE PRECIOS
 # ==============================================================================
-async def check_time(update, context):
-    now = datetime.now(TIMEZONE)
-    await update.message.reply_text(f"🕒 Mi hora actual en Caracas es: {now.strftime('%I:%M:%S %p')}")
-
-
-
 async def update_price_task(context: ContextTypes.DEFAULT_TYPE):
     try:
         # 1. ESCANEO MASIVO (Binance Multi-banco + BCV)
@@ -158,38 +151,24 @@ async def update_price_task(context: ContextTypes.DEFAULT_TYPE):
 #  TAREA DE FONDO: REPORTE DIARIO AUTOMÁTICO
 # ==============================================================================
 async def send_daily_report(context: ContextTypes.DEFAULT_TYPE):
-    # 1. Datos de la RAM
-    price = MARKET_DATA.get("price")
-    bcv_usd = MARKET_DATA.get("bcv", {}).get("dolar", 0)
-    last_upd = MARKET_DATA.get("last_updated")
+    binance = MARKET_DATA["price"]
+    if not binance: return
 
-    if not price: return
-
-    # 2. Conteo de hoy
-    from database.stats import get_daily_requests_count
-    consultas_hoy = await asyncio.to_thread(get_daily_requests_count)
-
-    # 3. Elegir saludo según la hora de Caracas
+    # Lógica de Hora
+    from utils.formatting import EMOJI_STATS 
     now = datetime.now(TIMEZONE)
-    header = "☀️ <b>¡Buenos días! Así abre el mercado:</b>" if now.hour < 12 else "🌤 <b>Reporte de la Tarde:</b>"
-
-    # 4. Formatear hora (Tu estilo de /precio)
-    try:
-        pretty_time = last_upd.astimezone(TIMEZONE).strftime("%d/%m/%Y %I:%M:%S %p") if isinstance(last_upd, datetime) else str(last_upd)
-    except:
-        pretty_time = datetime.now(TIMEZONE).strftime("%d/%m/%Y %I:%M:%S %p")
-
-    # 5. Construir mensaje
-    brecha = ((price - bcv_usd) / bcv_usd) * 100 if bcv_usd > 0 else 0
-    body = (
-        f"<i>Promedio P2P (USDT)</i>\n\n🔥 <b>{price:,.2f} Bs</b>\n\n"
-        f"🏛 <b>BCV:</b> {bcv_usd:,.2f} Bs\n📊 <b>Brecha:</b> {brecha:.2f}%\n"
-        f"🏪 <b>Actualizado:</b> {pretty_time}\n👁 {consultas_hoy:,} consultas hoy"
-    )
-
-    # 6. Enviar a la cola del Worker
-    from services.worker import queue_broadcast
-    await asyncio.to_thread(queue_broadcast, f"{header}\n\n{body}")
+    hour = now.hour
+    
+    header = "☀️ <b>¡Buenos días! Así abre el mercado:</b>" if hour < 12 else "🌤 <b>Reporte de la Tarde:</b>"
+    
+    body = build_price_message(MARKET_DATA, requests_count=0)
+    body = body.replace(f"{EMOJI_STATS} <b>MONITOR DE TASAS</b>\n\n", "")
+    
+    text = f"{header}\n\n{body}"
+    
+    # Enviamos a la cola (El worker le pondrá el botón)
+    await asyncio.to_thread(queue_broadcast, text)
+    logging.info(f"📢 Reporte diario ({'Mañana' if hour < 12 else 'Tarde'}) encolado.")
 
 # ==============================================================================
 #  COMANDO PRINCIPAL: /PRECIO
@@ -257,68 +236,6 @@ if __name__ == "__main__":
             
     except Exception as e:
         print(f"⚠️ Error cargando memoria: {e}")
-    # --- 1. VERIFICACIÓN DE TOKEN ---
-    if not TOKEN:
-        print("❌ Error: No hay TOKEN definido en las variables de entorno.")
-        exit(1)
-        
-    # --- 2. CONSTRUCCIÓN DE LA APP ---
-    # Esto crea la base del bot y el motor de alarmas (JobQueue)
-    app = ApplicationBuilder().token(TOKEN).build()
-
-    # --- 3. REGISTRO DE COMANDOS (Handlers) ---
-    # Asegúrate de tener todos tus handlers aquí
-    app.add_handler(CommandHandler("start", start_command))
-    app.add_handler(CommandHandler("precio", precio))
-    app.add_handler(CommandHandler("mercado", mercado))
-    # ... (añade aquí el resto de tus handlers como 'ia', 'stats', etc.)
-    app.add_handler(CallbackQueryHandler(button_handler))
-
-    # ==========================================================================
-    # 4. CONFIGURACIÓN DEL RELOJ (JOB QUEUE) - LA CORRECCIÓN
-    # ==========================================================================
-    # --- 4. CONFIGURACIÓN DEL RELOJ (JOB QUEUE) ---
-    job_queue = app.job_queue 
-
-    if job_queue:
-        print("⏰ Configurando tareas programadas...")
-        
-        # CORRECCIÓN: Definimos una función asíncrona real, NO un lambda
-        async def heartbeat(context):
-            logging.info("⏰ [RELOJ VIVO] El motor de alarmas está funcionando.")
-
-        # 1. Latido del corazón (Corregido)
-        job_queue.run_repeating(heartbeat, interval=60, first=10)
-        
-        # 2. Actualización de precios
-        # IMPORTANTE: Asegúrate de que 'update_price_task' esté definida como 'async def'
-        job_queue.run_repeating(update_price_task, interval=300, first=5)
-
-        # 3. Reporte de prueba para hoy (Pon la hora actual + 5 minutos)
-        # Si son las 4:30 PM, pon hour=16, minute=35
-        job_queue.run_daily(
-            send_daily_report, 
-            time=dt_time(hour=16, minute=35, tzinfo=TIMEZONE),
-            name="prueba_tarde"
-        )
-
-        # 4. Horarios fijos de mañana
-        job_queue.run_daily(send_daily_report, time=dt_time(hour=9, minute=0, tzinfo=TIMEZONE))
-        job_queue.run_daily(send_daily_report, time=dt_time(hour=13, minute=0, tzinfo=TIMEZONE))
-        
-        print("✅ Alarmas configuradas correctamente.")
-
-    # --- 5. ENCENDER EL TRABAJADOR (WORKER) ---
-    # Esto activa el archivo 'services/worker.py' para mandar mensajes masivos
-    from services.worker import background_worker
-    loop = asyncio.get_event_loop()
-    loop.create_task(background_worker())
-
-    # --- 6. INICIAR EL BOT ---
-    print(f"🚀 Tasabinance Bot V51 INICIADO")
-    
-    # Si usas Webhook en Railway, aquí iría la lógica de run_webhook
-    app.run_polling()
     # -----------------------------------
     
     if not TOKEN:
@@ -350,6 +267,12 @@ if __name__ == "__main__":
     
     app.add_handler(CallbackQueryHandler(button_handler))
 
+    # --- TAREAS AUTOMÁTICAS ---
+    jq = app.job_queue
+    if jq:
+        jq.run_repeating(update_price_task, interval=60, first=5)
+        jq.run_daily(send_daily_report, time=dt_time(hour=9, minute=0, tzinfo=TIMEZONE))
+        jq.run_daily(send_daily_report, time=dt_time(hour=13, minute=0, tzinfo=TIMEZONE))
 
     print(f"🚀 Tasabinance Bot V51 (MODULAR + PERSISTENCIA) INICIADO")
 
