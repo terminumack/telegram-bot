@@ -169,6 +169,19 @@ async def send_daily_report(context: ContextTypes.DEFAULT_TYPE):
     await asyncio.to_thread(queue_broadcast, text)
     logging.info(f"📢 Reporte diario ({'Mañana' if hour < 12 else 'Tarde'}) encolado.")
 
+# --- COMANDO PARA FORZAR REPORTE (ADMIN) ---
+async def forzar_reporte(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    # Verificamos que seas tú (el admin)
+    if update.effective_user.id != ADMIN_ID: 
+        return
+
+    await update.message.reply_text("🚀 Generando reporte manual y enviando a la cola...")
+    
+    # Llamamos a la función que ya tienes programada
+    await send_daily_report(context)
+    
+    await update.message.reply_text("✅ ¡Listo! El reporte ya está en la cola del Worker.")
+
 # ==============================================================================
 #  COMANDO PRINCIPAL: /PRECIO
 # ==============================================================================
