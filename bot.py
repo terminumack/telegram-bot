@@ -277,34 +277,32 @@ if __name__ == "__main__":
     # ==========================================================================
     # 4. CONFIGURACIÓN DEL RELOJ (JOB QUEUE) - LA CORRECCIÓN
     # ==========================================================================
+   job_queue = app.job_queue 
+
     if job_queue:
         print("⏰ Configurando tareas programadas...")
         
-        # 1. Función asíncrona para el latido (CORRECCIÓN DEL ERROR)
+        # Función asíncrona para el latido (evita el error de la lambda)
         async def heartbeat(context):
             logging.info("⏰ [RELOJ VIVO] El motor de alarmas está funcionando.")
 
-        # 2. Registrar el latido correctamente
+        # Registro de tareas
         job_queue.run_repeating(heartbeat, interval=60, first=10)
-        
-        # 3. Actualizador de precios cada 5 minutos
         job_queue.run_repeating(update_price_task, interval=300, first=5)
 
-        # 4. REPORTE DIARIO: 09:00 AM
-        job_queue.run_daily(
-            send_daily_report, 
-            time=dt_time(hour=9, minute=0, tzinfo=TIMEZONE),
-            name="reporte_manana"
-        )
-        
-        # 5. REPORTE DE PRUEBA (Ajusta a 5 min adelante de tu reloj)
-        # Ejemplo: si son las 3:10 PM, usa hour=15, minute=15
+        # --- REPORTE DE PRUEBA PARA HOY ---
+        # Si en Caracas son las 3:10 PM, pon hour=15, minute=15
         job_queue.run_daily(
             send_daily_report, 
             time=dt_time(hour=15, minute=15, tzinfo=TIMEZONE),
-            name="reporte_tarde"
+            name="prueba_tarde"
         )
-        print("✅ Alarmas configuradas sin errores de lambda.")
+
+        # --- HORARIOS FIJOS ---
+        job_queue.run_daily(send_daily_report, time=dt_time(hour=9, minute=0, tzinfo=TIMEZONE))
+        job_queue.run_daily(send_daily_report, time=dt_time(hour=13, minute=0, tzinfo=TIMEZONE))
+        
+        print("✅ Alarmas configuradas con éxito.")
 
     # --- 5. ENCENDER EL TRABAJADOR (WORKER) ---
     # Esto activa el archivo 'services/worker.py' para mandar mensajes masivos
