@@ -8,8 +8,11 @@ from urllib.parse import quote
 from telegram.constants import ParseMode
 from telegram import InlineKeyboardButton, InlineKeyboardMarkup
 import pytz
-from database.stats import get_daily_requests_count # Asegúrate de importar esto
-
+from database.stats import (
+    get_daily_requests_count, 
+    get_detailed_report_text, 
+    get_stats_full_text  # <--- AÑADE ESTO AQUÍ
+)
 # --- IMPORTS DE NUESTRA ESTRUCTURA ---
 from shared import MARKET_DATA, TIMEZONE
 from database.users import track_user
