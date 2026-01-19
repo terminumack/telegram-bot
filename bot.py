@@ -277,31 +277,36 @@ if __name__ == "__main__":
     # ==========================================================================
     # 4. CONFIGURACIÓN DEL RELOJ (JOB QUEUE) - LA CORRECCIÓN
     # ==========================================================================
-    job_queue = app.job_queue  # <--- Aquí es donde se define 'job_queue' correctamente
+    # --- 4. CONFIGURACIÓN DEL RELOJ (JOB QUEUE) ---
+    job_queue = app.job_queue 
 
     if job_queue:
         print("⏰ Configurando tareas programadas...")
         
-        # Latido del corazón: para ver en logs que el bot sigue despierto
-        job_queue.run_repeating(lambda ctx: logging.info("⏰ [RELOJ VIVO]"), interval=60, first=10)
+        # CORRECCIÓN: Definimos una función asíncrona real, NO un lambda
+        async def heartbeat(context):
+            logging.info("⏰ [RELOJ VIVO] El motor de alarmas está funcionando.")
+
+        # 1. Latido del corazón (Corregido)
+        job_queue.run_repeating(heartbeat, interval=60, first=10)
         
-        # Actualizador de precios: Refresca MARKET_DATA cada 5 minutos
+        # 2. Actualización de precios
+        # IMPORTANTE: Asegúrate de que 'update_price_task' esté definida como 'async def'
         job_queue.run_repeating(update_price_task, interval=300, first=5)
 
-        # REPORTE DIARIO: 09:00 AM
+        # 3. Reporte de prueba para hoy (Pon la hora actual + 5 minutos)
+        # Si son las 4:30 PM, pon hour=16, minute=35
         job_queue.run_daily(
             send_daily_report, 
-            time=dt_time(hour=9, minute=0, tzinfo=TIMEZONE),
-            name="reporte_manana"
+            time=dt_time(hour=16, minute=35, tzinfo=TIMEZONE),
+            name="prueba_tarde"
         )
+
+        # 4. Horarios fijos de mañana
+        job_queue.run_daily(send_daily_report, time=dt_time(hour=9, minute=0, tzinfo=TIMEZONE))
+        job_queue.run_daily(send_daily_report, time=dt_time(hour=13, minute=0, tzinfo=TIMEZONE))
         
-        # REPORTE DIARIO: 01:00 PM (13:00)
-        job_queue.run_daily(
-            send_daily_report, 
-            time=dt_time(hour=14, minute=25, tzinfo=TIMEZONE),
-            name="reporte_tarde"
-        )
-        print("✅ Alarmas de las 09:00 AM y 13:00 PM activadas.")
+        print("✅ Alarmas configuradas correctamente.")
 
     # --- 5. ENCENDER EL TRABAJADOR (WORKER) ---
     # Esto activa el archivo 'services/worker.py' para mandar mensajes masivos
