@@ -270,6 +270,7 @@ if __name__ == "__main__":
     app.add_handler(CommandHandler("mercado", mercado))
     app.add_handler(CommandHandler("horario", horario))
     app.add_handler(CommandHandler("stats_full", stats_full))
+    app.add_handler(CommandHandler("forzar_reporte", forzar_reporte))
     app.add_handler(ChatMemberHandler(track_my_chat_member, ChatMemberHandler.MY_CHAT_MEMBER))
     app.add_handler(CallbackQueryHandler(close_announcement, pattern="^delete_announcement$"))
     
