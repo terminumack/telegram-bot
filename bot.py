@@ -292,9 +292,7 @@ if __name__ == "__main__":
         # ❌ COMENTA O BORRA TUS PRUEBAS ANTERIORES DE RUN_DAILY
         # jq.run_daily(send_daily_report, time=dt_time(hour=...)) 
 
-        # ✅ AGREGA ESTO PARA PROBAR AHORA MISMO
-        print("⏱️ Configurando disparo de prueba en 10 segundos...")
-        jq.run_once(send_daily_report, 10)
+        
 
     print(f"🚀 Tasabinance Bot V51 (MODULAR + PERSISTENCIA) INICIADO")
 
