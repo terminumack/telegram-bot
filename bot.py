@@ -158,44 +158,65 @@ async def update_price_task(context: ContextTypes.DEFAULT_TYPE):
 #  TAREA DE FONDO: REPORTE DIARIO AUTOMÁTICO
 # ==============================================================================
 async def send_daily_report(context: ContextTypes.DEFAULT_TYPE):
-    # 1. LOG DE ENTRADA: Saber si la alarma sonó
-    ahora_check = datetime.now(TIMEZONE)
-    logging.info(f"🔔 [DEBUG] La alarma se ha activado a las: {ahora_check.strftime('%H:%M:%S')}")
+    """
+    Simula el comando /precio con encabezados personalizados 
+    y lo envía a la cola de difusión.
+    """
+    # 1. Extraer datos frescos de la RAM
+    price = MARKET_DATA.get("price")
+    bcv_usd = MARKET_DATA.get("bcv", {}).get("dolar", 0)
+    last_upd = MARKET_DATA.get("last_updated")
 
-    binance = MARKET_DATA.get("price")
-    
-    # 2. LOG DE DATOS: Ver si el problema es que no hay precio
-    if not binance: 
-        logging.warning("⚠️ [DEBUG] Abortando reporte: MARKET_DATA['price'] está vacío o es 0.")
+    if not price:
+        logging.warning("⚠️ Abortando reporte: No hay datos de precio en RAM.")
         return
 
-    logging.info(f"✅ [DEBUG] Precio encontrado: {binance}. Procediendo a construir mensaje...")
+    # 2. Obtener estadísticas (Igual que en /precio)
+    from database.stats import get_daily_requests_count
+    consultas_hoy = await asyncio.to_thread(get_daily_requests_count)
 
+    # 3. Lógica de saludo y hora
+    now = datetime.now(TIMEZONE)
+    hour = now.hour
+    
+    # --- EL ENCABEZADO QUE PEDISTE ---
+    if hour < 12:
+        header = "☀️ <b>¡Buenos días! Así abre el mercado:</b>"
+    else:
+        header = "🌤 <b>Reporte de la Tarde:</b>"
+
+    # 4. Formateo de la hora de actualización (Tu lógica de maquillaje)
     try:
-        # Lógica de Hora
-        from utils.formatting import EMOJI_STATS 
-        now = datetime.now(TIMEZONE)
-        hour = now.hour
-        
-        header = "☀️ <b>¡Buenos días! Así abre el mercado:</b>" if hour < 12 else "🌤 <b>Reporte de la Tarde:</b>"
-        
-        body = build_price_message(MARKET_DATA, requests_count=0)
-        body = body.replace(f"{EMOJI_STATS} <b>MONITOR DE TASAS</b>\n\n", "")
-        
-        text = f"{header}\n\n{body}"
-        
-        # 3. LOG DE PRE-ENVÍO: Ver si el mensaje se generó bien
-        logging.info(f"📝 [DEBUG] Mensaje generado (Longitud: {len(text)} caracteres). Enviando a la cola...")
-        
-        # Enviamos a la cola
-        await asyncio.to_thread(queue_broadcast, text)
-        
-        # 4. LOG DE ÉXITO: Confirmación final
-        logging.info(f"🚀 [DEBUG] Reporte diario ({'Mañana' if hour < 12 else 'Tarde'}) ENCOLADO EXITOSAMENTE.")
+        if isinstance(last_upd, datetime):
+            pretty_time = last_upd.astimezone(TIMEZONE).strftime("%d/%m/%Y %I:%M:%S %p")
+        else:
+            pretty_time = datetime.now(TIMEZONE).strftime("%d/%m/%Y %I:%M:%S %p")
+    except Exception:
+        pretty_time = str(last_upd)
 
-    except Exception as e:
-        # 5. LOG DE ERROR: Capturar cualquier fallo inesperado
-        logging.error(f"❌ [DEBUG] Error crítico dentro de send_daily_report: {e}")
+    # 5. Cálculo de Brecha
+    brecha = 0
+    if bcv_usd > 0:
+        brecha = ((price - bcv_usd) / bcv_usd) * 100
+
+    # 6. CONSTRUCCIÓN DEL CUERPO (Espejo de /precio)
+    body = (
+        f"<i>Promedio P2P (USDT)</i>\n\n"
+        f"🔥 <b>{price:,.2f} Bs</b>\n\n"
+        f"🏛 <b>BCV:</b> {bcv_usd:,.2f} Bs\n"
+        f"📊 <b>Brecha:</b> {brecha:.2f}%\n"
+        f"🏪 <b>Actualizado:</b> {pretty_time}\n"
+        f"👁 {consultas_hoy:,} consultas hoy"
+    )
+
+    # UNIÓN: Encabezado + Cuerpo
+    msg_final = f"{header}\n\n{body}"
+
+    # 7. ENVIAR AL BUZÓN (Para que el Worker lo reparta a los 14k usuarios)
+    from services.worker import queue_broadcast
+    await asyncio.to_thread(queue_broadcast, msg_final)
+    
+    logging.info(f"✅ Reporte de las {hour}:00 encolado exitosamente.")
 
 # ==============================================================================
 #  COMANDO PRINCIPAL: /PRECIO
@@ -299,7 +320,7 @@ if __name__ == "__main__":
     if jq:
         jq.run_repeating(update_price_task, interval=60, first=5)
         jq.run_daily(send_daily_report, time=dt_time(hour=11, minute=30, tzinfo=TIMEZONE))
-        jq.run_daily(send_daily_report, time=dt_time(hour=13, minute=0, tzinfo=TIMEZONE))
+        jq.run_daily(send_daily_report, time=dt_time(hour=13, minute=37, tzinfo=TIMEZONE))
 
     print(f"🚀 Tasabinance Bot V51 (MODULAR + PERSISTENCIA) INICIADO")
 
