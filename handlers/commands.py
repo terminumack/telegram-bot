@@ -7,6 +7,8 @@ from telegram.ext import ContextTypes
 from urllib.parse import quote
 from telegram.constants import ParseMode
 from telegram import InlineKeyboardButton, InlineKeyboardMarkup
+import pytz
+from database.stats import get_daily_requests_count # Asegúrate de importar esto
 
 # --- IMPORTS DE NUESTRA ESTRUCTURA ---
 from shared import MARKET_DATA, TIMEZONE
@@ -169,12 +171,6 @@ async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 # --- COMANDO /PRECIO (Velocidad de la Luz) ---
 @rate_limited(1.5) # Anti-Spam rápido
-from datetime import datetime
-import pytz
-from database.stats import get_daily_requests_count # Asegúrate de importar esto
-
-# --- COMANDO /PRECIO (Velocidad de la Luz) ---
-@rate_limited(1.5)
 async def precio(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user = update.effective_user
     await asyncio.to_thread(track_user, user)
