@@ -73,6 +73,12 @@ TOKEN = os.getenv("TOKEN")
 # ==============================================================================
 #  TAREA DE FONDO: ACTUALIZADOR DE PRECIOS
 # ==============================================================================
+async def check_time(update, context):
+    now = datetime.now(TIMEZONE)
+    await update.message.reply_text(f"🕒 Mi hora actual en Caracas es: {now.strftime('%I:%M:%S %p')}")
+
+
+
 async def update_price_task(context: ContextTypes.DEFAULT_TYPE):
     try:
         # 1. ESCANEO MASIVO (Binance Multi-banco + BCV)
@@ -152,24 +158,44 @@ async def update_price_task(context: ContextTypes.DEFAULT_TYPE):
 #  TAREA DE FONDO: REPORTE DIARIO AUTOMÁTICO
 # ==============================================================================
 async def send_daily_report(context: ContextTypes.DEFAULT_TYPE):
-    binance = MARKET_DATA["price"]
-    if not binance: return
+    # 1. LOG DE ENTRADA: Saber si la alarma sonó
+    ahora_check = datetime.now(TIMEZONE)
+    logging.info(f"🔔 [DEBUG] La alarma se ha activado a las: {ahora_check.strftime('%H:%M:%S')}")
 
-    # Lógica de Hora
-    from utils.formatting import EMOJI_STATS 
-    now = datetime.now(TIMEZONE)
-    hour = now.hour
+    binance = MARKET_DATA.get("price")
     
-    header = "☀️ <b>¡Buenos días! Así abre el mercado:</b>" if hour < 12 else "🌤 <b>Reporte de la Tarde:</b>"
-    
-    body = build_price_message(MARKET_DATA, requests_count=0)
-    body = body.replace(f"{EMOJI_STATS} <b>MONITOR DE TASAS</b>\n\n", "")
-    
-    text = f"{header}\n\n{body}"
-    
-    # Enviamos a la cola (El worker le pondrá el botón)
-    await asyncio.to_thread(queue_broadcast, text)
-    logging.info(f"📢 Reporte diario ({'Mañana' if hour < 12 else 'Tarde'}) encolado.")
+    # 2. LOG DE DATOS: Ver si el problema es que no hay precio
+    if not binance: 
+        logging.warning("⚠️ [DEBUG] Abortando reporte: MARKET_DATA['price'] está vacío o es 0.")
+        return
+
+    logging.info(f"✅ [DEBUG] Precio encontrado: {binance}. Procediendo a construir mensaje...")
+
+    try:
+        # Lógica de Hora
+        from utils.formatting import EMOJI_STATS 
+        now = datetime.now(TIMEZONE)
+        hour = now.hour
+        
+        header = "☀️ <b>¡Buenos días! Así abre el mercado:</b>" if hour < 12 else "🌤 <b>Reporte de la Tarde:</b>"
+        
+        body = build_price_message(MARKET_DATA, requests_count=0)
+        body = body.replace(f"{EMOJI_STATS} <b>MONITOR DE TASAS</b>\n\n", "")
+        
+        text = f"{header}\n\n{body}"
+        
+        # 3. LOG DE PRE-ENVÍO: Ver si el mensaje se generó bien
+        logging.info(f"📝 [DEBUG] Mensaje generado (Longitud: {len(text)} caracteres). Enviando a la cola...")
+        
+        # Enviamos a la cola
+        await asyncio.to_thread(queue_broadcast, text)
+        
+        # 4. LOG DE ÉXITO: Confirmación final
+        logging.info(f"🚀 [DEBUG] Reporte diario ({'Mañana' if hour < 12 else 'Tarde'}) ENCOLADO EXITOSAMENTE.")
+
+    except Exception as e:
+        # 5. LOG DE ERROR: Capturar cualquier fallo inesperado
+        logging.error(f"❌ [DEBUG] Error crítico dentro de send_daily_report: {e}")
 
 # ==============================================================================
 #  COMANDO PRINCIPAL: /PRECIO
