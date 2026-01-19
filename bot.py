@@ -316,11 +316,13 @@ if __name__ == "__main__":
     app.add_handler(CallbackQueryHandler(button_handler))
 
     # --- TAREAS AUTOMÁTICAS ---
-    jq = app.job_queue
     if jq:
-        jq.run_repeating(update_price_task, interval=60, first=5)
-        jq.run_daily(send_daily_report, time=dt_time(hour=11, minute=30, tzinfo=TIMEZONE))
-        jq.run_daily(send_daily_report, time=dt_time(hour=13, minute=37, tzinfo=TIMEZONE))
+        # 1. Tarea que escribe en el log CADA MINUTO (Para ver si el motor late)
+        jq.run_repeating(lambda ctx: logging.info("⏰ [RELOJ VIVO] El motor de alarmas está funcionando."), interval=60, first=10)
+        
+        # 2. Mira tu reloj ahora mismo (Ejemplo: son las 1:55 PM)
+        # Pon el reporte 3 MINUTOS en el futuro de lo que diga tu reloj
+        jq.run_daily(send_daily_report, time=dt_time(hour=13, minute=50, tzinfo=TIMEZONE))
 
     print(f"🚀 Tasabinance Bot V51 (MODULAR + PERSISTENCIA) INICIADO")
 
