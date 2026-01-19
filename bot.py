@@ -286,17 +286,16 @@ if __name__ == "__main__":
    # --- TAREAS AUTOMÁTICAS ---
     jq = app.job_queue
     if jq:
-        # 1. Tarea de precios (mantiene la memoria actualizada cada minuto)
+        # 1. Tarea de precios (cada 60s)
         jq.run_repeating(update_price_task, interval=60, first=5)
         
-        # 2. PROGRAMACIÓN DE REPORTES (Horarios Reales de Venezuela)
+        # 2. PROGRAMACIÓN DE REPORTES (Horarios Reales)
         job_morning = jq.run_daily(send_daily_report, time=dt_time(hour=9, minute=0, tzinfo=TIMEZONE))
         job_afternoon = jq.run_daily(send_daily_report, time=dt_time(hour=13, minute=0, tzinfo=TIMEZONE))
 
-        # 3. VERIFICACIÓN DE SEGURIDAD (MÉTODO INFALIBLE)
+        # 3. VERIFICACIÓN VISUAL (SIN ERRORES)
         print("\n📅 --- CONFIRMACIÓN DE HORARIOS ---")
-        # En lugar de pedir la fecha (que cambia de nombre según la versión),
-        # imprimimos la tarea completa. Si sale <Job...>, está programada.
+        # Imprimimos el objeto crudo. Si ves <Job ...>, está activo.
         print(f"☀️ Tarea Mañana (09:00): {job_morning}")
         print(f"🌤 Tarea Tarde  (13:00): {job_afternoon}")
         print("✅ Estado: PROGRAMADO CORRECTAMENTE.")
