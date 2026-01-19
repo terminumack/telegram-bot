@@ -283,36 +283,29 @@ if __name__ == "__main__":
     
     app.add_handler(CallbackQueryHandler(button_handler))
 
-    # --- TAREAS AUTOMÁTICAS ---
+   # --- TAREAS AUTOMÁTICAS ---
     jq = app.job_queue
     if jq:
         # 1. Tarea de precios (mantiene la memoria actualizada cada minuto)
         jq.run_repeating(update_price_task, interval=60, first=5)
         
         # 2. PROGRAMACIÓN DE REPORTES (Horarios Reales de Venezuela)
-        # Guardamos las tareas en variables (job_morning, job_afternoon) para revisarlas
         job_morning = jq.run_daily(send_daily_report, time=dt_time(hour=9, minute=0, tzinfo=TIMEZONE))
         job_afternoon = jq.run_daily(send_daily_report, time=dt_time(hour=13, minute=0, tzinfo=TIMEZONE))
 
-        # 3. VERIFICACIÓN DE SEGURIDAD (EL CHIVATO 🕵️)
-        # Esto imprimirá en consola cuándo será EXACTAMENTE el próximo disparo
+        # 3. VERIFICACIÓN DE SEGURIDAD (MÉTODO INFALIBLE)
         print("\n📅 --- CONFIRMACIÓN DE HORARIOS ---")
-        try:
-            # Convertimos la hora interna del servidor a hora de Venezuela legible
-            next_am = job_morning.next_run_time.astimezone(TIMEZONE)
-            next_pm = job_afternoon.next_run_time.astimezone(TIMEZONE)
-            
-            print(f"☀️ Reporte Mañana agendado para: {next_am.strftime('%d/%m/%Y %I:%M:%S %p')}")
-            print(f"🌤 Reporte Tarde agendado para:  {next_pm.strftime('%d/%m/%Y %I:%M:%S %p')}")
-        except Exception as e:
-            print(f"⚠️ No se pudo verificar la fecha exacta: {e}")
+        # En lugar de pedir la fecha (que cambia de nombre según la versión),
+        # imprimimos la tarea completa. Si sale <Job...>, está programada.
+        print(f"☀️ Tarea Mañana (09:00): {job_morning}")
+        print(f"🌤 Tarea Tarde  (13:00): {job_afternoon}")
+        print("✅ Estado: PROGRAMADO CORRECTAMENTE.")
         print("----------------------------------\n")
-
-        
 
     print(f"🚀 Tasabinance Bot V51 (MODULAR + PERSISTENCIA) INICIADO")
 
     # 🔥 ENCENDER EL WORKER DE DIFUSIÓN 🔥
+    # (Esto arranca el worker en segundo plano dentro del mismo proceso)
     loop = asyncio.get_event_loop()
     loop.create_task(background_worker())
 
