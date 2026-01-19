@@ -5,6 +5,8 @@ import asyncio
 from telegram import Bot, InlineKeyboardMarkup, InlineKeyboardButton
 from telegram.constants import ParseMode
 
+print("👻 FANTASMA: Soy el worker de la RAÍZ")
+
 # Configuración
 TOKEN = os.getenv("TOKEN")
 DATABASE_URL = os.getenv("DATABASE_URL")
