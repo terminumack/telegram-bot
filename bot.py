@@ -277,7 +277,7 @@ if __name__ == "__main__":
     # ==========================================================================
     # 4. CONFIGURACIÓN DEL RELOJ (JOB QUEUE) - LA CORRECCIÓN
     # ==========================================================================
-   job_queue = app.job_queue 
+    job_queue = app.job_queue 
 
     if job_queue:
         print("⏰ Configurando tareas programadas...")
