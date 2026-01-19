@@ -248,6 +248,11 @@ if __name__ == "__main__":
             
     except Exception as e:
         print(f"⚠️ Error cargando memoria: {e}")
+
+async def start_background_tasks(app):
+    # Esto arranca el worker DESPUÉS de que el bot esté listo
+    asyncio.create_task(background_worker())
+    print("👷 Worker de Difusión: Conectado al ciclo de vida del Bot.")
     # -----------------------------------
     
     if not TOKEN:
@@ -255,6 +260,7 @@ if __name__ == "__main__":
         exit(1)
         
     app = ApplicationBuilder().token(TOKEN).build()
+    app.post_init = start_background_tasks
 
     # --- REGISTRO DE COMANDOS ---
     app.add_handler(CommandHandler("start", start_command))
