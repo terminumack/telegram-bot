@@ -9,6 +9,7 @@ from datetime import datetime
 import pytz
 from database.db_pool import get_conn, put_conn
 
+
 # Configuración
 DATABASE_URL = os.getenv("DATABASE_URL")
 
@@ -237,62 +238,76 @@ def get_vote_results():
     except Exception: return 0, 0
     finally: put_conn(conn)
 
-import io
-import matplotlib.pyplot as plt
-from datetime import datetime
-import pytz
-from database.db_pool import get_conn, put_conn
-
-def generate_stats_chart():
-    """Genera la imagen con gráficos de crecimiento y uso."""
+def get_detailed_report_text():
     conn = get_conn()
-    if not conn: return None
-    buf = io.BytesIO()
+    if not conn: return "⚠️ Error: No se pudo conectar a la DB."
+    
     try:
         with conn.cursor() as cur:
-            # 1. Crecimiento de usuarios (7 días - Hora Caracas)
+            # 1. KPIs Globales
+            cur.execute("SELECT COUNT(*) FROM users")
+            total = cur.fetchone()[0]
+            
+            cur.execute("SELECT COUNT(*) FROM users WHERE status = 'blocked'")
+            blocked = cur.fetchone()[0]
+            
+            # 2. Actividad de Hoy (Caracas)
             cur.execute("""
-                SELECT TO_CHAR(joined_at AT TIME ZONE 'America/Caracas', 'MM-DD'), COUNT(*) 
-                FROM users 
-                WHERE joined_at >= (NOW() AT TIME ZONE 'America/Caracas')::date - INTERVAL '7 DAYS'
-                GROUP BY 1 ORDER BY 1
+                SELECT COUNT(*) FROM users 
+                WHERE joined_at >= (NOW() AT TIME ZONE 'America/Caracas')::date
             """)
-            growth_data = cur.fetchall()
-
-            # 2. Comandos más usados
+            new_today = cur.fetchone()[0]
+            
             cur.execute("""
-                SELECT command, COUNT(*) FROM activity_logs 
-                GROUP BY command ORDER BY 2 DESC LIMIT 5
+                SELECT COUNT(*) FROM activity_logs 
+                WHERE created_at >= (NOW() AT TIME ZONE 'America/Caracas')::date
             """)
-            cmd_data = cur.fetchall()
+            queries_today = cur.fetchone()[0]
 
-        # Configuración estética del gráfico (Modo Oscuro)
-        plt.style.use('dark_background')
-        fig, (ax1, ax2) = plt.subplots(1, 2, figsize=(12, 5))
-        fig.patch.set_facecolor('#121212')
+            # 3. Referidos y Alertas
+            cur.execute("SELECT COUNT(*) FROM users WHERE referred_by IS NOT NULL")
+            referrals = cur.fetchone()[0]
+            
+            cur.execute("SELECT COUNT(*) FROM alerts WHERE is_active = True")
+            active_alerts = cur.fetchone()[0]
 
-        # Gráfico de Barras: Crecimiento
-        if growth_data:
-            dates = [row[0] for row in growth_data]
-            counts = [row[1] for row in growth_data]
-            bars = ax1.bar(dates, counts, color='#F3BA2F')
-            ax1.set_title('Nuevos Usuarios (7d)', fontsize=12, pad=10)
-            ax1.bar_label(bars, padding=3, color='white')
-        
-        # Gráfico de Torta: Comandos
-        if cmd_data:
-            labels = [row[0] for row in cmd_data]
-            sizes = [row[1] for row in cmd_data]
-            ax2.pie(sizes, labels=labels, autopct='%1.1f%%', startangle=90)
-            ax2.set_title('Comandos Top', fontsize=12, pad=10)
+            # 4. Top 5 Comandos (Dinámico)
+            cur.execute("""
+                SELECT command, COUNT(*) 
+                FROM activity_logs 
+                GROUP BY command 
+                ORDER BY 2 DESC 
+                LIMIT 5
+            """)
+            top_commands = cur.fetchall()
 
-        plt.tight_layout()
-        plt.savefig(buf, format='png', facecolor='#121212')
-        buf.seek(0)
-        plt.close()
-        return buf
+        # Cálculos rápidos
+        active_real = total - blocked
+        churn_rate = (blocked / total * 100) if total > 0 else 0
+
+        # Construcción del Mensaje
+        report = (
+            f"📊 <b>REPORTE EJECUTIVO TASABINANCE</b>\n"
+            f"<i>Corte: Medianoche Caracas</i>\n\n"
+            f"👥 <b>Usuarios Totales:</b> {total:,}\n"
+            f"✅ <b>Usuarios Activos:</b> {active_real:,}\n"
+            f"🚫 <b>Bloqueados:</b> {blocked:,} ({churn_rate:.1f}%)\n"
+            f"------------------------------\n"
+            f"📈 <b>Nuevos Hoy:</b> +{new_today}\n"
+            f"📥 <b>Consultas Hoy:</b> {queries_today:,}\n"
+            f"🤝 <b>Referidos:</b> {referrals:,}\n"
+            f"🔔 <b>Alertas Activas:</b> {active_alerts:,}\n"
+        )
+
+        if top_commands:
+            report += "\n🤖 <b>Top 5 Comandos:</b>\n"
+            for cmd, count in top_commands:
+                report += f"• <code>{cmd}</code>: {count:,}\n"
+
+        report += f"\n<i>Sistema V51 (Estable)</i> ✅"
+        return report
+
     except Exception as e:
-        print(f"❌ Error en gráfico: {e}")
-        return None
+        return f"❌ Error calculando métricas: {str(e)}"
     finally:
         put_conn(conn)
