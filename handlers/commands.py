@@ -367,9 +367,28 @@ async def prediccion(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 # --- COMANDOS ADMIN (Sin límites) ---
 async def stats(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    if update.effective_user.id != ADMIN_ID: return
-    report = await asyncio.to_thread(get_detailed_report_text)
-    await update.message.reply_html(report)
+    ADMIN_ID = 533888411 # Tu ID
+    if update.effective_user.id != ADMIN_ID:
+        return
+
+    # Mensaje de espera (opcional, pero profesional)
+    status_msg = await update.message.reply_text("📊 Generando reporte ejecutivo...")
+
+    # Ejecutamos las tareas pesadas en hilos separados
+    chart = await asyncio.to_thread(generate_stats_chart)
+    report_text = await asyncio.to_thread(get_detailed_report_text)
+
+    if chart:
+        # Enviamos la foto con el reporte como leyenda (caption)
+        await context.bot.send_photo(
+            chat_id=update.effective_chat.id,
+            photo=chart,
+            caption=report_text,
+            parse_mode='HTML'
+        )
+        await status_msg.delete()
+    else:
+        await status_msg.edit_text(f"❌ Error al generar gráficos.\n\n{report_text}")
 
 async def global_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if update.effective_user.id != ADMIN_ID: return
