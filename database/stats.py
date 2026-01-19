@@ -311,3 +311,76 @@ def get_detailed_report_text():
         return f"❌ Error calculando métricas: {str(e)}"
     finally:
         put_conn(conn)
+
+def get_stats_full_text():
+    conn = get_conn()
+    if not conn: return "⚠️ Error de conexión"
+    try:
+        with conn.cursor() as cur:
+            # 1. Usuarios Únicos Hoy (DAU)
+            cur.execute("""
+                SELECT COUNT(DISTINCT user_id) FROM activity_logs 
+                WHERE created_at >= (NOW() AT TIME ZONE 'America/Caracas')::date
+            """)
+            dau = cur.fetchone()[0]
+
+            # 2. Total de Consultas Hoy
+            cur.execute("""
+                SELECT COUNT(*) FROM activity_logs 
+                WHERE created_at >= (NOW() AT TIME ZONE 'America/Caracas')::date
+            """)
+            queries_today = cur.fetchone()[0]
+
+            # 3. Top 15 Comandos/Botones
+            cur.execute("""
+                SELECT command, COUNT(*) FROM activity_logs 
+                GROUP BY 1 ORDER BY 2 DESC LIMIT 15
+            """)
+            top_cmds = cur.fetchall()
+
+            # 4. Heavy Users Hoy (Top 5 usuarios más activos)
+            cur.execute("""
+                SELECT user_id, COUNT(*) FROM activity_logs 
+                WHERE created_at >= (NOW() AT TIME ZONE 'America/Caracas')::date
+                GROUP BY 1 ORDER BY 2 DESC LIMIT 5
+            """)
+            heavy_users = cur.fetchall()
+
+            # 5. Métricas de Referidos
+            cur.execute("SELECT COUNT(*) FROM users")
+            total_users = cur.fetchone()[0]
+            cur.execute("SELECT COUNT(*) FROM users WHERE referred_by IS NOT NULL")
+            total_refs = cur.fetchone()[0]
+
+        # Cálculos de negocio
+        avg_queries = (queries_today / dau) if dau > 0 else 0
+        ref_percent = (total_refs / total_users * 100) if total_users > 0 else 0
+
+        # Construcción del Reporte Full
+        report = (
+            f"🚀 <b>ESTADÍSTICAS FULL (ADMIN)</b>\n"
+            f"<i>Análisis profundo de Tasabinance</i>\n\n"
+            f"📈 <b>ACTIVIDAD HOY (Caracas)</b>\n"
+            f"• Usuarios Únicos (DAU): {dau:,}\n"
+            f"• Consultas Totales: {queries_today:,}\n"
+            f"• Promedio consultas/frecuencia: {avg_queries:.1f}\n\n"
+            f"🤝 <b>CRECIMIENTO VIRAL</b>\n"
+            f"• Usuarios por Referencia: {total_refs:,}\n"
+            f"• Tasa de Viralidad: {ref_percent:.1f}%\n\n"
+            f"🏆 <b>HEAVY USERS (Hoy)</b>\n"
+        )
+
+        for uid, cnt in heavy_users:
+            report += f"• <code>{uid}</code>: {cnt} interacciones\n"
+
+        report += "\n🤖 <b>TOP 15 INTERACCIONES (Histórico)</b>\n"
+        for cmd, cnt in top_cmds:
+            report += f"• <code>{cmd}</code>: {cnt:,}\n"
+
+        report += f"\n<i>Modo: Business Intelligence V5.1</i> 💎"
+        return report
+
+    except Exception as e:
+        return f"❌ Error en Stats Full: {e}"
+    finally:
+        put_conn(conn)
