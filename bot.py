@@ -271,7 +271,7 @@ if __name__ == "__main__":
     jq = app.job_queue
     if jq:
         jq.run_repeating(update_price_task, interval=60, first=5)
-        jq.run_daily(send_daily_report, time=dt_time(hour=9, minute=0, tzinfo=TIMEZONE))
+        jq.run_daily(send_daily_report, time=dt_time(hour=11, minute=0, tzinfo=TIMEZONE))
         jq.run_daily(send_daily_report, time=dt_time(hour=13, minute=0, tzinfo=TIMEZONE))
 
     print(f"🚀 Tasabinance Bot V51 (MODULAR + PERSISTENCIA) INICIADO")
