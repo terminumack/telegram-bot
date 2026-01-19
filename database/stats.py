@@ -174,10 +174,17 @@ def get_daily_requests_count():
     if not conn: return 0
     try:
         with conn.cursor() as cur:
-            cur.execute("SELECT COUNT(*) FROM activity_logs WHERE created_at >= CURRENT_DATE")
+            # Cambiamos CURRENT_DATE por la fecha exacta de Caracas
+            cur.execute("""
+                SELECT COUNT(*) 
+                FROM activity_logs 
+                WHERE created_at >= (NOW() AT TIME ZONE 'America/Caracas')::date
+            """)
             return cur.fetchone()[0]
-    except Exception: return 0
-    finally: put_conn(conn)
+    except Exception: 
+        return 0
+    finally: 
+        put_conn(conn)
 
 def queue_broadcast(message):
     conn = get_conn()
