@@ -277,31 +277,34 @@ if __name__ == "__main__":
     # ==========================================================================
     # 4. CONFIGURACIÓN DEL RELOJ (JOB QUEUE) - LA CORRECCIÓN
     # ==========================================================================
-    job_queue = app.job_queue  # <--- Aquí es donde se define 'job_queue' correctamente
-
     if job_queue:
         print("⏰ Configurando tareas programadas...")
         
-        # Latido del corazón: para ver en logs que el bot sigue despierto
-        job_queue.run_repeating(lambda ctx: logging.info("⏰ [RELOJ VIVO]"), interval=60, first=10)
+        # 1. Función asíncrona para el latido (CORRECCIÓN DEL ERROR)
+        async def heartbeat(context):
+            logging.info("⏰ [RELOJ VIVO] El motor de alarmas está funcionando.")
+
+        # 2. Registrar el latido correctamente
+        job_queue.run_repeating(heartbeat, interval=60, first=10)
         
-        # Actualizador de precios: Refresca MARKET_DATA cada 5 minutos
+        # 3. Actualizador de precios cada 5 minutos
         job_queue.run_repeating(update_price_task, interval=300, first=5)
 
-        # REPORTE DIARIO: 09:00 AM
+        # 4. REPORTE DIARIO: 09:00 AM
         job_queue.run_daily(
             send_daily_report, 
             time=dt_time(hour=9, minute=0, tzinfo=TIMEZONE),
             name="reporte_manana"
         )
         
-        # REPORTE DIARIO: 01:00 PM (13:00)
+        # 5. REPORTE DE PRUEBA (Ajusta a 5 min adelante de tu reloj)
+        # Ejemplo: si son las 3:10 PM, usa hour=15, minute=15
         job_queue.run_daily(
             send_daily_report, 
-            time=dt_time(hour=14, minute=25, tzinfo=TIMEZONE),
+            time=dt_time(hour=15, minute=15, tzinfo=TIMEZONE),
             name="reporte_tarde"
         )
-        print("✅ Alarmas de las 09:00 AM y 13:00 PM activadas.")
+        print("✅ Alarmas configuradas sin errores de lambda.")
 
     # --- 5. ENCENDER EL TRABAJADOR (WORKER) ---
     # Esto activa el archivo 'services/worker.py' para mandar mensajes masivos
