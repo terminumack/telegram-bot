@@ -4,7 +4,7 @@ import asyncio
 import psycopg2
 from telegram import Bot, InlineKeyboardMarkup, InlineKeyboardButton
 from telegram.constants import ParseMode
-from telegram.error import Forbidden
+from telegram.error import Forbidden, RetryAfter  # <--- IMPORTANTE: RetryAfter importado
 
 # Configuración
 TOKEN = os.getenv("TOKEN")
@@ -14,14 +14,14 @@ DATABASE_URL = os.getenv("DATABASE_URL")
 logging.basicConfig(format='%(asctime)s - WORKER - %(levelname)s - %(message)s', level=logging.INFO)
 
 async def get_active_users():
-    print("   🔍 [DEBUG WORKER] Consultando usuarios activos en DB...")
+    # print("   🔍 [DEBUG WORKER] Consultando usuarios activos en DB...") 
     conn = None
     try:
         conn = psycopg2.connect(DATABASE_URL)
         cur = conn.cursor()
         cur.execute("SELECT user_id FROM users WHERE status = 'active'")
         users = [row[0] for row in cur.fetchall()]
-        print(f"   👥 [DEBUG WORKER] ¡Encontrados {len(users)} usuarios!")
+        # print(f"   👥 [DEBUG WORKER] ¡Encontrados {len(users)} usuarios!")
         return users
     except Exception as e:
         print(f"   ❌ [DEBUG WORKER] Error SQL: {e}")
@@ -58,8 +58,6 @@ async def background_worker():
             cur = conn.cursor()
             
             # Buscar trabajo pendiente
-            # print("💤 [DEBUG WORKER] Buscando tareas...") # Comentado para no llenar la consola, descomenta si quieres ver el latido
-            
             cur.execute("SELECT id, message FROM broadcast_queue WHERE status = 'pending' ORDER BY id ASC LIMIT 1")
             job = cur.fetchone()
             cur.close()
@@ -83,17 +81,28 @@ async def background_worker():
                     kb = [[InlineKeyboardButton("🔄 Actualizar Precio", callback_data="refresh_price")]]
                     reply_markup = InlineKeyboardMarkup(kb)
 
-                # Envío Masivo
+                # Variables de conteo
                 success = 0
                 blocked = 0
                 total = len(users)
-                BATCH_SIZE = 25 
+
+                # =======================================================
+                # ⚙️ CONFIGURACIÓN SEGURA (ZONA VERDE)
+                # =======================================================
+                BATCH_SIZE = 50   # 50 usuarios por golpe
+                SLEEP_TIME = 2.0  # 2 segundos de descanso
+                # Resultado: ~25 mensajes/segundo (Telegram permite 30)
 
                 print(f"📨 [DEBUG WORKER] Iniciando envío a {total} personas...")
+                print(f"🛡️ Modo: Seguro (Lotes de {BATCH_SIZE})")
 
+                # BUCLE PRINCIPAL DE ENVÍO
                 for i in range(0, total, BATCH_SIZE):
                     batch = users[i:i + BATCH_SIZE]
-                    print(f"   📦 [DEBUG WORKER] Enviando lote {i} - {i + len(batch)}...")
+                    
+                    # Barra de progreso en consola
+                    progress = (i / total) * 100
+                    print(f"   📦 [DEBUG WORKER] Procesando {i}-{i+len(batch)} | {progress:.1f}%")
                     
                     tasks = []
                     for user_id in batch:
@@ -107,19 +116,40 @@ async def background_worker():
                             )
                         )
                     
-                    results = await asyncio.gather(*tasks, return_exceptions=True)
+                    # Variable para saber si Telegram nos pidió frenar
+                    pause_extra = 0
 
-                    for res in results:
-                        if isinstance(res, Exception):
-                            if isinstance(res, Forbidden):
-                                blocked += 1
+                    try:
+                        # 🔥 FUEGO: Enviamos el lote en paralelo
+                        results = await asyncio.gather(*tasks, return_exceptions=True)
+
+                        for res in results:
+                            if isinstance(res, Exception):
+                                # Manejo de errores
+                                if isinstance(res, Forbidden):
+                                    blocked += 1 # Usuario bloqueó el bot
+                                elif isinstance(res, RetryAfter):
+                                    # 🛑 PROTECCIÓN ANTI-FLOOD ACTIVA
+                                    print(f"   ⚠️ [ALERTA] Telegram pide esperar {res.retry_after}s")
+                                    # Tomamos el tiempo de espera más largo que nos pidan
+                                    if res.retry_after > pause_extra:
+                                        pause_extra = res.retry_after
                             else:
-                                print(f"   ❌ [DEBUG WORKER] Error de envío: {res}")
-                        else:
-                            success += 1
-                    
-                    await asyncio.sleep(1.5)
+                                success += 1
+                        
+                    except Exception as e:
+                        print(f"   ❌ Error grave en lote: {e}")
 
+                    # LÓGICA DE DESCANSO INTELIGENTE
+                    if pause_extra > 0:
+                        print(f"   ⏳ Pausando {pause_extra + 1}s por orden de Telegram...")
+                        await asyncio.sleep(pause_extra + 1)
+                    else:
+                        # Si todo va bien, descansamos lo normal
+                        await asyncio.sleep(SLEEP_TIME)
+
+                # =======================================================
+                
                 print(f"✅ [DEBUG WORKER] Tarea #{job_id} COMPLETADA.")
                 print(f"📊 [DEBUG WORKER] Resultados: {success} enviados | {blocked} bloqueados")
                 
