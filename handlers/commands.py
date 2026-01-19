@@ -169,12 +169,21 @@ async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 # --- COMANDO /PRECIO (Velocidad de la Luz) ---
 @rate_limited(1.5) # Anti-Spam rápido
+from datetime import datetime
+import pytz
+from database.stats import get_daily_requests_count # Asegúrate de importar esto
+
+# --- COMANDO /PRECIO (Velocidad de la Luz) ---
+@rate_limited(1.5)
 async def precio(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user = update.effective_user
     await asyncio.to_thread(track_user, user)
     await asyncio.to_thread(log_activity, user.id, "/precio")
     
-    # Leemos directo de la RAM (0 latencia)
+    # 1. Obtenemos el conteo de consultas (con el reinicio de medianoche VE)
+    consultas_hoy = await asyncio.to_thread(get_daily_requests_count)
+    
+    # 2. Leemos directo de la RAM
     price = MARKET_DATA["price"]
     bcv_usd = MARKET_DATA["bcv"].get("dolar", 0)
     last_upd = MARKET_DATA["last_updated"]
@@ -183,18 +192,33 @@ async def precio(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await update.message.reply_text("🔄 Inicializando motor de precios... intenta en 30 seg.")
         return
 
-    # Cálculo de Brecha
+    # 3. FORMATEO DE HORA (El "Maquillaje")
+    # Si last_upd es un objeto datetime, lo convertimos a string bonito.
+    # Si es un string ISO (con la T), lo transformamos.
+    ve_tz = pytz.timezone('America/Caracas')
+    try:
+        if isinstance(last_upd, datetime):
+            pretty_time = last_upd.astimezone(ve_tz).strftime("%d/%m/%Y %I:%M:%S %p")
+        else:
+            # Fallback por si last_upd ya es un texto o viene de otra forma
+            pretty_time = datetime.now(ve_tz).strftime("%d/%m/%Y %I:%M:%S %p")
+    except Exception:
+        pretty_time = str(last_upd)
+
+    # 4. Cálculo de Brecha
     brecha = 0
     if bcv_usd > 0:
         brecha = ((price - bcv_usd) / bcv_usd) * 100
 
+    # 5. Mensaje con la estructura exacta que pediste
     msg = (
         f"🇻🇪 <b>TASA BINANCE VENEZUELA</b>\n"
         f"<i>Promedio P2P (USDT)</i>\n\n"
         f"🔥 <b>{price:,.2f} Bs</b>\n\n"
         f"🏛 <b>BCV:</b> {bcv_usd:,.2f} Bs\n"
         f"📊 <b>Brecha:</b> {brecha:.2f}%\n"
-        f"🕐 <i>Actualizado: {last_upd}</i>"
+        f"🏪 <b>Actualizado:</b> {pretty_time}\n"
+        f"👁 {consultas_hoy:,} consultas hoy"
     )
     
     # Botón para ir al detalle de mercado
