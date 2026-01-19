@@ -6,6 +6,7 @@ import random
 from datetime import datetime, time as dt_time
 from handlers.commands import close_announcement
 import pytz
+TIMEZONE = pytz.timezone('America/Caracas')
 
 # --- 1. IMPORTS DE MEMORIA Y CONFIGURACIÓN ---
 from shared import MARKET_DATA, TIMEZONE
