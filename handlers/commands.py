@@ -400,6 +400,8 @@ async def debug_mining(update: Update, context: ContextTypes.DEFAULT_TYPE):
 # --- EVENTOS TÉCNICOS ---
 from telegram import ChatMember
 
+from telegram.constants import ChatMemberStatus # <--- ASEGÚRATE DE TENER ESTA IMPORTACIÓN ARRIBA
+
 async def track_my_chat_member(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Detecta bloqueos/desbloqueos para limpiar la DB."""
     if not update.my_chat_member: return
@@ -408,7 +410,9 @@ async def track_my_chat_member(update: Update, context: ContextTypes.DEFAULT_TYP
     new_status = update.my_chat_member.new_chat_member.status
     
     db_status = 'active'
-    if new_status in [ChatMember.BANNED, ChatMember.LEFT, ChatMember.KICKED]:
+    
+    # CAMBIO AQUÍ: Usamos ChatMemberStatus en lugar de ChatMember
+    if new_status in [ChatMemberStatus.LEFT, ChatMemberStatus.KICKED, ChatMemberStatus.BANNED]:
         db_status = 'blocked'
     
     conn = get_conn()
@@ -417,6 +421,7 @@ async def track_my_chat_member(update: Update, context: ContextTypes.DEFAULT_TYP
         with conn.cursor() as cur:
             cur.execute("UPDATE users SET status = %s WHERE user_id = %s", (db_status, user_id))
             conn.commit()
+            logging.info(f"👤 Usuario {user_id} actualizado a estado: {db_status}")
     except Exception as e:
         logging.error(f"Error tracking chat member: {e}")
     finally:
