@@ -6,7 +6,7 @@ import random
 from datetime import datetime, time as dt_time
 from handlers.commands import close_announcement
 import pytz
-ADMIN_ID = int(os.getenv("ADMIN_ID", "533888411"))
+
 # --- 1. IMPORTS DE MEMORIA Y CONFIGURACIÓN ---
 from shared import MARKET_DATA, TIMEZONE
 from database.users import track_user, get_user_loyalty
@@ -169,19 +169,6 @@ async def send_daily_report(context: ContextTypes.DEFAULT_TYPE):
     await asyncio.to_thread(queue_broadcast, text)
     logging.info(f"📢 Reporte diario ({'Mañana' if hour < 12 else 'Tarde'}) encolado.")
 
-# --- COMANDO PARA FORZAR REPORTE (ADMIN) ---
-async def forzar_reporte(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    # Verificamos que seas tú (el admin)
-    if update.effective_user.id != ADMIN_ID: 
-        return
-
-    await update.message.reply_text("🚀 Generando reporte manual y enviando a la cola...")
-    
-    # Llamamos a la función que ya tienes programada
-    await send_daily_report(context)
-    
-    await update.message.reply_text("✅ ¡Listo! El reporte ya está en la cola del Worker.")
-
 # ==============================================================================
 #  COMANDO PRINCIPAL: /PRECIO
 # ==============================================================================
@@ -248,11 +235,6 @@ if __name__ == "__main__":
             
     except Exception as e:
         print(f"⚠️ Error cargando memoria: {e}")
-
-async def start_background_tasks(app):
-    # Esto arranca el worker DESPUÉS de que el bot esté listo
-    asyncio.create_task(background_worker())
-    print("👷 Worker de Difusión: Conectado al ciclo de vida del Bot.")
     # -----------------------------------
     
     if not TOKEN:
@@ -260,7 +242,6 @@ async def start_background_tasks(app):
         exit(1)
         
     app = ApplicationBuilder().token(TOKEN).build()
-    app.post_init = start_background_tasks
 
     # --- REGISTRO DE COMANDOS ---
     app.add_handler(CommandHandler("start", start_command))
@@ -276,7 +257,6 @@ async def start_background_tasks(app):
     app.add_handler(CommandHandler("mercado", mercado))
     app.add_handler(CommandHandler("horario", horario))
     app.add_handler(CommandHandler("stats_full", stats_full))
-    app.add_handler(CommandHandler("forzar_reporte", forzar_reporte))
     app.add_handler(ChatMemberHandler(track_my_chat_member, ChatMemberHandler.MY_CHAT_MEMBER))
     app.add_handler(CallbackQueryHandler(close_announcement, pattern="^delete_announcement$"))
     
