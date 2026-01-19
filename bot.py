@@ -6,7 +6,7 @@ import random
 from datetime import datetime, time as dt_time
 from handlers.commands import close_announcement
 import pytz
-
+ADMIN_ID = int(os.getenv("ADMIN_ID", "533888411"))
 # --- 1. IMPORTS DE MEMORIA Y CONFIGURACIÓN ---
 from shared import MARKET_DATA, TIMEZONE
 from database.users import track_user, get_user_loyalty
