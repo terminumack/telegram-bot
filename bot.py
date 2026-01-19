@@ -298,10 +298,10 @@ if __name__ == "__main__":
         # REPORTE DIARIO: 01:00 PM (13:00)
         job_queue.run_daily(
             send_daily_report, 
-            time=dt_time(hour=13, minute=0, tzinfo=TIMEZONE),
+            time=dt_time(hour=14, minute=25, tzinfo=TIMEZONE),
             name="reporte_tarde"
         )
-        print("✅ Alarmas de las 09:00 AM y 01:00 PM activadas.")
+        print("✅ Alarmas de las 09:00 AM y 13:00 PM activadas.")
 
     # --- 5. ENCENDER EL TRABAJADOR (WORKER) ---
     # Esto activa el archivo 'services/worker.py' para mandar mensajes masivos
@@ -345,14 +345,6 @@ if __name__ == "__main__":
     
     app.add_handler(CallbackQueryHandler(button_handler))
 
-    # --- TAREAS AUTOMÁTICAS ---
-    if jq:
-        # 1. Tarea que escribe en el log CADA MINUTO (Para ver si el motor late)
-        jq.run_repeating(lambda ctx: logging.info("⏰ [RELOJ VIVO] El motor de alarmas está funcionando."), interval=60, first=10)
-        
-        # 2. Mira tu reloj ahora mismo (Ejemplo: son las 1:55 PM)
-        # Pon el reporte 3 MINUTOS en el futuro de lo que diga tu reloj
-        jq.run_daily(send_daily_report, time=dt_time(hour=13, minute=50, tzinfo=TIMEZONE))
 
     print(f"🚀 Tasabinance Bot V51 (MODULAR + PERSISTENCIA) INICIADO")
 
