@@ -268,7 +268,7 @@ def get_detailed_report_text():
             cur.execute("SELECT COUNT(*) FROM users WHERE referred_by IS NOT NULL")
             referrals = cur.fetchone()[0]
             
-            cur.execute("SELECT COUNT(*) FROM alerts WHERE is_active = True")
+            cur.execute("SELECT COUNT(*) FROM alerts")
             active_alerts = cur.fetchone()[0]
 
             # 4. Top 5 Comandos (Dinámico)
