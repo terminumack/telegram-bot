@@ -7,6 +7,7 @@ from datetime import datetime, time as dt_time
 from handlers.commands import close_announcement
 import pytz
 TIMEZONE = pytz.timezone('America/Caracas')
+from telegram.constants import ChatMemberStatus
 
 # --- 1. IMPORTS DE MEMORIA Y CONFIGURACIÓN ---
 from shared import MARKET_DATA, TIMEZONE
