@@ -3,6 +3,11 @@ import logging
 import json
 import os
 from datetime import datetime
+import io
+import matplotlib.pyplot as plt
+from datetime import datetime
+import pytz
+from database.db_pool import get_conn, put_conn
 
 # Configuración
 DATABASE_URL = os.getenv("DATABASE_URL")
@@ -231,3 +236,63 @@ def get_vote_results():
             return rows.get('UP', 0), rows.get('DOWN', 0)
     except Exception: return 0, 0
     finally: put_conn(conn)
+
+import io
+import matplotlib.pyplot as plt
+from datetime import datetime
+import pytz
+from database.db_pool import get_conn, put_conn
+
+def generate_stats_chart():
+    """Genera la imagen con gráficos de crecimiento y uso."""
+    conn = get_conn()
+    if not conn: return None
+    buf = io.BytesIO()
+    try:
+        with conn.cursor() as cur:
+            # 1. Crecimiento de usuarios (7 días - Hora Caracas)
+            cur.execute("""
+                SELECT TO_CHAR(joined_at AT TIME ZONE 'America/Caracas', 'MM-DD'), COUNT(*) 
+                FROM users 
+                WHERE joined_at >= (NOW() AT TIME ZONE 'America/Caracas')::date - INTERVAL '7 DAYS'
+                GROUP BY 1 ORDER BY 1
+            """)
+            growth_data = cur.fetchall()
+
+            # 2. Comandos más usados
+            cur.execute("""
+                SELECT command, COUNT(*) FROM activity_logs 
+                GROUP BY command ORDER BY 2 DESC LIMIT 5
+            """)
+            cmd_data = cur.fetchall()
+
+        # Configuración estética del gráfico (Modo Oscuro)
+        plt.style.use('dark_background')
+        fig, (ax1, ax2) = plt.subplots(1, 2, figsize=(12, 5))
+        fig.patch.set_facecolor('#121212')
+
+        # Gráfico de Barras: Crecimiento
+        if growth_data:
+            dates = [row[0] for row in growth_data]
+            counts = [row[1] for row in growth_data]
+            bars = ax1.bar(dates, counts, color='#F3BA2F')
+            ax1.set_title('Nuevos Usuarios (7d)', fontsize=12, pad=10)
+            ax1.bar_label(bars, padding=3, color='white')
+        
+        # Gráfico de Torta: Comandos
+        if cmd_data:
+            labels = [row[0] for row in cmd_data]
+            sizes = [row[1] for row in cmd_data]
+            ax2.pie(sizes, labels=labels, autopct='%1.1f%%', startangle=90)
+            ax2.set_title('Comandos Top', fontsize=12, pad=10)
+
+        plt.tight_layout()
+        plt.savefig(buf, format='png', facecolor='#121212')
+        buf.seek(0)
+        plt.close()
+        return buf
+    except Exception as e:
+        print(f"❌ Error en gráfico: {e}")
+        return None
+    finally:
+        put_conn(conn)
