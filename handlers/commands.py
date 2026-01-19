@@ -433,3 +433,11 @@ async def stats_full(update: Update, context: ContextTypes.DEFAULT_TYPE):
     report = await asyncio.to_thread(get_stats_full_text)
     
     await status.edit_text(report, parse_mode='HTML')
+
+async def forzar_reporte(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if update.effective_user.id != ADMIN_ID: return
+    
+    await update.message.reply_text("🚀 Forzando generación de reporte diario...")
+    # Llamamos a la función que ya tienes creada
+    await send_daily_report(context)
+    await update.message.reply_text("✅ Reporte generado y enviado a la cola del Worker.")
