@@ -5,7 +5,7 @@ import asyncio
 from telegram import Bot, InlineKeyboardMarkup, InlineKeyboardButton
 from telegram.constants import ParseMode
 
-print("👻 FANTASMA: Soy el worker de la RAÍZ")
+print("👷 SOCORRO: Soy el worker de la carpeta SERVICES")
 
 # Configuración
 TOKEN = os.getenv("TOKEN")
