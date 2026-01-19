@@ -299,8 +299,8 @@ if __name__ == "__main__":
         print("\n📅 --- CONFIRMACIÓN DE HORARIOS ---")
         try:
             # Convertimos la hora interna del servidor a hora de Venezuela legible
-            next_am = job_morning.next_t.astimezone(TIMEZONE)
-            next_pm = job_afternoon.next_t.astimezone(TIMEZONE)
+            next_am = job_morning.next_run_time.astimezone(TIMEZONE)
+            next_pm = job_afternoon.next_run_time.astimezone(TIMEZONE)
             
             print(f"☀️ Reporte Mañana agendado para: {next_am.strftime('%d/%m/%Y %I:%M:%S %p')}")
             print(f"🌤 Reporte Tarde agendado para:  {next_pm.strftime('%d/%m/%Y %I:%M:%S %p')}")
