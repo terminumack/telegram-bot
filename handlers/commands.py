@@ -418,3 +418,15 @@ async def track_my_chat_member(update: Update, context: ContextTypes.DEFAULT_TYP
         logging.error(f"Error tracking chat member: {e}")
     finally:
         put_conn(conn)
+
+async def stats_full(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    # Solo tú tienes acceso
+    if update.effective_user.id != ADMIN_ID:
+        return
+
+    # Usamos un mensaje temporal
+    status = await update.message.reply_text("🔍 Analizando Big Data...")
+    
+    report = await asyncio.to_thread(get_stats_full_text)
+    
+    await status.edit_text(report, parse_mode='HTML')
