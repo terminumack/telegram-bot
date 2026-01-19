@@ -150,25 +150,41 @@ async def update_price_task(context: ContextTypes.DEFAULT_TYPE):
 # ==============================================================================
 #  TAREA DE FONDO: REPORTE DIARIO AUTOMÁTICO
 # ==============================================================================
-async def send_daily_report(context: ContextTypes.DEFAULT_TYPE):
-    binance = MARKET_DATA["price"]
-    if not binance: return
+# En bot.py
 
-    # Lógica de Hora
+async def send_daily_report(context: ContextTypes.DEFAULT_TYPE):
+    print("\n" + "="*40)
+    print("👀 [DEBUG BOT] ¡Hora del reporte! Iniciando función...")
+    
+    binance = MARKET_DATA.get("price", 0)
+    if not binance: 
+        print("❌ [DEBUG BOT] No hay precio en memoria. Cancelando reporte.")
+        return
+
+    # 1. Preparar el Mensaje
     from utils.formatting import EMOJI_STATS 
     now = datetime.now(TIMEZONE)
     hour = now.hour
+    print(f"🕒 [DEBUG BOT] Hora detectada: {hour}:00")
     
     header = "☀️ <b>¡Buenos días! Así abre el mercado:</b>" if hour < 12 else "🌤 <b>Reporte de la Tarde:</b>"
-    
     body = build_price_message(MARKET_DATA, requests_count=0)
     body = body.replace(f"{EMOJI_STATS} <b>MONITOR DE TASAS</b>\n\n", "")
-    
     text = f"{header}\n\n{body}"
     
-    # Enviamos a la cola (El worker le pondrá el botón)
-    await asyncio.to_thread(queue_broadcast, text)
-    logging.info(f"📢 Reporte diario ({'Mañana' if hour < 12 else 'Tarde'}) encolado.")
+    print("📝 [DEBUG BOT] Texto generado correctamente.")
+    print("💾 [DEBUG BOT] Intentando guardar en la Base de Datos (Cola)...")
+
+    # 2. Encolar en Base de Datos
+    enqueued = await asyncio.to_thread(queue_broadcast, text)
+    
+    if enqueued:
+        print("✅ [DEBUG BOT] ¡ÉXITO! Mensaje guardado en la tabla 'broadcast_queue'.")
+        print("🚀 [DEBUG BOT] Ahora es trabajo del Worker enviarlo.")
+    else:
+        print("❌ [DEBUG BOT] ERROR CRÍTICO: No se pudo guardar en la DB.")
+    
+    print("="*40 + "\n")
 
 # ==============================================================================
 #  COMANDO PRINCIPAL: /PRECIO
