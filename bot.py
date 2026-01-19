@@ -277,32 +277,31 @@ if __name__ == "__main__":
     # ==========================================================================
     # 4. CONFIGURACIÓN DEL RELOJ (JOB QUEUE) - LA CORRECCIÓN
     # ==========================================================================
-    job_queue = app.job_queue 
+    job_queue = app.job_queue  # <--- Aquí es donde se define 'job_queue' correctamente
 
     if job_queue:
         print("⏰ Configurando tareas programadas...")
         
-        # Función asíncrona para el latido (evita el error de la lambda)
-        async def heartbeat(context):
-            logging.info("⏰ [RELOJ VIVO] El motor de alarmas está funcionando.")
-
-        # Registro de tareas
-        job_queue.run_repeating(heartbeat, interval=60, first=10)
+        # Latido del corazón: para ver en logs que el bot sigue despierto
+        job_queue.run_repeating(lambda ctx: logging.info("⏰ [RELOJ VIVO]"), interval=60, first=10)
+        
+        # Actualizador de precios: Refresca MARKET_DATA cada 5 minutos
         job_queue.run_repeating(update_price_task, interval=300, first=5)
 
-        # --- REPORTE DE PRUEBA PARA HOY ---
-        # Si en Caracas son las 3:10 PM, pon hour=15, minute=15
+        # REPORTE DIARIO: 09:00 AM
         job_queue.run_daily(
             send_daily_report, 
-            time=dt_time(hour=15, minute=15, tzinfo=TIMEZONE),
-            name="prueba_tarde"
+            time=dt_time(hour=9, minute=0, tzinfo=TIMEZONE),
+            name="reporte_manana"
         )
-
-        # --- HORARIOS FIJOS ---
-        job_queue.run_daily(send_daily_report, time=dt_time(hour=9, minute=0, tzinfo=TIMEZONE))
-        job_queue.run_daily(send_daily_report, time=dt_time(hour=13, minute=0, tzinfo=TIMEZONE))
         
-        print("✅ Alarmas configuradas con éxito.")
+        # REPORTE DIARIO: 01:00 PM (13:00)
+        job_queue.run_daily(
+            send_daily_report, 
+            time=dt_time(hour=14, minute=25, tzinfo=TIMEZONE),
+            name="reporte_tarde"
+        )
+        print("✅ Alarmas de las 09:00 AM y 13:00 PM activadas.")
 
     # --- 5. ENCENDER EL TRABAJADOR (WORKER) ---
     # Esto activa el archivo 'services/worker.py' para mandar mensajes masivos
