@@ -155,32 +155,30 @@ async def update_price_task(context: ContextTypes.DEFAULT_TYPE):
 async def send_daily_report(context: ContextTypes.DEFAULT_TYPE):
     print("\n" + "="*40)
     print("👀 [DEBUG BOT] ¡Hora del reporte! Iniciando función...")
-    
-    binance = MARKET_DATA.get("price", 0)
-    if not binance: 
-        print("❌ [DEBUG BOT] No hay precio en memoria. Cancelando reporte.")
-        return
 
-    # 1. Preparar el Mensaje
-    from utils.formatting import EMOJI_STATS 
+    # 1. Detectar Hora
     now = datetime.now(TIMEZONE)
     hour = now.hour
     print(f"🕒 [DEBUG BOT] Hora detectada: {hour}:00")
     
-    header = "☀️ <b>¡Buenos días! Así abre el mercado:</b>" if hour < 12 else "🌤 <b>Reporte de la Tarde:</b>"
-    body = build_price_message(MARKET_DATA, requests_count=0)
-    body = body.replace(f"{EMOJI_STATS} <b>MONITOR DE TASAS</b>\n\n", "")
-    text = f"{header}\n\n{body}"
+    # 2. Generar el Texto Corto (Estrategia de Interacción)
+    if hour < 12:
+        # Mensaje de la mañana
+        text = "☀️ <b>¡Buenos días! El mercado ha abierto.</b>"
+    else:
+        # Mensaje de la tarde
+        text = "🌤 <b>Reporte de la Tarde</b>"
     
-    print("📝 [DEBUG BOT] Texto generado correctamente.")
+    print(f"📝 [DEBUG BOT] Texto generado: '{text}'")
     print("💾 [DEBUG BOT] Intentando guardar en la Base de Datos (Cola)...")
 
-    # 2. Encolar en Base de Datos
+    # 3. Encolar en Base de Datos
+    # El Worker detectará este texto y le agregará el botón "🔎 Ver Precio en Vivo"
     enqueued = await asyncio.to_thread(queue_broadcast, text)
     
     if enqueued:
         print("✅ [DEBUG BOT] ¡ÉXITO! Mensaje guardado en la tabla 'broadcast_queue'.")
-        print("🚀 [DEBUG BOT] Ahora es trabajo del Worker enviarlo.")
+        print("🚀 [DEBUG BOT] Ahora es trabajo del Worker enviarlo con el botón.")
     else:
         print("❌ [DEBUG BOT] ERROR CRÍTICO: No se pudo guardar en la DB.")
     
