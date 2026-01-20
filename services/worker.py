@@ -76,7 +76,7 @@ async def background_worker():
                     continue
 
                 # Preparar botón
-                keywords = ["mercado", "Reporte"] 
+                keywords = ["Binance", "BCV", "Mercado", "mercado"]
                 
                 reply_markup = None
                 
