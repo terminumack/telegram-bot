@@ -156,29 +156,40 @@ async def send_daily_report(context: ContextTypes.DEFAULT_TYPE):
     print("\n" + "="*40)
     print("👀 [DEBUG BOT] ¡Hora del reporte! Iniciando función...")
 
-    # 1. Detectar Hora
     now = datetime.now(TIMEZONE)
     hour = now.hour
     print(f"🕒 [DEBUG BOT] Hora detectada: {hour}:00")
     
-    # 2. Generar el Texto Corto (Estrategia de Interacción)
+    # --- ESTRATEGIA DE CONTENIDO ---
+    # Usamos palabras clave: "Binance", "BCV", "Mercado" para activar al usuario
+    # y asegurarnos de que el Worker detecte y ponga el botón.
+
     if hour < 12:
-        # Mensaje de la mañana
-        text = "☀️ <b>¡Buenos días! El mercado ha abierto.</b>"
+        # MENSAJE DE MAÑANA
+        text = (
+            "☀️ <b>Apertura de Mercado</b>\n\n"
+            "Ya tenemos las referencias del día para <b>Binance</b> y <b>BCV</b>.\n"
+            "¿Amaneció estable o hubo repunte? Sal de dudas ahora.\n\n"
+            "👇 <i>Toca el botón para ver la tasa en vivo:</i>"
+        )
     else:
-        # Mensaje de la tarde
-        text = "🌤 <b>Reporte de la Tarde</b>"
+        # MENSAJE DE TARDE
+        text = (
+            "🌤 <b>Tendencia de la Tarde</b>\n\n"
+            "El <b>mercado</b> sigue activo. Revisa si hubo variaciones en "
+            "<b>Binance</b> respecto a la mañana antes de cerrar tus pagos.\n\n"
+            "👇 <i>Ver Precio Actualizado:</i>"
+        )
     
-    print(f"📝 [DEBUG BOT] Texto generado: '{text}'")
+    print(f"📝 [DEBUG BOT] Texto generado (Corto con gancho).")
     print("💾 [DEBUG BOT] Intentando guardar en la Base de Datos (Cola)...")
 
-    # 3. Encolar en Base de Datos
-    # El Worker detectará este texto y le agregará el botón "🔎 Ver Precio en Vivo"
+    # Encolamos el mensaje. 
+    # El Worker detectará las palabras "Binance" o "Mercado" y pondrá el botón automáticamente.
     enqueued = await asyncio.to_thread(queue_broadcast, text)
     
     if enqueued:
-        print("✅ [DEBUG BOT] ¡ÉXITO! Mensaje guardado en la tabla 'broadcast_queue'.")
-        print("🚀 [DEBUG BOT] Ahora es trabajo del Worker enviarlo con el botón.")
+        print("✅ [DEBUG BOT] ¡ÉXITO! Mensaje encolado para difusión.")
     else:
         print("❌ [DEBUG BOT] ERROR CRÍTICO: No se pudo guardar en la DB.")
     
