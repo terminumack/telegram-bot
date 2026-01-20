@@ -76,9 +76,13 @@ async def background_worker():
                     continue
 
                 # Preparar botón
+                keywords = ["mercado", "Reporte"] 
+                
                 reply_markup = None
-                if "Binance" in text or "Tasa" in text:
-                    kb = [[InlineKeyboardButton("🔄 Actualizar Precio", callback_data="refresh_price")]]
+                
+                # Si el mensaje tiene esas palabras, pegamos el botón
+                if any(k in text for k in keywords):
+                    kb = [[InlineKeyboardButton("🔎 Ver Precio en Vivo", callback_data="refresh_price")]]
                     reply_markup = InlineKeyboardMarkup(kb)
 
                 # Variables de conteo
