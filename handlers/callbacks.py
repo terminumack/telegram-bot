@@ -46,10 +46,16 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     # Aceptamos "refresh", "refresh_price" (del Worker) y "vote_" (flujo continuo)
     if data in ["refresh", "refresh_price"] or data.startswith("vote_"):
         
-        # Solo mostramos "Actualizando..." si fue un clic de refresh directo
         if data in ["refresh", "refresh_price"]:
             await safe_answer("🔄 Consultando mercado...")
-            await asyncio.to_thread(log_activity, user_id, "refresh_btn")
+            
+            # 👇👇👇 ESTA ES LA LÍNEA CLAVE 👇👇👇
+            # Sin esto, no cuenta.
+            try:
+                await asyncio.to_thread(log_activity, user_id, "refresh_btn")
+            except Exception as e:
+                print(f"⚠️ Error sumando clic: {e}")
+            # 👆👆👆 FIN DE LA LÍNEA CLAVE 👆👆👆
 
         # 1. Obtenemos contadores frescos (DB)
         req_count = await asyncio.to_thread(get_daily_requests_count)
