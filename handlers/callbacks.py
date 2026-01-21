@@ -6,7 +6,7 @@ import asyncio
 # Imports de nuestra estructura
 from utils.formatting import build_price_message, get_sentiment_keyboard
 from shared import MARKET_DATA
-from database.stats import get_daily_requests_count, cast_vote
+from database.stats import get_daily_requests_count, cast_vote, log_activity # <--- Agrega esto
 
 async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
