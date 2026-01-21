@@ -6,8 +6,11 @@ import random
 from datetime import datetime, time as dt_time
 import pytz
 
-# --- 1. IMPORTS DE MEMORIA Y BASE DE DATOS ---
-from shared import MARKET_DATA, TIMEZONE
+# --- 1. CONFIGURACIÓN DE ZONA HORARIA ---
+TIMEZONE = pytz.timezone('America/Caracas')
+
+# --- 2. IMPORTS DE MEMORIA Y BASE DE DATOS ---
+from shared import MARKET_DATA
 from database.users import track_user, get_user_loyalty
 from database.setup import init_db
 from database.stats import (
@@ -21,17 +24,17 @@ from database.stats import (
 )
 from database.alerts import get_triggered_alerts
 
-# --- 2. SERVICIOS ---
+# --- 3. SERVICIOS ---
 from services.binance_service import get_market_snapshot
 from services.bcv_service import get_bcv_rates
 from services.worker import background_worker 
 
-# --- 3. UTILIDADES VISUALES ---
+# --- 4. UTILIDADES VISUALES ---
 from utils.formatting import build_price_message, get_sentiment_keyboard
 
-# --- 4. HANDLERS E IMPORTS DE TELEGRAM ---
+# --- 5. HANDLERS ---
 from handlers.commands import (
-    start_command, help_command, precio, grafico, referidos, 
+    start_command, help_command, grafico, referidos, 
     prediccion, stats, global_message, debug_mining, 
     stats_full, close_announcement
 )
@@ -48,7 +51,7 @@ from telegram.ext import (
     ContextTypes, ChatMemberHandler, Application
 )
 
-# --- CONFIGURACIÓN ---
+# --- CONFIGURACIÓN DE LOGS ---
 urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
 logging.basicConfig(format='%(asctime)s - BOT - %(levelname)s - %(message)s', level=logging.INFO)
 
@@ -56,11 +59,12 @@ TOKEN = os.getenv("TOKEN")
 
 # ==============================================================================
 #  SISTEMA: ARRANQUE SEGURO DEL WORKER (POST_INIT)
+#  
 # ==============================================================================
 async def post_init(application: Application):
     """
     Inicia el worker después de que el bot esté listo.
-    Evita bloqueos y congelamientos.
+    Esto es CRÍTICO para evitar que se congele.
     """
     print("🔥 [SYSTEM] Encendiendo Worker en segundo plano...")
     asyncio.create_task(background_worker())
@@ -123,6 +127,7 @@ async def update_price_task(context: ContextTypes.DEFAULT_TYPE):
                 val_bcv_eur = bcv_data.get("euro")
                 MARKET_DATA["bcv"] = bcv_data
             else:
+                # Fallback memoria
                 val_bcv_usd = MARKET_DATA["bcv"].get("dolar", 0)
                 val_bcv_eur = MARKET_DATA["bcv"].get("euro", 0)
 
@@ -179,6 +184,36 @@ async def send_daily_report(context: ContextTypes.DEFAULT_TYPE):
     print("="*40 + "\n")
 
 # ==============================================================================
+#  COMANDO PRINCIPAL: /PRECIO
+# ==============================================================================
+async def precio(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    user_id = update.effective_user.id
+    
+    await asyncio.to_thread(track_user, update.effective_user)
+    await asyncio.to_thread(log_activity, user_id, "/precio")
+    
+    binance = MARKET_DATA["price"]
+    if not binance:
+        await update.message.reply_text("🔄 Iniciando sistema... intenta en unos segundos.")
+        return
+
+    req_count = await asyncio.to_thread(get_daily_requests_count)
+    
+    # Texto
+    msg = build_price_message(MARKET_DATA, user_id=user_id, requests_count=req_count)
+    
+    # Botones
+    markup = await asyncio.to_thread(get_sentiment_keyboard, user_id, binance)
+    
+    # Growth Hacking
+    if random.random() < 0.2:
+        days, refs = await asyncio.to_thread(get_user_loyalty, user_id)
+        if days > 3 and refs == 0:
+            msg += "\n\n🎁 <i>¡Gana premios invitando amigos! Toca /referidos</i>"
+    
+    await update.message.reply_html(msg, reply_markup=markup, disable_web_page_preview=True)
+
+# ==============================================================================
 #  MAIN: EL CEREBRO DE ARRANQUE
 # ==============================================================================
 if __name__ == "__main__":
@@ -214,7 +249,7 @@ if __name__ == "__main__":
         exit(1)
         
     # 2. CONSTRUCCIÓN DEL BOT
-    # 🔥 AQUÍ ESTÁ EL ARREGLO DEL CONGELAMIENTO: .post_init(post_init)
+    # 🔥 AQUÍ ESTÁ LA SOLUCIÓN: .post_init(post_init) en lugar de loop.create_task abajo
     app = ApplicationBuilder().token(TOKEN).post_init(post_init).build()
 
     # --- REGISTRO DE COMANDOS ---
@@ -248,7 +283,7 @@ if __name__ == "__main__":
         # 1. Tarea de precios
         jq.run_repeating(update_price_task, interval=60, first=5)
         
-        # 2. Reportes Diarios
+        # 2. Reportes Diarios (USAMOS TIMEZONE AQUÍ)
         jq.run_daily(send_daily_report, time=dt_time(hour=9, minute=0, tzinfo=TIMEZONE))
         jq.run_daily(send_daily_report, time=dt_time(hour=13, minute=0, tzinfo=TIMEZONE))
 
