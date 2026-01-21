@@ -3,12 +3,7 @@ import logging
 import json
 import os
 from datetime import datetime
-import io
-import matplotlib.pyplot as plt
-from datetime import datetime
 import pytz
-from database.db_pool import get_conn, put_conn
-
 
 # Configuración
 DATABASE_URL = os.getenv("DATABASE_URL")
@@ -31,7 +26,7 @@ def put_conn(conn):
         except Exception:
             pass
 
-# --- PERSISTENCIA (Argumentos: precio, bcv_usd, bcv_eur) ---
+# --- PERSISTENCIA DE MERCADO ---
 def save_market_state(price, bcv_usd, bcv_eur):
     conn = get_conn()
     if not conn: return
@@ -66,9 +61,9 @@ def load_last_market_state():
         return None
     finally: 
         put_conn(conn)
-# --- REFERIDOS VITAMINADOS (Para que /referidos no explote) ---
+
+# --- REFERIDOS ---
 def get_referral_stats(user_id):
-    """Devuelve count, rank y top_3."""
     conn = get_conn()
     if not conn: return 0, 0, []
     try:
@@ -88,43 +83,15 @@ def get_referral_stats(user_id):
             rank_res = cur.fetchone()
             rank = rank_res[0] if rank_res else 0
 
-            # 3. Top 3 (Añadimos user_id para que lo veas en el print)
+            # 3. Top 3
             cur.execute("SELECT user_id, first_name, referral_count FROM users ORDER BY referral_count DESC LIMIT 3")
             top_3_con_id = cur.fetchall()
             
-            # --- EL PRINT PARA TI (Aparece en Railway) ---
-            print(f"🏆 GANADORES ACTUALES (ID, Nombre, Puntos): {top_3_con_id}")
-
-            # Limpiamos los datos para que el bot NO reciba el ID y no se rompa tu mensaje
+            # Limpiamos datos sensibles
             top_3_limpio = [(row[1], row[2]) for row in top_3_con_id]
 
             return count, rank, top_3_limpio
-
     except Exception: return 0, 0, []
-    finally: put_conn(conn)
-
-# --- REPORTE DETALLADO (La función que faltaba) ---
-def get_detailed_report_text():
-    """Genera el texto para el panel de administración."""
-    conn = get_conn()
-    if not conn: return "❌ Sin conexión"
-    try:
-        with conn.cursor() as cur:
-            cur.execute("SELECT COUNT(*) FROM users")
-            total = cur.fetchone()[0]
-            cur.execute("SELECT COUNT(*) FROM users WHERE joined_at >= CURRENT_DATE")
-            hoy = cur.fetchone()[0]
-            cur.execute("SELECT COUNT(*) FROM activity_logs WHERE created_at >= CURRENT_DATE")
-            act = cur.fetchone()[0]
-            
-            return (
-                f"📊 <b>ESTADÍSTICAS DEL BOT</b>\n"
-                f"━━━━━━━━━━━━━━━━\n"
-                f"👥 Usuarios Totales: {total}\n"
-                f"🆕 Registros Hoy: {hoy}\n"
-                f"📉 Actividad Hoy: {act}\n"
-            )
-    except Exception: return "⚠️ Error al generar reporte"
     finally: put_conn(conn)
 
 # --- MINERÍA Y ARBITRAJE ---
@@ -154,7 +121,8 @@ def save_mining_data(pm_buy, bcv_usd, pm_sell):
     except Exception: pass
     finally: put_conn(conn)
 
-# --- OTRAS FUNCIONES REQUERIDAS ---
+# --- LOGS Y ACTIVIDAD (AQUÍ ESTÁ LA MAGIA DEL CONTADOR) ---
+
 def log_calc(user_id, amount, currency, result):
     conn = get_conn()
     if not conn: return
@@ -166,18 +134,17 @@ def log_calc(user_id, amount, currency, result):
     finally: put_conn(conn)
 
 def log_activity(user_id, command):
+    """Registra el clic o comando para las estadísticas."""
     conn = get_conn()
     if not conn: return
     try:
         with conn.cursor() as cur:
-            # Agregamos explicitamente created_at con NOW() para asegurar el conteo diario
             cur.execute("""
                 INSERT INTO activity_logs (user_id, command, created_at) 
                 VALUES (%s, %s, NOW())
             """, (user_id, command))
             conn.commit()
     except Exception as e:
-        # IMPORTANTE: Imprimimos el error para saber si algo falla
         print(f"❌ Error log_activity: {e}") 
     finally:
         put_conn(conn)
@@ -187,7 +154,6 @@ def get_daily_requests_count():
     if not conn: return 0
     try:
         with conn.cursor() as cur:
-            # Cambiamos CURRENT_DATE por la fecha exacta de Caracas
             cur.execute("""
                 SELECT COUNT(*) 
                 FROM activity_logs 
@@ -244,6 +210,8 @@ def get_vote_results():
             return rows.get('UP', 0), rows.get('DOWN', 0)
     except Exception: return 0, 0
     finally: put_conn(conn)
+
+# --- REPORTES AVANZADOS ---
 
 def get_detailed_report_text():
     conn = get_conn()
