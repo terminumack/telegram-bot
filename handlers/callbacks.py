@@ -13,7 +13,20 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id = query.from_user.id
     data = query.data
 
-    # --- CASO 1: VOTACIÓN ---
+    # --- PROTECCIÓN ANTI-CRASH (ERROR "QUERY IS TOO OLD") ---
+    # Creamos una mini-función interna para responder al botón sin riesgo.
+    # Si el botón es viejo (más de 48h), Telegram da error al intentar mostrar
+    # el "toast" (mensajito flotante), pero no debemos dejar que eso detenga el bot.
+    async def safe_answer(text=None):
+        try:
+            await query.answer(text)
+        except BadRequest:
+            # Si falla (Query too old), lo ignoramos y seguimos ejecutando la lógica
+            pass
+
+    # ==================================================================
+    # CASO 1: VOTACIÓN
+    # ==================================================================
     # Si el botón empieza por "vote_", es que el usuario pulsó Subirá o Bajará
     if data.startswith("vote_"):
         vote_type = data.split("_")[1] # Extraemos 'UP' o 'DOWN'
@@ -21,48 +34,51 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         # Guardamos el voto en la BD en un hilo aparte
         await asyncio.to_thread(cast_vote, user_id, vote_type)
         
-        # Feedback rápido al usuario
-        await query.answer("✅ ¡Voto registrado!")
+        # Feedback rápido al usuario (Blindado)
+        await safe_answer("✅ ¡Voto registrado!")
         
-        # NOTA: No hacemos return aquí porque queremos que el código siga bajando
-        # para regenerar el mensaje y mostrar los resultados inmediatamente.
+        # NOTA: No hacemos return aquí. Dejamos que el código baje al CASO 2
+        # para regenerar el mensaje y mostrar los porcentajes inmediatamente.
 
-    # --- CASO 2: ACTUALIZAR (Refresh) O MOSTRAR RESULTADOS ---
-    # AQUI ESTÁ EL CAMBIO: Aceptamos "refresh" Y TAMBIÉN "refresh_price" (del Worker)
+    # ==================================================================
+    # CASO 2: ACTUALIZAR (Refresh) O MOSTRAR RESULTADOS (Post-Voto)
+    # ==================================================================
+    # Aceptamos "refresh", "refresh_price" (del Worker) y "vote_" (flujo continuo)
     if data in ["refresh", "refresh_price"] or data.startswith("vote_"):
         
+        # Solo mostramos "Actualizando..." si fue un clic de refresh directo
         if data in ["refresh", "refresh_price"]:
-            await query.answer("Actualizando...")
+            await safe_answer("🔄 Consultando mercado...")
 
-        # 1. Obtenemos contadores frescos
+        # 1. Obtenemos contadores frescos (DB)
         req_count = await asyncio.to_thread(get_daily_requests_count)
         
         # 2. Generamos el TEXTO NUEVO
-        # IMPORTANTE: Pasamos 'user_id' para que build_price_message sepa
-        # que el usuario ya votó y cambie el "👇" por los porcentajes "🚀 80%".
+        # build_price_message detectará que hay un user_id y adaptará el texto
         text = build_price_message(MARKET_DATA, user_id=user_id, requests_count=req_count)
         
         # 3. Generamos los BOTONES NUEVOS
-        # get_sentiment_keyboard sabrá que ya votó y pondrá el botón "Compartir"
         current_price = MARKET_DATA.get("price", 0)
         reply_markup = await asyncio.to_thread(get_sentiment_keyboard, user_id, current_price)
 
         try:
             # 4. Editamos el mensaje con la nueva info
+            # (Esto funciona SIEMPRE, incluso si el mensaje es de hace un año)
             await query.edit_message_text(
                 text=text,
                 parse_mode="HTML",
                 reply_markup=reply_markup,
                 disable_web_page_preview=True
             )
-        except BadRequest:
-            # Si el precio y los votos no han cambiado nada, Telegram da error.
-            # Lo ignoramos silenciosamente.
-            pass
+        except BadRequest as e:
+            # Si el precio y los votos son idénticos a lo que ya hay en pantalla,
+            # Telegram lanza "Message is not modified". No es grave.
+            if "Message is not modified" not in str(e):
+                print(f"⚠️ Error editando mensaje: {e}")
 
-    # ... (código anterior del bloque refresh) ...
-
-    # --- CASO 3: VER MERCADO (O ACTUALIZAR MERCADO) ---
+    # ==================================================================
+    # CASO 3: VER MERCADO (CMD_MERCADO)
+    # ==================================================================
     elif data == "cmd_mercado":
         # Importamos aquí dentro para evitar errores de importación circular
         from handlers.market import mercado_text_logic
@@ -77,10 +93,15 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 reply_markup=markup,
                 parse_mode="HTML"
             )
+            # Confirmamos acción exitosa
+            await safe_answer() 
+            
         except Exception:
-            # Si los montos no cambiaron, Telegram da error. Avisamos con toast.
-            await query.answer("✅ Ya está actualizado.")
+            # Si los montos no cambiaron, avisamos con toast (Blindado)
+            await safe_answer("✅ Ya está actualizado.")
     
-    # --- CASO 3: BOTONES PASIVOS (Ignorar) ---
+    # ==================================================================
+    # CASO 4: BOTONES PASIVOS
+    # ==================================================================
     elif data == "ignore":
-        await query.answer()
+        await safe_answer()
