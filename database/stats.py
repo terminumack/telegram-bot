@@ -170,10 +170,17 @@ def log_activity(user_id, command):
     if not conn: return
     try:
         with conn.cursor() as cur:
-            cur.execute("INSERT INTO activity_logs (user_id, command) VALUES (%s, %s)", (user_id, command))
+            # Agregamos explicitamente created_at con NOW() para asegurar el conteo diario
+            cur.execute("""
+                INSERT INTO activity_logs (user_id, command, created_at) 
+                VALUES (%s, %s, NOW())
+            """, (user_id, command))
             conn.commit()
-    except Exception: pass
-    finally: put_conn(conn)
+    except Exception as e:
+        # IMPORTANTE: Imprimimos el error para saber si algo falla
+        print(f"❌ Error log_activity: {e}") 
+    finally:
+        put_conn(conn)
 
 def get_daily_requests_count():
     conn = get_conn()
@@ -384,3 +391,4 @@ def get_stats_full_text():
         return f"❌ Error en Stats Full: {e}"
     finally:
         put_conn(conn)
+
