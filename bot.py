@@ -33,17 +33,19 @@ from services.worker import background_worker
 from utils.formatting import build_price_message, get_sentiment_keyboard
 
 # --- 5. HANDLERS ---
+# ⚠️ AQUÍ ESTABA EL ERROR: track_my_chat_member viene de commands, no de tracking
 from handlers.commands import (
     start_command, help_command, grafico, referidos, 
     prediccion, stats, global_message, debug_mining, 
-    stats_full, close_announcement
+    stats_full, close_announcement, track_my_chat_member
 )
 from handlers.market import mercado
 from handlers.analytics import horario
 from handlers.callbacks import button_handler
 from handlers.calc import conv_usdt, conv_bs 
 from handlers.alerts import conv_alert, check_alerts_async
-from handlers.tracking import track_my_chat_member
+
+# (Borramos la línea que decía 'from handlers.tracking import ...' porque ese archivo no existe)
 
 from telegram import Update
 from telegram.ext import (
@@ -59,7 +61,6 @@ TOKEN = os.getenv("TOKEN")
 
 # ==============================================================================
 #  SISTEMA: ARRANQUE SEGURO DEL WORKER (POST_INIT)
-#  
 # ==============================================================================
 async def post_init(application: Application):
     """
@@ -249,7 +250,6 @@ if __name__ == "__main__":
         exit(1)
         
     # 2. CONSTRUCCIÓN DEL BOT
-    # 🔥 AQUÍ ESTÁ LA SOLUCIÓN: .post_init(post_init) en lugar de loop.create_task abajo
     app = ApplicationBuilder().token(TOKEN).post_init(post_init).build()
 
     # --- REGISTRO DE COMANDOS ---
