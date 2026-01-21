@@ -165,25 +165,15 @@ def log_calc(user_id, amount, currency, result):
     except Exception: pass
     finally: put_conn(conn)
 
-# En database/stats.py (al final del archivo)
-
 def log_activity(user_id, command):
     conn = get_conn()
     if not conn: return
-    
     try:
         with conn.cursor() as cur:
-            # Versión SEGURA: Solo 2 columnas.
-            # Agregamos el commit() que es lo que faltaba para que cuente.
             cur.execute("INSERT INTO activity_logs (user_id, command) VALUES (%s, %s)", (user_id, command))
             conn.commit()
-            
-    except Exception as e:
-        # Esto imprimirá el error en la consola en lugar de crashear el bot
-        print(f"❌ ERROR DB (log_activity): {e}")
-        
-    finally:
-        put_conn(conn)
+    except Exception: pass
+    finally: put_conn(conn)
 
 def get_daily_requests_count():
     conn = get_conn()
