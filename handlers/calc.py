@@ -1,103 +1,107 @@
-import asyncio
 from telegram import Update
-from telegram.ext import ContextTypes, ConversationHandler, CommandHandler, MessageHandler, filters
-from telegram.constants import ParseMode
+from telegram.ext import ContextTypes
+from telegram.error import BadRequest
+import asyncio
 
-# Imports de base de datos
-from database.users import track_user
-from database.stats import log_calc, log_activity
-
-# ⚠️ CAMBIO CLAVE: Importamos la memoria RAM, no el servicio
+# Imports de nuestra estructura
+from utils.formatting import build_price_message, get_sentiment_keyboard
 from shared import MARKET_DATA
+from database.stats import get_daily_requests_count, cast_vote
 
-# Estados de la conversación
-ESPERANDO_INPUT_USDT = 1
-ESPERANDO_INPUT_BS = 2
+async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    query = update.callback_query
+    user_id = query.from_user.id
+    data = query.data
 
-async def calculate_conversion(update: Update, text_amount, currency_type):
-    """Función auxiliar que hace la matemática usando memoria RAM."""
-    
-    # 1. LEER PRECIO DE MEMORIA (Instantáneo)
-    rate = MARKET_DATA["price"]
-    
-    if not rate:
-        await update.message.reply_text("⏳ Iniciando sistema... intenta en 5 segundos.")
-        return ConversationHandler.END
+    # --- PROTECCIÓN ANTI-CRASH (ERROR "QUERY IS TOO OLD") ---
+    # Creamos una mini-función interna para responder al botón sin riesgo.
+    # Si el botón es viejo (más de 48h), Telegram da error al intentar mostrar
+    # el "toast" (mensajito flotante), pero no debemos dejar que eso detenga el bot.
+    async def safe_answer(text=None):
+        try:
+            await query.answer(text)
+        except BadRequest:
+            # Si falla (Query too old), lo ignoramos y seguimos ejecutando la lógica
+            pass
 
-    try:
-        # Limpiar texto (Soporta formatos como "1.200,50" o "1200.50")
-        clean_text = ''.join(c for c in text_amount if c.isdigit() or c in '.,')
+    # ==================================================================
+    # CASO 1: VOTACIÓN
+    # ==================================================================
+    # Si el botón empieza por "vote_", es que el usuario pulsó Subirá o Bajará
+    if data.startswith("vote_"):
+        vote_type = data.split("_")[1] # Extraemos 'UP' o 'DOWN'
         
-        # Normalizar coma a punto para Python
-        if ',' in clean_text and '.' in clean_text:
-            # Caso complejo: 1.500,50 -> Quitamos punto, cambiamos coma
-            clean_text = clean_text.replace('.', '').replace(',', '.')
-        elif ',' in clean_text:
-            clean_text = clean_text.replace(',', '.')
+        # Guardamos el voto en la BD en un hilo aparte
+        await asyncio.to_thread(cast_vote, user_id, vote_type)
+        
+        # Feedback rápido al usuario (Blindado)
+        await safe_answer("✅ ¡Voto registrado!")
+        
+        # NOTA: No hacemos return aquí. Dejamos que el código baje al CASO 2
+        # para regenerar el mensaje y mostrar los porcentajes inmediatamente.
+
+    # ==================================================================
+    # CASO 2: ACTUALIZAR (Refresh) O MOSTRAR RESULTADOS (Post-Voto)
+    # ==================================================================
+    # Aceptamos "refresh", "refresh_price" (del Worker) y "vote_" (flujo continuo)
+    if data in ["refresh", "refresh_price"] or data.startswith("vote_"):
+        
+        # Solo mostramos "Actualizando..." si fue un clic de refresh directo
+        if data in ["refresh", "refresh_price"]:
+            await safe_answer("🔄 Consultando mercado...")
+
+        # 1. Obtenemos contadores frescos (DB)
+        req_count = await asyncio.to_thread(get_daily_requests_count)
+        
+        # 2. Generamos el TEXTO NUEVO
+        # build_price_message detectará que hay un user_id y adaptará el texto
+        text = build_price_message(MARKET_DATA, user_id=user_id, requests_count=req_count)
+        
+        # 3. Generamos los BOTONES NUEVOS
+        current_price = MARKET_DATA.get("price", 0)
+        reply_markup = await asyncio.to_thread(get_sentiment_keyboard, user_id, current_price)
+
+        try:
+            # 4. Editamos el mensaje con la nueva info
+            # (Esto funciona SIEMPRE, incluso si el mensaje es de hace un año)
+            await query.edit_message_text(
+                text=text,
+                parse_mode="HTML",
+                reply_markup=reply_markup,
+                disable_web_page_preview=True
+            )
+        except BadRequest as e:
+            # Si el precio y los votos son idénticos a lo que ya hay en pantalla,
+            # Telegram lanza "Message is not modified". No es grave.
+            if "Message is not modified" not in str(e):
+                print(f"⚠️ Error editando mensaje: {e}")
+
+    # ==================================================================
+    # CASO 3: VER MERCADO (CMD_MERCADO)
+    # ==================================================================
+    elif data == "cmd_mercado":
+        # Importamos aquí dentro para evitar errores de importación circular
+        from handlers.market import mercado_text_logic
+        
+        # Generamos el texto fresco
+        text, markup = await mercado_text_logic()
+        
+        try:
+            # Editamos el mensaje
+            await query.edit_message_text(
+                text=text,
+                reply_markup=markup,
+                parse_mode="HTML"
+            )
+            # Confirmamos acción exitosa
+            await safe_answer() 
             
-        amount = float(clean_text)
-        
-        # Guardar en DB (Log de uso)
-        await asyncio.to_thread(log_calc, update.effective_user.id, amount, currency_type, 0)
-        
-        if currency_type == "USDT":
-            total = amount * rate
-            msg = f"🇺🇸 {amount:,.2f} USDT son:\n🇻🇪 <b>{total:,.2f} Bolívares</b>\n<i>(Tasa: {rate:,.2f})</i>"
-        else: 
-            total = amount / rate
-            msg = f"🇻🇪 {amount:,.2f} Bs son:\n🇺🇸 <b>{total:,.2f} USDT</b>\n<i>(Tasa: {rate:,.2f})</i>"
-            
-        await update.message.reply_text(msg, parse_mode=ParseMode.HTML)
-        
-    except ValueError:
-        await update.message.reply_text("🔢 Número inválido. Usa solo números (ej: 100 o 50.5)")
+        except Exception:
+            # Si los montos no cambiaron, avisamos con toast (Blindado)
+            await safe_answer("✅ Ya está actualizado.")
     
-    return ConversationHandler.END
-
-# --- HANDLERS DE INICIO ---
-
-async def start_usdt_calc(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    await asyncio.to_thread(track_user, update.effective_user)
-    await asyncio.to_thread(log_activity, update.effective_user.id, "/calc")
-    
-    # Si el usuario escribió "/usdt 100"
-    if context.args: 
-        return await calculate_conversion(update, context.args[0], "USDT")
-        
-    await update.message.reply_text("🇺🇸 <b>Calculadora USDT:</b>\n\n¿Cuántos Dólares?\n<i>Escribe el número:</i>", parse_mode=ParseMode.HTML)
-    return ESPERANDO_INPUT_USDT
-
-async def start_bs_calc(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    await asyncio.to_thread(track_user, update.effective_user)
-    await asyncio.to_thread(log_activity, update.effective_user.id, "/calc")
-    
-    # Si el usuario escribió "/bs 5000"
-    if context.args: 
-        return await calculate_conversion(update, context.args[0], "BS")
-        
-    await update.message.reply_text("🇻🇪 <b>Calculadora Bolívares:</b>\n\n¿Cuántos Bs?\n<i>Escribe el número:</i>", parse_mode=ParseMode.HTML)
-    return ESPERANDO_INPUT_BS
-
-async def process_usdt_input(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    return await calculate_conversion(update, update.message.text, "USDT")
-
-async def process_bs_input(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    return await calculate_conversion(update, update.message.text, "BS")
-
-async def cancel(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    await update.message.reply_text("Cancelado.")
-    return ConversationHandler.END
-
-# --- DEFINICIÓN DE CONVERSACIONES ---
-
-conv_usdt = ConversationHandler(
-    entry_points=[CommandHandler("usdt", start_usdt_calc), CommandHandler("calc", start_usdt_calc)], # Alias /calc
-    states={ESPERANDO_INPUT_USDT: [MessageHandler(filters.TEXT & ~filters.COMMAND, process_usdt_input)]},
-    fallbacks=[CommandHandler("cancel", cancel)]
-)
-
-conv_bs = ConversationHandler(
-    entry_points=[CommandHandler("bs", start_bs_calc)],
-    states={ESPERANDO_INPUT_BS: [MessageHandler(filters.TEXT & ~filters.COMMAND, process_bs_input)]},
-    fallbacks=[CommandHandler("cancel", cancel)]
-)
+    # ==================================================================
+    # CASO 4: BOTONES PASIVOS
+    # ==================================================================
+    elif data == "ignore":
+        await safe_answer()
