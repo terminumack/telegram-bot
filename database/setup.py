@@ -108,6 +108,73 @@ def init_db():
         # NOTA: Si ya tenías una tabla llamada 'market_state' con otro formato,
         # la dejaremos tranquila y usaremos 'market_memory' para la V51.
         # Así evitamos choques de columnas.
+        # =================================================================
+        # 9. MÓDULO EXCHANGE (OTC) - ¡NUEVO! 🔥
+        # =================================================================
+        
+        # 9.1 Tabla de Pares (Configuración)
+        cur.execute("""
+            CREATE TABLE IF NOT EXISTS exchange_pairs (
+                id SERIAL PRIMARY KEY,
+                currency_in VARCHAR(50) NOT NULL,
+                currency_out VARCHAR(50) NOT NULL,
+                rate DECIMAL(10, 4) NOT NULL,
+                min_amount DECIMAL(10, 2) DEFAULT 10,
+                max_amount DECIMAL(10, 2) DEFAULT 500,
+                is_active BOOLEAN DEFAULT TRUE,
+                instructions TEXT,
+                required_data TEXT DEFAULT 'email'
+            );
+        """)
+
+        # 9.2 Tabla de Billeteras (Tus cuentas)
+        cur.execute("""
+            CREATE TABLE IF NOT EXISTS exchange_wallets (
+                id SERIAL PRIMARY KEY,
+                pair_id INTEGER REFERENCES exchange_pairs(id),
+                address TEXT NOT NULL,
+                is_active BOOLEAN DEFAULT TRUE,
+                daily_limit DECIMAL(10, 2) DEFAULT 1000,
+                current_volume DECIMAL(10, 2) DEFAULT 0,
+                last_reset DATE DEFAULT CURRENT_DATE
+            );
+        """)
+
+        # 9.3 Tabla de Órdenes (Historial)
+        cur.execute("""
+            CREATE TABLE IF NOT EXISTS exchange_orders (
+                id SERIAL PRIMARY KEY,
+                user_id BIGINT NOT NULL,
+                pair_id INTEGER REFERENCES exchange_pairs(id),
+                amount_in DECIMAL(10, 2) NOT NULL,
+                amount_out DECIMAL(10, 2) NOT NULL,
+                rate_snapshot DECIMAL(10, 4) NOT NULL,
+                status VARCHAR(20) DEFAULT 'PENDING',
+                user_data TEXT,
+                proof_file_id TEXT,
+                cashier_id BIGINT,
+                rejection_reason TEXT,
+                created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
+                processed_at TIMESTAMP WITH TIME ZONE,
+                closed_at TIMESTAMP WITH TIME ZONE
+            );
+        """)
+
+        # 9.4 Datos de Prueba (Seed Data)
+        # Solo insertamos si la tabla está vacía para no duplicar
+        cur.execute("SELECT COUNT(*) FROM exchange_pairs")
+        if cur.fetchone()[0] == 0:
+            print("🌱 Insertando datos base del Exchange...")
+            # Insertar Par: PayPal -> USDT (Tasa 0.90)
+            cur.execute("""
+                INSERT INTO exchange_pairs (currency_in, currency_out, rate, instructions)
+                VALUES ('PayPal', 'USDT', 0.90, '⚠️ Enviar solo como "Amigos y Familiares". Adjuntar captura completa.')
+            """)
+            # Insertar Wallet de prueba para el ID 1
+            cur.execute("""
+                INSERT INTO exchange_wallets (pair_id, address)
+                VALUES (1, 'tucorreo@gmail.com')
+            """)
 
         conn.commit()
         
