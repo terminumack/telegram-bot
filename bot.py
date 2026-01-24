@@ -45,6 +45,7 @@ from handlers.analytics import horario
 from handlers.callbacks import button_handler
 from handlers.calc import conv_usdt, conv_bs 
 from handlers.alerts import conv_alert, check_alerts_async
+from handlers import exchange_admin
 
 # (Borramos la línea que decía 'from handlers.tracking import ...' porque ese archivo no existe)
 
