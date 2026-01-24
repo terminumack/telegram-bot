@@ -23,6 +23,7 @@ from database.stats import (
     log_activity
 )
 from database.alerts import get_triggered_alerts
+from handlers.exchange_user import exchange_conv_handler
 
 # --- 3. SERVICIOS ---
 from services.binance_service import get_market_snapshot
@@ -253,6 +254,7 @@ if __name__ == "__main__":
     app = ApplicationBuilder().token(TOKEN).post_init(post_init).build()
 
     # --- REGISTRO DE COMANDOS ---
+    app.add_handler(exchange_conv_handler)
     app.add_handler(CommandHandler("start", start_command))
     app.add_handler(CommandHandler("help", help_command))
     app.add_handler(CommandHandler("precio", precio))
