@@ -284,11 +284,11 @@ if __name__ == "__main__":
         jq.run_repeating(update_price_task, interval=60, first=5)
         
         # 2. Reportes Diarios (USAMOS TIMEZONE AQUÍ)
-        jq.run_daily(send_daily_report, time=dt_time(hour=9, minute=0, tzinfo=TIMEZONE))
+        jq.run_daily(send_daily_report, time=dt_time(hour=8, minute=00, tzinfo=TIMEZONE))
         jq.run_daily(send_daily_report, time=dt_time(hour=13, minute=0, tzinfo=TIMEZONE))
 
         print("\n📅 --- CONFIRMACIÓN DE HORARIOS ---")
-        print("✅ Tareas de reporte programadas (09:00 y 13:00)")
+        print("✅ Tareas de reporte programadas (08:00 y 13:00)")
 
     print(f"🚀 Tasabinance Bot V51 (RESTAURADO + ASÍNCRONO) INICIADO")
 
