@@ -5,6 +5,7 @@ from telegram.ext import (
     CallbackQueryHandler, MessageHandler, filters
 )
 from database import exchange_db
+from handlers import exchange_admin
 
 # ESTADOS DE LA CONVERSACIÓN
 SELECT_PAIR, ENTER_AMOUNT, CONFIRM_ORDER, UPLOAD_PROOF = range(4)
@@ -176,7 +177,19 @@ async def receive_proof(update: Update, context: ContextTypes.DEFAULT_TYPE):
         # --- AQUÍ NOTIFICARÍAMOS AL GRUPO DE ADMINS ---
         # (Lo implementaremos en el siguiente paso para no sobrecargar este archivo)
         # Por ahora solo imprime en consola
-        print(f"🔔 NUEVA ORDEN #{order_id} LISTA PARA REVISIÓN")
+        success = await asyncio.to_thread(exchange_db.add_proof_to_order, order_id, file_id)
+    
+    if success:
+        await update.message.reply_text(
+            f"✅ <b>¡Comprobante Recibido!</b>\n\n"
+            f"Orden #{order_id} está en revisión.\n"
+            "Te notificaremos en cuanto sea validada."
+        , parse_mode="HTML")
+        
+        # 🔥 EL CAMBIO ESTÁ AQUÍ 🔥
+        # Llamamos a la función de notificación del otro archivo
+        from handlers import exchange_admin # Import local para evitar circularidad
+        asyncio.create_task(exchange_admin.notify_new_order(context, order_id))
         
     else:
         await update.message.reply_text("❌ Error guardando el comprobante. Contacta soporte.")
