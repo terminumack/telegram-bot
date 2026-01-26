@@ -105,16 +105,23 @@ def init_db():
             )
         """)
         
-        # =================================================================
+       # =================================================================
         # 9. MÓDULO EXCHANGE (TICKET SYSTEM)
         # =================================================================
         
-        # 9.1 Tabla de Pares (Menú Dinámico)
+        # 🔥 LIMPIEZA DE TABLAS VIEJAS (SOLO EJECUTAR SI HAY ERRORES DE COLUMNAS)
+        # Esto borrará los datos viejos de pruebas anteriores para recrear la estructura correcta.
+        # Una vez que funcione, puedes borrar o comentar estas 3 líneas de DROP.
+        cur.execute("DROP TABLE IF EXISTS exchange_orders CASCADE")
+        cur.execute("DROP TABLE IF EXISTS exchange_wallets CASCADE")
+        cur.execute("DROP TABLE IF EXISTS exchange_pairs CASCADE")
+        
+        # 9.1 Tabla de Pares (Menú Dinámico) - AHORA SÍ SE CREARÁ NUEVA
         cur.execute("""
             CREATE TABLE IF NOT EXISTS exchange_pairs (
                 id SERIAL PRIMARY KEY,
-                name VARCHAR(50) NOT NULL,       -- Ej: PayPal
-                type VARCHAR(20) DEFAULT 'FIAT', -- CRYPTO o FIAT
+                name VARCHAR(50) NOT NULL,       -- Esta es la columna que te faltaba
+                type VARCHAR(20) DEFAULT 'FIAT',
                 is_active BOOLEAN DEFAULT TRUE,
                 min_amount DECIMAL(10, 2) DEFAULT 10
             );
