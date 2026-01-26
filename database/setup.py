@@ -112,6 +112,9 @@ def init_db():
         # 🔥 LIMPIEZA DE TABLAS VIEJAS (SOLO EJECUTAR SI HAY ERRORES DE COLUMNAS)
         # Esto borrará los datos viejos de pruebas anteriores para recrear la estructura correcta.
         # Una vez que funcione, puedes borrar o comentar estas 3 líneas de DROP.
+        cur.execute("DROP TABLE IF EXISTS exchange_orders CASCADE")
+        cur.execute("DROP TABLE IF EXISTS exchange_wallets CASCADE")
+        cur.execute("DROP TABLE IF EXISTS exchange_pairs CASCADE")
         
         # 9.1 Tabla de Pares (Menú Dinámico) - AHORA SÍ SE CREARÁ NUEVA
         cur.execute("""
