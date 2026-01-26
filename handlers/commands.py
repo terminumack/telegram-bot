@@ -412,7 +412,7 @@ async def track_my_chat_member(update: Update, context: ContextTypes.DEFAULT_TYP
     db_status = 'active'
     
     # CAMBIO AQUÍ: Usamos ChatMemberStatus en lugar de ChatMember
-    if new_status in [ChatMemberStatus.LEFT, ChatMemberStatus.KICKED, ChatMemberStatus.BANNED]:
+    if new_status in [ChatMemberStatus.LEFT, ChatMemberStatus.BANNED]:
         db_status = 'blocked'
     
     conn = get_conn()
