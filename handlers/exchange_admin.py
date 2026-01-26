@@ -52,6 +52,20 @@ async def admin_actions(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     # CASO: RECLAMAR
     if action == "claim":
+        
+        # 🔥 NUEVO: VERIFICACIÓN DE CAJERO OCUPADO
+        # Antes de nada, preguntamos si ya tiene trabajo pendiente.
+        active_ticket_id = await asyncio.to_thread(exchange_db.get_active_ticket_by_cashier, cashier.id)
+        
+        if active_ticket_id:
+            # Si tiene una orden abierta, LO PARAMOS AQUÍ.
+            await query.answer(
+                f"⛔ ¡Alto ahí!\n\nTienes la Orden #{active_ticket_id} sin cerrar.\nTermina esa primero.", 
+                show_alert=True
+            )
+            return
+            
+    if action == "claim":
         print("👉 Intentando reclamar en DB...") # Debug 3
         success = await asyncio.to_thread(exchange_db.claim_ticket, ticket_id, cashier.id)
         print(f"👉 Resultado DB: {success}") # Debug 4
