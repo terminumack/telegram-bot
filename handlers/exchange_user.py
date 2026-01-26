@@ -121,8 +121,22 @@ async def receive_amount(update: Update, context: ContextTypes.DEFAULT_TYPE):
     return ConversationHandler.END
 
 async def cancel(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Cancelación por comando /cancelar."""
-    await update.message.reply_text("❌ Operación cancelada.")
+    """Cancelación inteligente (detecta botón o comando)."""
+    
+    # CASO 1: Fue por BOTÓN (CallbackQuery)
+    if update.callback_query:
+        query = update.callback_query
+        await query.answer()
+        # Editamos el mensaje del menú para que no quede ahí colgado
+        await query.edit_message_text("❌ Operación cancelada.")
+
+    # CASO 2: Fue por COMANDO escrito (Message)
+    elif update.message:
+        await update.message.reply_text("❌ Operación cancelada.")
+
+    # Limpiamos datos de memoria por si acaso
+    context.user_data.clear()
+    
     return ConversationHandler.END
 
 # DEFINICIÓN DEL HANDLER
