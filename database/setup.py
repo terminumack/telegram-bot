@@ -141,20 +141,40 @@ def init_db():
             );
         """)
 
-        # 9.3 SEED DATA (Tus monedas iniciales)
-        cur.execute("SELECT COUNT(*) FROM exchange_pairs")
-        if cur.fetchone()[0] == 0:
-            print("🌱 Sembrando monedas del Exchange...")
-            pairs = [
-                ('USDT', 'CRYPTO'),
-                ('PayPal', 'FIAT'),
-                ('Zelle', 'FIAT'),
-                ('Zinli', 'FIAT'),
-                ('Revolut', 'FIAT')
-            ]
-            for name, type_ in pairs:
-                cur.execute("INSERT INTO exchange_pairs (name, type) VALUES (%s, %s)", (name, type_))
+        # =================================================================
+        # 9.3 SEED DATA (Inyección de Monedas a Fuerza)
+        # =================================================================
+        # Lista de monedas que QUEREMOS tener sí o sí
+        target_pairs = [
+            ('USDT', 'CRYPTO', 10),
+            ('PayPal', 'FIAT', 20),
+            ('Zelle', 'FIAT', 20),
+            ('Zinli', 'FIAT', 15),
+            ('Revolut', 'FIAT', 20),
+            ('Wise', 'FIAT', 20),
+            ('Bolívares', 'FIAT', 500)
+        ]
 
+        print("🔄 Verificando lista de monedas...")
+        
+        for name, p_type, min_amt in target_pairs:
+            # 1. Preguntamos si ya existe por nombre
+            cur.execute("SELECT id FROM exchange_pairs WHERE name = %s", (name,))
+            exists = cur.fetchone()
+            
+            # 2. Si NO existe, la insertamos
+            if not exists:
+                cur.execute("""
+                    INSERT INTO exchange_pairs (name, type, is_active, min_amount)
+                    VALUES (%s, %s, TRUE, %s)
+                """, (name, p_type, min_amt))
+                print(f"   ✅ Moneda creada: {name}")
+            else:
+                # Opcional: Si quieres ver en consola que ya existía
+                # print(f"   🆗 Ya existe: {name}")
+                pass
+
+        # Guardamos cambios
         conn.commit()
         
         # Ejecutar migraciones por si faltan columnas en tablas viejas
