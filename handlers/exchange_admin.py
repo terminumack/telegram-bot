@@ -7,15 +7,15 @@ import os
 ADMIN_GROUP_ID = os.getenv("ADMIN_GROUP_ID") 
 
 async def notify_cashiers(context: ContextTypes.DEFAULT_TYPE, ticket_id: int):
-    """Envía la alerta al grupo."""
-    if not ADMIN_GROUP_ID: return
+    # ... validaciones anteriores igual ...
 
     ticket = await asyncio.to_thread(exchange_db.get_ticket_details, ticket_id)
     if not ticket: return
 
+    # 🔥 CAMBIO: Ocultamos el username
     msg = (
         f"🚨 <b>SOLICITUD #{ticket['id']}</b>\n"
-        f"👤 Cliente: {ticket['user_username']}\n"
+        f"👤 Cliente: <b>🔒 ANÓNIMO</b>\n"  # <--- YA NO MOSTRAMOS EL NOMBRE
         f"💰 Monto: <b>{ticket['initial_amount']} {ticket['pair_name']}</b>\n"
         f"--------------------------\n"
         f"¿Quién atiende?"
