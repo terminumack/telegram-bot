@@ -1,6 +1,6 @@
 import logging
 from datetime import datetime
-from database.db import get_conn, put_conn
+from database.db_pool import get_conn, put_conn
 
 # --- LECTURA ---
 def get_menu_pairs():
