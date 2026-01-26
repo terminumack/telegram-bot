@@ -1,140 +1,98 @@
 import logging
 from datetime import datetime
-import pytz
-# Asegúrate de importar tu conexión correctamente.
-# Si tu archivo de conexión se llama 'db_pool.py', usa esta línea:
-from database.db_pool import get_conn, put_conn 
+from database.db import get_conn, put_conn
 
-# --- CONFIGURACIÓN Y LECTURA ---
-
-def get_active_pairs():
+# --- LECTURA ---
+def get_menu_pairs():
+    """Obtiene la lista para los botones."""
     conn = get_conn()
     if not conn: return []
     try:
         with conn.cursor() as cur:
-            cur.execute("""
-                SELECT id, currency_in, currency_out, rate, min_amount, max_amount, instructions, required_data 
-                FROM exchange_pairs 
-                WHERE is_active = TRUE
-                ORDER BY id ASC
-            """)
-            # Convertimos a diccionario para facilitar uso en el frontend
-            columns = [desc[0] for desc in cur.description]
-            return [dict(zip(columns, row)) for row in cur.fetchall()]
-    except Exception as e:
-        logging.error(f"❌ Error get_active_pairs: {e}")
-        return []
-    finally:
-        put_conn(conn)
-
-def get_pair_info(pair_id):
-    conn = get_conn()
-    if not conn: return None
-    try:
-        with conn.cursor() as cur:
-            cur.execute("SELECT * FROM exchange_pairs WHERE id = %s", (pair_id,))
-            cols = [desc[0] for desc in cur.description]
-            row = cur.fetchone()
-            return dict(zip(cols, row)) if row else None
-    except Exception: return None
+            cur.execute("SELECT id, name FROM exchange_pairs WHERE is_active = TRUE ORDER BY id ASC")
+            return cur.fetchall()
+    except Exception: return []
     finally: put_conn(conn)
 
-def get_active_wallet(pair_id):
+def get_pair_name(pair_id):
     conn = get_conn()
     if not conn: return None
     try:
         with conn.cursor() as cur:
-            cur.execute("SELECT address FROM exchange_wallets WHERE pair_id = %s AND is_active = TRUE LIMIT 1", (pair_id,))
+            cur.execute("SELECT name FROM exchange_pairs WHERE id = %s", (pair_id,))
             res = cur.fetchone()
-            return res[0] if res else "Consulte al Admin"
+            return res[0] if res else None
     except Exception: return None
     finally: put_conn(conn)
 
-# --- CREACIÓN Y GESTIÓN DE ÓRDENES ---
+# --- GESTIÓN DE TICKETS ---
 
-def create_exchange_order(user_id, pair_id, amount_in, amount_out, rate, user_data):
+def create_ticket(user_id, username, pair_name, amount):
+    """Crea el ticket en espera."""
     conn = get_conn()
     if not conn: return None
     try:
         with conn.cursor() as cur:
             cur.execute("""
-                INSERT INTO exchange_orders 
-                (user_id, pair_id, amount_in, amount_out, rate_snapshot, user_data, status)
-                VALUES (%s, %s, %s, %s, %s, %s, 'PENDING')
+                INSERT INTO exchange_orders (user_id, user_username, pair_name, initial_amount, status)
+                VALUES (%s, %s, %s, %s, 'PENDING')
                 RETURNING id
-            """, (user_id, pair_id, amount_in, amount_out, rate, user_data))
-            order_id = cur.fetchone()[0]
+            """, (user_id, username, pair_name, amount))
+            ticket_id = cur.fetchone()[0]
             conn.commit()
-            return order_id
+            return ticket_id
     except Exception as e:
-        logging.error(f"❌ Error creando orden: {e}")
+        logging.error(f"Error creating ticket: {e}")
         return None
-    finally:
-        put_conn(conn)
+    finally: put_conn(conn)
 
-def add_proof_to_order(order_id, file_id):
+def claim_ticket(ticket_id, cashier_id):
+    """El cajero toma el ticket. (Marca el tiempo de respuesta)."""
     conn = get_conn()
     if not conn: return False
     try:
         with conn.cursor() as cur:
+            # Verificar si ya está tomado
+            cur.execute("SELECT cashier_id FROM exchange_orders WHERE id = %s", (ticket_id,))
+            current = cur.fetchone()
+            if current and current[0]: return False 
+
             cur.execute("""
                 UPDATE exchange_orders 
-                SET proof_file_id = %s, status = 'PROCESSING', created_at = NOW()
+                SET cashier_id = %s, status = 'IN_PROGRESS', taken_at = NOW()
                 WHERE id = %s
-            """, (file_id, order_id))
+            """, (cashier_id, ticket_id))
             conn.commit()
-        return True
+            return True
     except Exception: return False
     finally: put_conn(conn)
 
-# --- GESTIÓN DE CAJEROS ---
-
-def assign_cashier(order_id, cashier_id):
+def close_ticket(ticket_id, status, final_amount=None):
+    """Cierra el ticket. (Marca tiempo de resolución)."""
     conn = get_conn()
     if not conn: return False
     try:
         with conn.cursor() as cur:
-            cur.execute("SELECT cashier_id FROM exchange_orders WHERE id = %s", (order_id,))
-            current = cur.fetchone()
-            if current and current[0] is not None and current[0] != cashier_id:
-                return False 
+            # Si no se especifica monto final, usamos el inicial como referencia
+            if final_amount is None and status == 'COMPLETED':
+                cur.execute("UPDATE exchange_orders SET final_amount = initial_amount WHERE id = %s", (ticket_id,))
             
             cur.execute("""
                 UPDATE exchange_orders 
-                SET cashier_id = %s, processed_at = NOW()
+                SET status = %s, closed_at = NOW()
                 WHERE id = %s
-            """, (cashier_id, order_id))
+            """, (status, ticket_id))
             conn.commit()
         return True
     except Exception: return False
     finally: put_conn(conn)
 
-def close_order(order_id, status, reason=None):
-    conn = get_conn()
-    if not conn: return False
-    try:
-        with conn.cursor() as cur:
-            cur.execute("""
-                UPDATE exchange_orders 
-                SET status = %s, closed_at = NOW(), rejection_reason = %s
-                WHERE id = %s
-            """, (status, reason, order_id))
-            conn.commit()
-        return True
-    except Exception: return False
-    finally: put_conn(conn)
-
-def get_order_details(order_id):
+def get_ticket_details(ticket_id):
     conn = get_conn()
     if not conn: return None
     try:
         with conn.cursor() as cur:
-            cur.execute("""
-                SELECT o.*, p.currency_in, p.currency_out 
-                FROM exchange_orders o
-                JOIN exchange_pairs p ON o.pair_id = p.id
-                WHERE o.id = %s
-            """, (order_id,))
+            cur.execute("SELECT * FROM exchange_orders WHERE id = %s", (ticket_id,))
             cols = [desc[0] for desc in cur.description]
             row = cur.fetchone()
             return dict(zip(cols, row)) if row else None
