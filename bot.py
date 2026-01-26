@@ -24,6 +24,8 @@ from database.stats import (
 )
 from database.alerts import get_triggered_alerts
 from handlers.exchange_user import exchange_conv_handler
+from telegram.ext import CallbackQueryHandler  # <--- ASEGURA ESTA
+from handlers import exchange_admin            # <--- Y ESTA
 
 # --- 3. SERVICIOS ---
 from services.binance_service import get_market_snapshot
