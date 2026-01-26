@@ -102,3 +102,19 @@ def get_ticket_details(ticket_id):
             return dict(zip(cols, row)) if row else None
     except Exception: return None
     finally: put_conn(conn)
+
+def get_active_ticket_by_cashier(cashier_id):
+    """Revisa si el cajero ya tiene una orden abierta."""
+    conn = get_conn()
+    if not conn: return None
+    try:
+        with conn.cursor() as cur:
+            cur.execute("""
+                SELECT id FROM exchange_orders 
+                WHERE cashier_id = %s AND status = 'IN_PROGRESS'
+                LIMIT 1
+            """, (cashier_id,))
+            res = cur.fetchone()
+            return res[0] if res else None
+    except Exception: return None
+    finally: put_conn(conn)
