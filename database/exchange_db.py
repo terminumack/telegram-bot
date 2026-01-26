@@ -47,24 +47,28 @@ def create_ticket(user_id, username, pair_name, amount):
     finally: put_conn(conn)
 
 def claim_ticket(ticket_id, cashier_id):
-    """El cajero toma el ticket. (Marca el tiempo de respuesta)."""
+    """El cajero toma el ticket. Versión ATÓMICA (Anti-choque)."""
     conn = get_conn()
     if not conn: return False
     try:
         with conn.cursor() as cur:
-            # Verificar si ya está tomado
-            cur.execute("SELECT cashier_id FROM exchange_orders WHERE id = %s", (ticket_id,))
-            current = cur.fetchone()
-            if current and current[0]: return False 
-
+            # 🔥 LA MAGIA: Agregamos "AND cashier_id IS NULL"
+            # Esto significa: Solo actualiza si NADIE la ha tomado aún.
             cur.execute("""
                 UPDATE exchange_orders 
                 SET cashier_id = %s, status = 'IN_PROGRESS', taken_at = NOW()
-                WHERE id = %s
+                WHERE id = %s AND cashier_id IS NULL
             """, (cashier_id, ticket_id))
+            
             conn.commit()
-            return True
-    except Exception: return False
+            
+            # cur.rowcount nos dice cuántas filas cambió. 
+            # Si es 1, ganaste. Si es 0, alguien te ganó de mano.
+            return cur.rowcount > 0
+            
+    except Exception as e: 
+        print(f"Error claim: {e}")
+        return False
     finally: put_conn(conn)
 
 def close_ticket(ticket_id, status, final_amount=None):
