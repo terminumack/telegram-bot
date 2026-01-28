@@ -272,6 +272,7 @@ if __name__ == "__main__":
     app.add_handler(CommandHandler("horario", horario))
     app.add_handler(CommandHandler("stats_full", stats_full))
     app.add_handler(exchange_conv_handler)
+    app.add_handler(CommandHandler("auditoria", auditoria))
     
     app.add_handler(ChatMemberHandler(track_my_chat_member, ChatMemberHandler.MY_CHAT_MEMBER))
     app.add_handler(CallbackQueryHandler(close_announcement, pattern="^delete_announcement$"))
