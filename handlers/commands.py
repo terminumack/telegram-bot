@@ -438,3 +438,24 @@ async def stats_full(update: Update, context: ContextTypes.DEFAULT_TYPE):
     report = await asyncio.to_thread(get_stats_full_text)
     
     await status.edit_text(report, parse_mode='HTML')
+
+from database.stats import get_conn, put_conn
+
+async def auditoria(update, context):
+    conn = get_conn()
+    try:
+        with conn.cursor() as cur:
+            # Traemos las últimas 30 fechas registradas
+            cur.execute("SELECT date FROM daily_stats ORDER BY date DESC LIMIT 30")
+            rows = cur.fetchall()
+            
+            msg = "📅 **Fechas encontradas en DB:**\n"
+            for row in rows:
+                msg += f"- {row[0]}\n"
+            
+            if not rows:
+                msg = "❌ La tabla daily_stats está VACÍA."
+
+            await update.message.reply_text(msg, parse_mode="Markdown")
+    finally:
+        put_conn(conn)
