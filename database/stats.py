@@ -359,3 +359,32 @@ def get_stats_full_text():
         return f"❌ Error en Stats Full: {e}"
     finally:
         put_conn(conn)
+# --- ACUMULADOR DE PROMEDIOS DIARIOS (RESTAURADO) ---
+def update_daily_stats(current_price, current_bcv):
+    """
+    Suma el precio actual al acumulado del día e incrementa el contador.
+    Esto permite calcular el promedio exacto (Suma / Cantidad) para la gráfica.
+    """
+    conn = get_conn()
+    if not conn: return
+    try:
+        # Usamos la hora de Venezuela
+        tz_vzla = pytz.timezone('America/Caracas')
+        today = datetime.now(tz_vzla).date()
+        
+        with conn.cursor() as cur:
+            # Upsert: Si existe suma, si no crea.
+            cur.execute("""
+                INSERT INTO daily_stats (date, price_sum, count, bcv_price)
+                VALUES (%s, %s, 1, %s)
+                ON CONFLICT (date) DO UPDATE SET 
+                    price_sum = daily_stats.price_sum + EXCLUDED.price_sum,
+                    count = daily_stats.count + 1,
+                    bcv_price = EXCLUDED.bcv_price,
+                    updated_at = NOW();
+            """, (today, current_price, current_bcv))
+            conn.commit()
+    except Exception as e:
+        print(f"❌ Error actualizando acumulado diario: {e}")
+    finally:
+        put_conn(conn)
