@@ -359,11 +359,11 @@ def get_stats_full_text():
         return f"❌ Error en Stats Full: {e}"
     finally:
         put_conn(conn)
-# --- ACUMULADOR DE PROMEDIOS DIARIOS (RESTAURADO) ---
+# --- ACUMULADOR DE PROMEDIOS DIARIOS (CORREGIDO) ---
 def update_daily_stats(current_price, current_bcv):
     """
     Suma el precio actual al acumulado del día e incrementa el contador.
-    Esto permite calcular el promedio exacto (Suma / Cantidad) para la gráfica.
+    VERSIÓN CORREGIDA: Sin columna 'updated_at'.
     """
     conn = get_conn()
     if not conn: return
@@ -380,8 +380,7 @@ def update_daily_stats(current_price, current_bcv):
                 ON CONFLICT (date) DO UPDATE SET 
                     price_sum = daily_stats.price_sum + EXCLUDED.price_sum,
                     count = daily_stats.count + 1,
-                    bcv_price = EXCLUDED.bcv_price,
-                    updated_at = NOW();
+                    bcv_price = EXCLUDED.bcv_price; 
             """, (today, current_price, current_bcv))
             conn.commit()
     except Exception as e:
