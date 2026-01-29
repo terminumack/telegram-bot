@@ -443,19 +443,35 @@ from database.stats import get_conn, put_conn
 
 async def auditoria(update, context):
     conn = get_conn()
+    if not conn: return
     try:
         with conn.cursor() as cur:
-            # Traemos las últimas 30 fechas registradas
-            cur.execute("SELECT date FROM daily_stats ORDER BY date DESC LIMIT 30")
+            # Traemos FECHA, CONTEO y PROMEDIO de los últimos 5 días
+            cur.execute("""
+                SELECT date, count, (price_sum / NULLIF(count, 0)) as promedio 
+                FROM daily_stats 
+                ORDER BY date DESC LIMIT 5
+            """)
             rows = cur.fetchall()
             
-            msg = "📅 **Fechas encontradas en DB:**\n"
-            for row in rows:
-                msg += f"- {row[0]}\n"
-            
+            msg = "🕵️‍♂️ **AUDITORÍA DE BASE DE DATOS**\n\n"
             if not rows:
-                msg = "❌ La tabla daily_stats está VACÍA."
+                msg += "❌ La tabla está vacía."
+            else:
+                for row in rows:
+                    fecha = row[0]
+                    conteo = row[1]
+                    promedio = row[2] if row[2] else 0
+                    
+                    # Marcamos con 🔥 el día de HOY
+                    icono = "🔥" if fecha == datetime.now().date() else "📅"
+                    
+                    msg += f"{icono} **{fecha}**\n"
+                    msg += f"   └ 🔢 Muestras: `{conteo}`\n"
+                    msg += f"   └ 💰 Promedio: `{promedio:.2f}`\n\n"
 
             await update.message.reply_text(msg, parse_mode="Markdown")
+    except Exception as e:
+        await update.message.reply_text(f"❌ Error: {e}")
     finally:
         put_conn(conn)
