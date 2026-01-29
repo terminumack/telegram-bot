@@ -144,6 +144,11 @@ async def update_price_task(context: ContextTypes.DEFAULT_TYPE):
             
             await asyncio.to_thread(save_market_state, pm_buy, val_bcv_usd, val_bcv_eur)
 
+        # 🔥 RECONEXIÓN DEL GRABADOR DE HISTORIAL 🔥
+            # Esto guarda el dato para que la gráfica funcione mañana
+            if pm_buy > 0:
+                await asyncio.to_thread(update_daily_stats, pm_buy, val_bcv_usd)
+
         # 4. ACTUALIZAR FECHA
         now = datetime.now(TIMEZONE)
         MARKET_DATA["last_updated"] = now.strftime("%d/%m/%Y %I:%M:%S %p")
