@@ -20,7 +20,8 @@ from database.stats import (
     save_market_state,       
     load_last_market_state,  
     save_arbitrage_snapshot,
-    log_activity
+    log_activity,
+    update_daily_stats
 )
 from database.alerts import get_triggered_alerts
 from handlers.exchange_user import exchange_conv_handler
