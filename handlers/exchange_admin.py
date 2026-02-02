@@ -226,38 +226,52 @@ async def ganadores_mes(update: Update, context: ContextTypes.DEFAULT_TYPE):
         )
 
 async def admin_notify_winner(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """El bot intenta escribirle al ganador para que aparezca."""
+    """
+    Envía un mensaje al ganador con un botón para que TE escriba a ti.
+    """
     query = update.callback_query
-    # Obtenemos el ID del botón "notify_12345"
-    target_user_id = int(query.data.split("_")[1]) 
+    await query.answer() # Detenemos el reloj de carga
+
+    # 1. Obtenemos el ID del ganador del botón (notify_12345)
+    target_user_id = int(query.data.split("_")[1])
     
-    admin_username = context.bot.username
-    
-    # Mensaje que recibirá el ganador
+    # ⚠️ CONFIGURACIÓN IMPORTANTE ⚠️
+    # Escribe aquí TU usuario personal (sin el @) para que te escriban a ti.
+    # Ejemplo: Si eres @CarlosCrypto, pon "CarlosCrypto"
+    ADMIN_USERNAME = "@tasabinancesoporte" 
+
+    # 2. Mensaje que recibirá el Ganador
     msg_to_winner = (
-        f"🏆 <b>¡FELICIDADES!</b> 🏆\n\n"
-        f"Has ganado uno de los premios mensuales por referidos.\n"
-        f"Por favor, <b>escríbenos urgentemente</b> para entregarte tu premio.\n\n"
-        f"👇 Toca aquí:"
+        f"🎉 <b>¡FELICIDADES!</b> 🎉\n\n"
+        f"Has ganado uno de los premios mensuales por referidos de <b>TasaBinance</b>.\n\n"
+        f"👇 <b>IMPORTANTE:</b>\n"
+        f"Toca el botón de abajo para escribirme directamente y coordinar la entrega de tu premio en USDT."
     )
     
-    # Botón para que el ganador te escriba a ti (o al soporte)
-    # Puedes poner tu usuario personal o un link al soporte
-    kb_winner = [[InlineKeyboardButton("💬 RECLAMAR PREMIO", url=f"https://t.me/{admin_username}")]]
+    # 3. El botón mágico (Abre tu chat privado)
+    kb_winner = [
+        [InlineKeyboardButton("💬 RECLAMAR PREMIO AHORA", url=f"https://t.me/tasabinancesoporte")]
+    ]
 
+    # 4. Intentamos enviar el mensaje
     try:
-        # Intentamos enviar el mensaje
         await context.bot.send_message(
             chat_id=target_user_id,
             text=msg_to_winner,
             parse_mode="HTML",
             reply_markup=InlineKeyboardMarkup(kb_winner)
         )
-        await query.answer("✅ ¡Notificación enviada con éxito!", show_alert=True)
-        await query.edit_message_text(f"{query.message.text_html}\n\n✅ <b>YA NOTIFICADO</b>", parse_mode="HTML")
+        
+        # Si funciona: Actualizamos tu panel de admin con ✅
+        await query.edit_message_text(
+            text=f"{query.message.text_html}\n\n✅ <b>NOTIFICACIÓN ENVIADA</b>",
+            parse_mode="HTML"
+        )
         
     except Exception as e:
-        # Si falla (Bot bloqueado o cuenta eliminada)
-        print(f"Error notificando: {e}")
-        await query.answer("❌ ERROR: El usuario bloqueó al bot o no existe.", show_alert=True)
-        await query.edit_message_text(f"{query.message.text_html}\n\n❌ <b>IMPOSIBLE CONTACTAR</b>\n(Usuario bloqueado o eliminado)", parse_mode="HTML")
+        # Si falla (Bot bloqueado o usuario eliminado): Actualizamos con ❌
+        print(f"❌ Error notificando ganador {target_user_id}: {e}")
+        await query.edit_message_text(
+            text=f"{query.message.text_html}\n\n❌ <b>FALLÓ EL ENVÍO</b>\n(El usuario bloqueó al bot)",
+            parse_mode="HTML"
+        )
