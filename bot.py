@@ -286,6 +286,11 @@ if __name__ == "__main__":
     app.add_handler(ChatMemberHandler(track_my_chat_member, ChatMemberHandler.MY_CHAT_MEMBER))
     app.add_handler(CallbackQueryHandler(close_announcement, pattern="^delete_announcement$"))
     app.add_handler(CallbackQueryHandler(exchange_admin.admin_actions, pattern="^(claim|done|fail)_"))
+    # En bot.py, agrega el import si hace falta:
+# from handlers.exchange_admin import admin_notify_winner
+
+# Y agrega el manejador:
+    app.add_handler(CallbackQueryHandler(exchange_admin.admin_notify_winner, pattern="^notify_"))
     
     app.add_handler(conv_usdt)
     app.add_handler(conv_bs)
