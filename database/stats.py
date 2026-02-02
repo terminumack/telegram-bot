@@ -387,3 +387,19 @@ def update_daily_stats(current_price, current_bcv):
         print(f"❌ Error actualizando acumulado diario: {e}")
     finally:
         put_conn(conn)
+def get_admin_winners():
+    """Trae el Top 3 con datos de contacto (ID y Username)."""
+    conn = get_conn()
+    if not conn: return []
+    try:
+        with conn.cursor() as cur:
+            # Traemos ID, Username, Nombre y Cantidad
+            cur.execute("""
+                SELECT user_id, username, first_name, referral_count 
+                FROM users 
+                ORDER BY referral_count DESC 
+                LIMIT 3
+            """)
+            return cur.fetchall()
+    except Exception: return []
+    finally: put_conn(conn)
