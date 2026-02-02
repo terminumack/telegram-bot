@@ -3,6 +3,8 @@ from telegram.ext import ContextTypes
 from database import exchange_db
 import asyncio
 import os
+from telegram.constants import ParseMode 
+from database.stats import get_admin_winners
 
 # ID del Grupo de Cajeros
 ADMIN_GROUP_ID = os.getenv("ADMIN_GROUP_ID") 
@@ -148,3 +150,33 @@ async def admin_actions(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await asyncio.to_thread(exchange_db.close_ticket, ticket_id, 'CANCELED')
         await query.edit_message_text(f"{query.message.text_html}\n\n❌ <b>CANCELADO / NO CONCRETADO</b>", parse_mode="HTML")
         await query.answer("🗑 Cancelado")
+
+async def ganadores_mes(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Comando secreto para ver a quién pagar."""
+    
+    # Seguridad básica: Si quieres, valida que sea tu ID
+    # if update.effective_user.id != TU_ID: return
+
+    winners = await asyncio.to_thread(get_admin_winners)
+    
+    if not winners:
+        await update.message.reply_text("🤷‍♂️ No hay referidos todavía.")
+        return
+
+    msg = "🏆 **GANADORES PARA PAGAR (ADMIN)** 🏆\n\n"
+    
+    medals = ["🥇", "🥈", "🥉"]
+    
+    for i, (uid, uname, name, count) in enumerate(winners):
+        medal = medals[i] if i < 3 else "🏅"
+        
+        # Link directo al chat del usuario
+        user_link = f"tg://user?id={uid}"
+        alias = f"@{uname}" if uname else "🚫 Sin Alias"
+        
+        msg += f"{medal} <b>{name}</b> ({alias})\n"
+        msg += f"   └ 🆔 ID: <code>{uid}</code>\n"
+        msg += f"   └ 👥 Refs: {count}\n"
+        msg += f"   └ 💬 <a href='{user_link}'>CONTACTAR PARA PAGO</a>\n\n"
+
+    await update.message.reply_text(msg, parse_mode=ParseMode.HTML)
