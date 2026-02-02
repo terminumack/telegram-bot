@@ -182,31 +182,32 @@ async def ganadores_mes(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text(msg, parse_mode=ParseMode.HTML)
 
 async def ganadores_mes(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Comando secreto para ver a quién pagar."""
+    """Muestra la lista de pagos con enlace directo al chat del usuario."""
     
-    # Seguridad básica: Si quieres, valida que sea tu ID
-    # if update.effective_user.id != TU_ID: return
-
+    # Buscamos en la DB
     winners = await asyncio.to_thread(get_admin_winners)
     
     if not winners:
-        await update.message.reply_text("🤷‍♂️ No hay referidos todavía.")
+        await update.message.reply_text("🤷‍♂️ No hay datos de referidos para mostrar.")
         return
 
-    msg = "🏆 **GANADORES PARA PAGAR (ADMIN)** 🏆\n\n"
+    msg = "🏆 **LISTA DE PAGOS (ADMIN)** 🏆\n\n"
+    medals = ["🥇", "🥈", "🥉", "4️⃣", "5️⃣"]
     
-    medals = ["🥇", "🥈", "🥉"]
-    
-    for i, (uid, uname, name, count) in enumerate(winners):
-        medal = medals[i] if i < 3 else "🏅"
+    # Desempaquetamos: ID, Nombre, Cantidad
+    for i, (uid, name, count) in enumerate(winners):
+        medal = medals[i] if i < len(medals) else "🏅"
         
-        # Link directo al chat del usuario
-        user_link = f"tg://user?id={uid}"
-        alias = f"@{uname}" if uname else "🚫 Sin Alias"
+        # Si el nombre viene vacío de la DB, ponemos "Usuario"
+        safe_name = name if name else "Usuario"
         
-        msg += f"{medal} <b>{name}</b> ({alias})\n"
+        # 🔥 EL TRUCO MÁGICO: Enlace directo por ID
+        # Esto abre el chat privado aunque no tenga @alias
+        magic_link = f"tg://user?id={uid}"
+        
+        msg += f"{medal} <b>{safe_name}</b>\n"
         msg += f"   └ 🆔 ID: <code>{uid}</code>\n"
         msg += f"   └ 👥 Refs: {count}\n"
-        msg += f"   └ 💬 <a href='{user_link}'>CONTACTAR PARA PAGO</a>\n\n"
+        msg += f"   └ 💬 <a href='{magic_link}'>CONTACTAR PARA PAGAR</a>\n\n"
 
-    await update.message.reply_text(msg, parse_mode=ParseMode.HTML)
+    await update.message.reply_text(msg, parse_mode="HTML")
