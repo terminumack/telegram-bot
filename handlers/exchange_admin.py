@@ -182,32 +182,45 @@ async def ganadores_mes(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text(msg, parse_mode=ParseMode.HTML)
 
 async def ganadores_mes(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Muestra la lista de pagos con enlace directo al chat del usuario."""
-    
-    # Buscamos en la DB
-    winners = await asyncio.to_thread(get_admin_winners)
+    """
+    Envía una tarjeta individual por cada ganador.
+    Permite 'Notificar' automáticamente si el enlace manual falla.
+    """
+    winners = await asyncio.to_thread(get_admin_winners) # Asegúrate de importar get_admin_winners
     
     if not winners:
-        await update.message.reply_text("🤷‍♂️ No hay datos de referidos para mostrar.")
+        await update.message.reply_text("🤷‍♂️ No hay ganadores para mostrar.")
         return
 
-    msg = "🏆 **LISTA DE PAGOS (ADMIN)** 🏆\n\n"
+    await update.message.reply_text("🏆 **PANEL DE PAGOS (ADMIN)** 🏆\n<i>Enviando fichas de los Top 5...</i>", parse_mode="HTML")
+
     medals = ["🥇", "🥈", "🥉", "4️⃣", "5️⃣"]
     
-    # Desempaquetamos: ID, Nombre, Cantidad
     for i, (uid, name, count) in enumerate(winners):
         medal = medals[i] if i < len(medals) else "🏅"
-        
-        # Si el nombre viene vacío de la DB, ponemos "Usuario"
         safe_name = name if name else "Usuario"
         
-        # 🔥 EL TRUCO MÁGICO: Enlace directo por ID
-        # Esto abre el chat privado aunque no tenga @alias
-        magic_link = f"tg://user?id={uid}"
+        # Texto de la tarjeta
+        msg = (
+            f"{medal} <b>{safe_name}</b>\n"
+            f"🆔 ID: <code>{uid}</code>\n"
+            f"👥 Referidos: {count}"
+        )
         
-        msg += f"{medal} <b>{safe_name}</b>\n"
-        msg += f"   └ 🆔 ID: <code>{uid}</code>\n"
-        msg += f"   └ 👥 Refs: {count}\n"
-        msg += f"   └ 💬 <a href='{magic_link}'>CONTACTAR PARA PAGAR</a>\n\n"
+        # Botones de Acción
+        # 1. Enlace manual (El que ya tenías)
+        # 2. Botón "🔔 AVISARLE" (Para que el bot le escriba)
+        kb = [
+            [InlineKeyboardButton("💬 INTENTAR ABRIR CHAT", url=f"tg://user?id={uid}")],
+            [InlineKeyboardButton("🔔 ENVIAR NOTIFICACIÓN", callback_data=f"notify_{uid}")]
+        ]
 
-    await update.message.reply_text(msg, parse_mode="HTML")
+        if uid < 0: # Si es un grupo
+             msg += "\n⚠️ <b>ES UN GRUPO/CANAL</b>"
+             kb = [] # Sin botones
+
+        await update.message.reply_text(
+            msg, 
+            parse_mode="HTML", 
+            reply_markup=InlineKeyboardMarkup(kb)
+        )
