@@ -5,6 +5,7 @@ import urllib3
 import random
 from datetime import datetime, time as dt_time
 import pytz
+from handlers.exchange_admin import admin_actions, ganadores_mes # <--- Agrega ganadores_mes
 
 # --- 1. CONFIGURACIÓN DE ZONA HORARIA ---
 TIMEZONE = pytz.timezone('America/Caracas')
@@ -280,6 +281,7 @@ if __name__ == "__main__":
     app.add_handler(CommandHandler("stats_full", stats_full))
     app.add_handler(exchange_conv_handler)
     app.add_handler(CommandHandler("auditoria", auditoria))
+    app.add_handler(CommandHandler("ganadores", ganadores_mes))
     
     app.add_handler(ChatMemberHandler(track_my_chat_member, ChatMemberHandler.MY_CHAT_MEMBER))
     app.add_handler(CallbackQueryHandler(close_announcement, pattern="^delete_announcement$"))
