@@ -224,3 +224,40 @@ async def ganadores_mes(update: Update, context: ContextTypes.DEFAULT_TYPE):
             parse_mode="HTML", 
             reply_markup=InlineKeyboardMarkup(kb)
         )
+
+async def admin_notify_winner(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """El bot intenta escribirle al ganador para que aparezca."""
+    query = update.callback_query
+    # Obtenemos el ID del botón "notify_12345"
+    target_user_id = int(query.data.split("_")[1]) 
+    
+    admin_username = context.bot.username
+    
+    # Mensaje que recibirá el ganador
+    msg_to_winner = (
+        f"🏆 <b>¡FELICIDADES!</b> 🏆\n\n"
+        f"Has ganado uno de los premios mensuales por referidos.\n"
+        f"Por favor, <b>escríbenos urgentemente</b> para entregarte tu premio.\n\n"
+        f"👇 Toca aquí:"
+    )
+    
+    # Botón para que el ganador te escriba a ti (o al soporte)
+    # Puedes poner tu usuario personal o un link al soporte
+    kb_winner = [[InlineKeyboardButton("💬 RECLAMAR PREMIO", url=f"https://t.me/{admin_username}")]]
+
+    try:
+        # Intentamos enviar el mensaje
+        await context.bot.send_message(
+            chat_id=target_user_id,
+            text=msg_to_winner,
+            parse_mode="HTML",
+            reply_markup=InlineKeyboardMarkup(kb_winner)
+        )
+        await query.answer("✅ ¡Notificación enviada con éxito!", show_alert=True)
+        await query.edit_message_text(f"{query.message.text_html}\n\n✅ <b>YA NOTIFICADO</b>", parse_mode="HTML")
+        
+    except Exception as e:
+        # Si falla (Bot bloqueado o cuenta eliminada)
+        print(f"Error notificando: {e}")
+        await query.answer("❌ ERROR: El usuario bloqueó al bot o no existe.", show_alert=True)
+        await query.edit_message_text(f"{query.message.text_html}\n\n❌ <b>IMPOSIBLE CONTACTAR</b>\n(Usuario bloqueado o eliminado)", parse_mode="HTML")
