@@ -2,6 +2,7 @@ import logging
 import os
 import psycopg2
 from urllib.parse import urlparse
+from database.stats import get_conn, put_conn
 
 DATABASE_URL = os.getenv("DATABASE_URL")
 
