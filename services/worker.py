@@ -61,6 +61,10 @@ async def background_worker():
                 
                 await asyncio.to_thread(db_update_job_status, job_id, 'processing')
                 users = await asyncio.to_thread(db_get_active_users)
+                # --- AQUÍ COLOCAS EL CÓDIGO DEL BOTÓN ---
+                # Lo preparamos UNA SOLA VEZ antes del bucle para ahorrar procesador
+                kb_anuncio = [[InlineKeyboardButton("✅ Entendido", callback_data="delete_announcement")]]
+                reply_markup = InlineKeyboardMarkup(kb_anuncio)
                 
                 if not users:
                     await asyncio.to_thread(db_update_job_status, job_id, 'done')
