@@ -107,45 +107,34 @@ async def start_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
         except:
             pass
 
-async def global_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    # SEGURIDAD: Solo tú puedes usarlo
-    ADMIN_ID = 533888411 
-    if update.effective_user.id != ADMIN_ID:
-        return
+from database.db_pool import exec_query # Importante usar el pool
 
-    # Extraemos el mensaje quitando el comando /global
+async def global_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    ADMIN_ID = 533888411 
+    if update.effective_user.id != ADMIN_ID: return
+
+    # Extraemos el mensaje
     msg_to_send = update.message.text.replace('/global', '').strip()
     
     if not msg_to_send:
         await update.message.reply_text("❌ Formato: /global [mensaje]")
         return
 
-    # Obtenemos la lista de IDs de la DB
-    users = await asyncio.to_thread(get_all_user_ids)
-    await update.message.reply_text(f"🚀 Iniciando envío a {len(users)} usuarios...")
-
-    # Teclado con el botón de "Entendido"
-    keyboard = [[InlineKeyboardButton("✅ Entendido", callback_data="delete_announcement")]]
-    reply_markup = InlineKeyboardMarkup(keyboard)
-
-    exitos = 0
-    errores = 0
-
-    for uid in users:
-        try:
-            await context.bot.send_message(
-                chat_id=uid, 
-                text=msg_to_send, 
-                parse_mode='HTML',
-                reply_markup=reply_markup
-            )
-            exitos += 1
-            # Pausa obligatoria para evitar baneo de Telegram (Anti-flood)
-            await asyncio.sleep(0.08) 
-        except Exception:
-            errores += 1
-
-    await update.message.reply_text(f"✅ Envío finalizado.\n✨ Éxitos: {exitos}\n❌ Fallidos: {errores}")
+    # 🔥 LA MAGIA: En lugar de un bucle for, lo mandamos a la cola
+    try:
+        # Insertamos en la tabla que lee tu worker.py
+        exec_query(
+            "INSERT INTO broadcast_queue (message, status) VALUES (%s, 'pending')",
+            (msg_to_send,)
+        )
+        
+        await update.message.reply_text(
+            f"📥 **MENSAJE ENCOLADO**\n\n"
+            f"El Worker procesará el envío a los 19.000 usuarios en segundo plano.\n"
+            f"Puedes seguir usando el bot normalmente. ✅"
+        )
+    except Exception as e:
+        await update.message.reply_text(f"❌ Error al encolar: {e}")
 
 async def close_announcement(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Borra el mensaje global cuando el usuario toca 'Entendido'"""
