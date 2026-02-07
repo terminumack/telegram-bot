@@ -275,3 +275,46 @@ async def admin_notify_winner(update: Update, context: ContextTypes.DEFAULT_TYPE
             text=f"{query.message.text_html}\n\n❌ <b>FALLÓ EL ENVÍO</b>\n(El usuario bloqueó al bot)",
             parse_mode="HTML"
         )
+
+from database.stats import reset_referral_counts # Importar arriba
+
+async def reiniciar_mes(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Comando peligroso: Reinicia los referidos."""
+    user_id = update.effective_user.id
+    
+    # ⚠️ SEGURIDAD: Pon aquí TU ID para que nadie más pueda usarlo
+    MY_ADMIN_ID = 123456789  # <--- CAMBIA ESTO POR TU ID
+    
+    if user_id != MY_ADMIN_ID:
+        return # Ignoramos a los curiosos
+
+    # Obtenemos el argumento (Ej: /reset_mes Enero-2026)
+    # Si no escribe nada, usamos el mes pasado automático
+    args = context.args
+    if args:
+        periodo = args[0]
+    else:
+        # Calculamos el mes anterior automáticamente (para el nombre del archivo)
+        hoy = datetime.now()
+        mes_anterior = hoy.replace(day=1) - timedelta(days=1)
+        periodo = mes_anterior.strftime("%B-%Y") # Ej: January-2026
+
+    await update.message.reply_text(f"⚠️ **ATENCIÓN** ⚠️\n\nEstás a punto de reiniciar los contadores de referidos para el periodo: **{periodo}**.\n\nLos datos actuales se guardarán en el historial y los usuarios volverán a 0.\n\nEscribe `/confirmar_reset {periodo}` para proceder.")
+
+async def confirmar_reset(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Ejecuta el reseteo real."""
+    user_id = update.effective_user.id
+    MY_ADMIN_ID = 123456789 # <--- CAMBIA ESTO POR TU ID
+    
+    if user_id != MY_ADMIN_ID: return
+
+    try:
+        periodo = context.args[0]
+    except IndexError:
+        await update.message.reply_text("❌ Falta el nombre del periodo.")
+        return
+
+    # EJECUTAMOS LA FUNCIÓN DE LA DB
+    success, msg = await asyncio.to_thread(reset_referral_counts, periodo)
+    
+    await update.message.reply_text(msg)
