@@ -283,7 +283,7 @@ async def reiniciar_mes(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id = update.effective_user.id
     
     # ⚠️ SEGURIDAD: Pon aquí TU ID para que nadie más pueda usarlo
-    MY_ADMIN_ID = 123456789  # <--- CAMBIA ESTO POR TU ID
+    MY_ADMIN_ID = 533888411  # <--- CAMBIA ESTO POR TU ID
     
     if user_id != MY_ADMIN_ID:
         return # Ignoramos a los curiosos
@@ -304,7 +304,7 @@ async def reiniciar_mes(update: Update, context: ContextTypes.DEFAULT_TYPE):
 async def confirmar_reset(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Ejecuta el reseteo real."""
     user_id = update.effective_user.id
-    MY_ADMIN_ID = 123456789 # <--- CAMBIA ESTO POR TU ID
+    MY_ADMIN_ID = 533888411 # <--- CAMBIA ESTO POR TU ID
     
     if user_id != MY_ADMIN_ID: return
 
