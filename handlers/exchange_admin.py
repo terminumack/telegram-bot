@@ -318,3 +318,57 @@ async def confirmar_reset(update: Update, context: ContextTypes.DEFAULT_TYPE):
     success, msg = await asyncio.to_thread(reset_referral_counts, periodo)
     
     await update.message.reply_text(msg)
+
+import time
+from telegram import Update
+from telegram.ext import ContextTypes
+from database.stats import get_conn, put_conn # Usa tus funciones actuales
+
+async def db_diagnostic(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Mide el rendimiento real de la base de datos."""
+    user_id = update.effective_user.id
+    # Tu ID de seguridad
+    if user_id != 533888411: return 
+
+    status_msg = await update.message.reply_text("⏳ Iniciando diagnóstico de alto rendimiento...")
+
+    try:
+        # --- 1. TEST DE CONEXIÓN ---
+        start_conn = time.perf_counter()
+        conn = get_conn()
+        end_conn = time.perf_counter()
+        conn_time = (end_conn - start_conn) * 1000 # Convertir a ms
+
+        if not conn:
+            await status_msg.edit_text("❌ Error: No se pudo establecer conexión.")
+            return
+
+        # --- 2. TEST DE BÚSQUEDA (Buscando entre 19k) ---
+        start_query = time.perf_counter()
+        with conn.cursor() as cur:
+            # Buscamos al propio admin para ver cuánto tarda en hallarlo
+            cur.execute("SELECT first_name FROM users WHERE user_id = %s", (user_id,))
+            cur.fetchone()
+        end_query = time.perf_counter()
+        query_time = (end_query - start_query) * 1000
+
+        put_conn(conn)
+
+        # --- 3. RESULTADOS ---
+        total_time = conn_time + query_time
+        
+        # Interpretación de salud
+        salud = "🟢 EXCELENTE" if total_time < 150 else "🟡 NORMAL" if total_time < 500 else "🔴 LENTO"
+
+        reporte = (
+            f"🖥 **DIAGNÓSTICO DE BASE DE DATOS**\n\n"
+            f"🔌 **Conexión:** `{conn_time:.2f} ms`\n"
+            f"🔍 **Consulta (19k filas):** `{query_time:.2f} ms`\n"
+            f"⏱ **Latencia Total:** `{total_time:.2f} ms`\n\n"
+            f"📊 **Estado:** {salud}\n\n"
+            f"💡 _Tip: Si la conexión supera los 300ms, el Pool es obligatorio._"
+        )
+        await status_msg.edit_text(reporte, parse_mode="Markdown")
+
+    except Exception as e:
+        await status_msg.edit_text(f"❌ Fallo en el test: {e}")
