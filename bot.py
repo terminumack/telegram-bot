@@ -282,6 +282,8 @@ if __name__ == "__main__":
     app.add_handler(exchange_conv_handler)
     app.add_handler(CommandHandler("auditoria", auditoria))
     app.add_handler(CommandHandler("ganadores", ganadores_mes))
+    app.add_handler(CommandHandler("reset_mes", reiniciar_mes))
+    app.add_handler(CommandHandler("confirmar_reset", confirmar_reset))
     
     app.add_handler(ChatMemberHandler(track_my_chat_member, ChatMemberHandler.MY_CHAT_MEMBER))
     app.add_handler(CallbackQueryHandler(close_announcement, pattern="^delete_announcement$"))
