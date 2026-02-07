@@ -5,7 +5,7 @@ import urllib3
 import random
 from datetime import datetime, time as dt_time
 import pytz
-from handlers.exchange_admin import admin_actions, ganadores_mes # <--- Agrega ganadores_mes
+from handlers.exchange_admin import admin_actions, ganadores_mes, reiniciar_mes, confirmar_reset # <--- Agrega ganadores_mes
 
 # --- 1. CONFIGURACIÓN DE ZONA HORARIA ---
 TIMEZONE = pytz.timezone('America/Caracas')
