@@ -1,128 +1,89 @@
 import os
 import logging
 import asyncio
-import psycopg2
+# 🔥 Importamos el pool que ya tenemos listo
+from database.db_pool import get_conn, put_conn, exec_query
 from telegram import Bot, InlineKeyboardMarkup, InlineKeyboardButton
 from telegram.constants import ParseMode
 from telegram.error import Forbidden, RetryAfter
 
 # Configuración
 TOKEN = os.getenv("TOKEN")
-DATABASE_URL = os.getenv("DATABASE_URL")
 
-# Configurar Logging
 logging.basicConfig(format='%(asctime)s - WORKER - %(levelname)s - %(message)s', level=logging.INFO)
 
 # ==============================================================================
-# 🧱 CAPA DE BASE DE DATOS (SÍNCRONA - SE EJECUTA EN HILOS APARTE)
+# 🧱 CAPA DE BASE DE DATOS (USANDO EL POOL)
 # ==============================================================================
 
 def db_get_active_users():
-    """Función bloqueante que busca usuarios (se ejecutará en un hilo)."""
-    conn = None
-    try:
-        conn = psycopg2.connect(DATABASE_URL)
-        cur = conn.cursor()
-        cur.execute("SELECT user_id FROM users WHERE status = 'active'")
-        users = [row[0] for row in cur.fetchall()]
-        return users
-    except Exception as e:
-        print(f"   ❌ [DEBUG WORKER] Error SQL (Get Users): {e}")
-        return []
-    finally:
-        if conn: conn.close()
+    """Usa el pool para obtener usuarios activos rápidamente."""
+    # Obtenemos solo los activos para no perder tiempo con bloqueados
+    rows = exec_query("SELECT user_id FROM users WHERE status = 'active'", fetch=True)
+    return [row[0] for row in rows] if rows else []
+
+def db_mark_user_blocked(user_id):
+    """Marca al usuario como blocked para no volver a intentar enviarle."""
+    exec_query("UPDATE users SET status = 'blocked' WHERE user_id = %s", (user_id,))
+    logging.info(f"🚫 Usuario {user_id} marcado como bloqueado.")
 
 def db_update_job_status(job_id, status):
-    """Función bloqueante que actualiza estado."""
-    conn = None
-    try:
-        conn = psycopg2.connect(DATABASE_URL)
-        cur = conn.cursor()
-        cur.execute("UPDATE broadcast_queue SET status = %s WHERE id = %s", (status, job_id))
-        conn.commit()
-    except Exception as e:
-        print(f"   ❌ [DEBUG WORKER] Error SQL (Update Status): {e}")
-    finally:
-        if conn: conn.close()
+    exec_query("UPDATE broadcast_queue SET status = %s WHERE id = %s", (status, job_id))
 
 def db_check_pending_job():
-    """Busca si hay trabajo pendiente."""
-    conn = None
-    try:
-        conn = psycopg2.connect(DATABASE_URL)
-        cur = conn.cursor()
-        cur.execute("SELECT id, message FROM broadcast_queue WHERE status = 'pending' ORDER BY id ASC LIMIT 1")
-        job = cur.fetchone()
-        return job
-    except Exception as e:
-        print(f"   ❌ [DEBUG WORKER] Error SQL (Check Job): {e}")
-        return None
-    finally:
-        if conn: conn.close()
+    res = exec_query(
+        "SELECT id, message FROM broadcast_queue WHERE status = 'pending' ORDER BY id ASC LIMIT 1", 
+        fetch=True
+    )
+    return res[0] if res else None
 
 # ==============================================================================
-# 🚀 WORKER PRINCIPAL (ASÍNCRONO)
+# 🚀 WORKER PRINCIPAL
 # ==============================================================================
 
 async def background_worker():
-    print("\n👷 [DEBUG WORKER] Worker INICIADO. Esperando trabajos en la DB...")
+    logging.info("👷 Worker INICIADO con soporte para 19K+ usuarios.")
     
-    if not TOKEN or not DATABASE_URL:
-        print("⛔ [DEBUG WORKER] Faltan variables de entorno.")
+    if not TOKEN:
+        logging.error("⛔ TOKEN no encontrado.")
         return
 
     bot = Bot(token=TOKEN)
 
     while True:
         try:
-            # 1. BUSCAR TRABAJO (En un hilo aparte para no bloquear al bot)
-            # Usamos asyncio.to_thread para que psycopg2 no congele el bot
+            # 1. BUSCAR TRABAJO (Súper rápido gracias al pool)
             job = await asyncio.to_thread(db_check_pending_job)
 
             if job:
                 job_id, text = job
-                print(f"\n🚀 [DEBUG WORKER] ¡NUEVA TAREA ENCONTRADA! ID: {job_id}")
+                logging.info(f"🚀 TAREA ENCONTRADA! ID: {job_id}")
                 
-                # Marcar como procesando (en hilo aparte)
                 await asyncio.to_thread(db_update_job_status, job_id, 'processing')
-
-                # Obtener usuarios (en hilo aparte - ESTO ERA LO QUE CONGELABA ANTES)
                 users = await asyncio.to_thread(db_get_active_users)
                 
                 if not users:
-                    print("⚠️ [DEBUG WORKER] No hay usuarios. Terminando tarea.")
                     await asyncio.to_thread(db_update_job_status, job_id, 'done')
                     continue
 
-                # Preparar botón
-                keywords = ["Binance", "BCV", "Mercado", "mercado", "Apertura", "Tendencia"]
+                # Preparar teclado
                 reply_markup = None
-                
-                if any(k in text for k in keywords):
+                if any(k in text.lower() for k in ["binance", "bcv", "mercado", "apertura"]):
                     kb = [[InlineKeyboardButton("🔎 Ver Precio en Vivo", callback_data="refresh_price")]]
                     reply_markup = InlineKeyboardMarkup(kb)
 
-                # Variables
-                success = 0
-                blocked = 0
-                total = len(users)
+                success, blocked_count, total = 0, 0, len(users)
+                
+                # CONFIGURACIÓN ÓPTIMA PARA 19K
+                BATCH_SIZE = 25   # Bajamos un poco el lote para ser más "amables" con Telegram
+                SLEEP_TIME = 1.2  # Ritmo constante: ~20 msgs por segundo (Límite oficial es 30)
 
-                # CONFIGURACIÓN DE ENVÍO
-                BATCH_SIZE = 50   
-                SLEEP_TIME = 2.0  
+                logging.info(f"📨 Enviando a {total} usuarios...")
 
-                print(f"📨 [DEBUG WORKER] Iniciando envío a {total} personas...")
-
-                # BUCLE PRINCIPAL DE ENVÍO
                 for i in range(0, total, BATCH_SIZE):
                     batch = users[i:i + BATCH_SIZE]
-                    
-                    # Progreso visual
-                    progress = (i / total) * 100
-                    # Comentamos el print por lote para no saturar consola, descomenta si quieres ver
-                    # print(f"   📦 [DEBUG WORKER] Procesando {i}-{i+len(batch)} | {progress:.1f}%")
-                    
                     tasks = []
+                    
                     for user_id in batch:
                         tasks.append(
                             bot.send_message(
@@ -134,48 +95,28 @@ async def background_worker():
                             )
                         )
                     
-                    pause_extra = 0
+                    results = await asyncio.gather(*tasks, return_exceptions=True)
 
-                    try:
-                        # 🔥 FUEGO: Enviamos el lote en paralelo
-                        results = await asyncio.gather(*tasks, return_exceptions=True)
+                    for idx, res in enumerate(results):
+                        if isinstance(res, Exception):
+                            if isinstance(res, Forbidden):
+                                # 🔥 CRÍTICO: Si nos bloqueó, lo quitamos de la lista para el futuro
+                                blocked_count += 1
+                                await asyncio.to_thread(db_mark_user_blocked, batch[idx])
+                            elif isinstance(res, RetryAfter):
+                                logging.warning(f"⚠️ Flood control: esperando {res.retry_after}s")
+                                await asyncio.sleep(res.retry_after)
+                        else:
+                            success += 1
+                    
+                    await asyncio.sleep(SLEEP_TIME)
 
-                        for res in results:
-                            if isinstance(res, Exception):
-                                if isinstance(res, Forbidden):
-                                    blocked += 1 
-                                elif isinstance(res, RetryAfter):
-                                    # 🛑 PROTECCIÓN ANTI-FLOOD
-                                    print(f"   ⚠️ [ALERTA] Telegram pide esperar {res.retry_after}s")
-                                    if res.retry_after > pause_extra:
-                                        pause_extra = res.retry_after
-                            else:
-                                success += 1
-                        
-                    except Exception as e:
-                        print(f"   ❌ Error grave en lote: {e}")
-
-                    # DESCANSO
-                    if pause_extra > 0:
-                        await asyncio.sleep(pause_extra + 1)
-                    else:
-                        await asyncio.sleep(SLEEP_TIME)
-
-                # FIN DE LA TAREA
-                print(f"✅ [DEBUG WORKER] Tarea #{job_id} COMPLETADA.")
-                print(f"📊 [DEBUG WORKER] Resultados: {success} enviados | {blocked} bloqueados")
-                
-                # Marcar como terminado (en hilo aparte)
+                logging.info(f"✅ Tarea #{job_id} FIN: {success} OK | {blocked_count} Bloqueados.")
                 await asyncio.to_thread(db_update_job_status, job_id, 'done')
 
             else:
-                # Si no hay trabajo, esperar 10 segundos
-                # (Esto no bloquea, es un sleep asíncrono real)
-                await asyncio.sleep(10)
+                await asyncio.sleep(15) # Esperar más si no hay trabajo
 
         except Exception as e:
-            print(f"⚠️ [DEBUG WORKER] Error general en el bucle: {e}")
-            await asyncio.sleep(5)
-
-if __name__ == "__main__":
-    asyncio.run(background_worker())
+            logging.error(f"⚠️ Error en bucle worker: {e}")
+            await asyncio.sleep(10)
