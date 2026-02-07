@@ -213,3 +213,20 @@ def migrate_db(conn):
             conn.commit()
     except Exception:
         pass
+def init_db():
+    conn = get_conn()
+    with conn.cursor() as cur:
+        # ... (tus otras tablas) ...
+        
+        # TABLA NUEVA: HISTORIAL DE REFERIDOS
+        cur.execute("""
+            CREATE TABLE IF NOT EXISTS referral_history (
+                id SERIAL PRIMARY KEY,
+                user_id BIGINT,
+                period VARCHAR(20),  -- Ej: "2026-01"
+                count INTEGER,
+                archived_at TIMESTAMP DEFAULT NOW()
+            );
+        """)
+        conn.commit()
+    put_conn(conn)
