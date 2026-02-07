@@ -407,3 +407,37 @@ def get_admin_winners():
         print(f"❌ Error buscando ganadores: {e}")
         return []
     finally: put_conn(conn)
+
+def reset_referral_counts(period_name):
+    """
+    1. Guarda los contadores actuales en el historial.
+    2. Pone a cero los contadores de la tabla users.
+    period_name: Ej "Enero 2026"
+    """
+    conn = get_conn()
+    if not conn: return False, "Error de conexión"
+    
+    try:
+        with conn.cursor() as cur:
+            # 1. ARCHIVAR (Solo guardamos los que tienen más de 0)
+            cur.execute("""
+                INSERT INTO referral_history (user_id, period, count)
+                SELECT user_id, %s, referral_count 
+                FROM users 
+                WHERE referral_count > 0;
+            """, (period_name,))
+            
+            # 2. CONTAR cuántos archivamos (para el reporte)
+            archived_count = cur.rowcount
+            
+            # 3. REINICIAR (Poner a 0 a todos)
+            cur.execute("UPDATE users SET referral_count = 0 WHERE referral_count > 0;")
+            
+            conn.commit()
+            return True, f"✅ Cierre exitoso.\n📂 Se archivaron {archived_count} usuarios.\n🔄 Marcadores a 0."
+            
+    except Exception as e:
+        conn.rollback() # Si algo falla, deshacemos todo para no perder datos
+        return False, f"❌ Error crítico en base de datos: {e}"
+    finally:
+        put_conn(conn)
