@@ -51,7 +51,7 @@ from handlers.calc import conv_usdt, conv_bs
 from handlers.alerts import conv_alert, check_alerts_async
 from handlers import exchange_admin
 from handlers.commands import auditoria
-
+from handlers.exchange_admin import db_diagnostic
 # (Borramos la línea que decía 'from handlers.tracking import ...' porque ese archivo no existe)
 
 from telegram import Update
@@ -284,6 +284,7 @@ if __name__ == "__main__":
     app.add_handler(CommandHandler("ganadores", ganadores_mes))
     app.add_handler(CommandHandler("reset_mes", reiniciar_mes))
     app.add_handler(CommandHandler("confirmar_reset", confirmar_reset))
+    app.add_handler(CommandHandler("db_test", db_diagnostic))
     
     app.add_handler(ChatMemberHandler(track_my_chat_member, ChatMemberHandler.MY_CHAT_MEMBER))
     app.add_handler(CallbackQueryHandler(close_announcement, pattern="^delete_announcement$"))
