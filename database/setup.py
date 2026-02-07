@@ -231,3 +231,15 @@ def init_db():
         """)
         conn.commit()
     put_conn(conn)
+
+def init_db():
+    conn = get_conn()
+    with conn.cursor() as cur:
+        # ... (tus cur.execute de las tablas) ...
+
+        # 🔥 Agrega esto al final:
+        cur.execute("CREATE INDEX IF NOT EXISTS idx_users_user_id ON users (user_id);")
+        cur.execute("CREATE INDEX IF NOT EXISTS idx_activity_logs_user_id ON activity_logs (user_id);")
+        
+        conn.commit()
+    put_conn(conn)
