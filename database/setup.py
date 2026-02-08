@@ -1,245 +1,103 @@
 import logging
 import os
+import asyncio
 import psycopg2
-from urllib.parse import urlparse
-from database.stats import get_conn, put_conn
-
-DATABASE_URL = os.getenv("DATABASE_URL")
+from database.db_pool import get_conn, put_conn
 
 def init_db():
-    """Inicializa la DB usando TU esquema original + Adaptaciones V51."""
-    if not DATABASE_URL:
-        logging.error("❌ No DATABASE_URL found.")
+    """Inicializa y sincroniza todo el ecosistema de la DB V51."""
+    conn = get_conn()
+    if not conn:
+        logging.error("❌ No se pudo conectar a la DB.")
         return
 
     try:
-        conn = psycopg2.connect(DATABASE_URL)
-        cur = conn.cursor()
-        
-        # 1. TABLA USERS (Tu esquema exacto + Premium)
-        cur.execute("""
-            CREATE TABLE IF NOT EXISTS users (
-                user_id BIGINT PRIMARY KEY,
-                joined_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-                first_name TEXT,
-                referral_count INTEGER DEFAULT 0,
-                referred_by BIGINT,
-                last_active TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-                status TEXT DEFAULT 'active',
-                source TEXT,
-                premium_until TIMESTAMP
-            )
-        """)
-
-        # 2. TABLA ALERTS
-        cur.execute("""
-            CREATE TABLE IF NOT EXISTS alerts (
-                id SERIAL PRIMARY KEY,
-                user_id BIGINT,
-                target_price FLOAT,
-                condition TEXT, 
-                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-            )
-        """)
-
-        # 3. TABLA LOGS
-        cur.execute("""
-            CREATE TABLE IF NOT EXISTS activity_logs (
-                id SERIAL PRIMARY KEY,
-                user_id BIGINT,
-                command TEXT,
-                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-            )
-        """)
-
-        # 4. TABLA ESTADÍSTICAS DIARIAS
-        cur.execute("""
-            CREATE TABLE IF NOT EXISTS daily_stats (
-                date DATE PRIMARY KEY,
-                price_sum FLOAT DEFAULT 0,
-                count INTEGER DEFAULT 0,
-                bcv_price FLOAT DEFAULT 0
-            )
-        """)
-
-        # 5. TABLA ARBITRAJE
-        cur.execute("""
-            CREATE TABLE IF NOT EXISTS arbitrage_data (
-                id SERIAL PRIMARY KEY,
-                recorded_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-                buy_pm FLOAT,
-                sell_pm FLOAT,
-                buy_banesco FLOAT,
-                buy_mercantil FLOAT,
-                buy_provincial FLOAT,
-                spread_pct FLOAT
-            )
-        """)
-
-        # 6. TABLA COLA DE MENSAJES (Broadcast)
-        cur.execute("""
-            CREATE TABLE IF NOT EXISTS broadcast_queue (
-                id SERIAL PRIMARY KEY,
-                message TEXT,
-                status TEXT DEFAULT 'pending',
-                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-            )
-        """)
-        
-        # 7. TABLA VOTOS
-        cur.execute("""
-            CREATE TABLE IF NOT EXISTS daily_votes (
-                user_id BIGINT,
-                vote_date DATE,
-                vote_type TEXT, 
-                PRIMARY KEY (user_id, vote_date)
-            )
-        """)
-
-        # 8. PERSISTENCIA DE MERCADO (ADAPTACIÓN HÍBRIDA)
-        # Intentamos crear la tabla en formato Clave-Valor (Nuevo)
-        cur.execute("""
-            CREATE TABLE IF NOT EXISTS market_memory (
-                key_name TEXT PRIMARY KEY,
-                value_json TEXT,
-                updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-            )
-        """)
-        
-       # =================================================================
-        # 9. MÓDULO EXCHANGE (TICKET SYSTEM)
-        # =================================================================
-        
-        # 🔥 LIMPIEZA DE TABLAS VIEJAS (SOLO EJECUTAR SI HAY ERRORES DE COLUMNAS)
-        # Esto borrará los datos viejos de pruebas anteriores para recrear la estructura correcta.
-        # Una vez que funcione, puedes borrar o comentar estas 3 líneas de DROP.
-       
-        
-        # 9.1 Tabla de Pares (Menú Dinámico) - AHORA SÍ SE CREARÁ NUEVA
-        cur.execute("""
-            CREATE TABLE IF NOT EXISTS exchange_pairs (
-                id SERIAL PRIMARY KEY,
-                name VARCHAR(50) NOT NULL,       -- Esta es la columna que te faltaba
-                type VARCHAR(20) DEFAULT 'FIAT',
-                is_active BOOLEAN DEFAULT TRUE,
-                min_amount DECIMAL(10, 2) DEFAULT 10
-            );
-        """)
-
-        # 9.2 Tabla de Órdenes (El Tesoro de Datos)
-        cur.execute("""
-            CREATE TABLE IF NOT EXISTS exchange_orders (
-                id SERIAL PRIMARY KEY,
-                user_id BIGINT NOT NULL,
-                user_username TEXT,              -- Para facilitar contacto
-                pair_name VARCHAR(50) NOT NULL,  -- Guardamos el nombre por si borras el par a futuro
-                initial_amount DECIMAL(10, 2) NOT NULL, -- Lo que el usuario dijo que quería cambiar
-                final_amount DECIMAL(10, 2),     -- Lo que realmente se cambió (llenado al cierre)
-                
-                -- ESTADOS: PENDING (Espera), IN_PROGRESS (Hablando), COMPLETED, CANCELED
-                status VARCHAR(20) DEFAULT 'PENDING',
-                
-                -- DATA DE RENDIMIENTO
-                cashier_id BIGINT,               -- Quién lo atendió
-                created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(), -- Hora de llegada
-                taken_at TIMESTAMP WITH TIME ZONE,                 -- Hora de atención (Response Time)
-                closed_at TIMESTAMP WITH TIME ZONE                 -- Hora de cierre (Resolution Time)
-            );
-        """)
-
-        # =================================================================
-        # 9.3 SEED DATA (Inyección de Monedas a Fuerza)
-        # =================================================================
-        # Lista de monedas que QUEREMOS tener sí o sí
-        target_pairs = [
-            ('USDT', 'CRYPTO', 10),
-            ('PayPal', 'FIAT', 20),
-            ('Zelle', 'FIAT', 20),
-            ('Zinli', 'FIAT', 15),
-            ('Revolut', 'FIAT', 20),
-            ('Wise', 'FIAT', 20),
-            ('Bolívares', 'FIAT', 500)
-        ]
-
-        print("🔄 Verificando lista de monedas...")
-        
-        for name, p_type, min_amt in target_pairs:
-            # 1. Preguntamos si ya existe por nombre
-            cur.execute("SELECT id FROM exchange_pairs WHERE name = %s", (name,))
-            exists = cur.fetchone()
-            
-            # 2. Si NO existe, la insertamos
-            if not exists:
-                cur.execute("""
-                    INSERT INTO exchange_pairs (name, type, is_active, min_amount)
-                    VALUES (%s, %s, TRUE, %s)
-                """, (name, p_type, min_amt))
-                print(f"   ✅ Moneda creada: {name}")
-            else:
-                # Opcional: Si quieres ver en consola que ya existía
-                # print(f"   🆗 Ya existe: {name}")
-                pass
-
-        # Guardamos cambios
-        conn.commit()
-        
-        # Ejecutar migraciones por si faltan columnas en tablas viejas
-        migrate_db(conn)
-        
-        cur.close()
-        conn.close()
-        logging.info("✅ Base de Datos Sincronizada (Modo Híbrido Seguro)")
-        
-    except Exception as e:
-        logging.error(f"⚠️ Error en init_db: {e}")
-
-def migrate_db(conn):
-    """Asegura que las tablas viejas tengan las columnas nuevas."""
-    try:
         with conn.cursor() as cur:
-            # Users
-            try: cur.execute("ALTER TABLE users ADD COLUMN IF NOT EXISTS premium_until TIMESTAMP;")
-            except: conn.rollback()
-            
-            try: cur.execute("ALTER TABLE users ADD COLUMN IF NOT EXISTS referral_count INTEGER DEFAULT 0;")
-            except: conn.rollback()
-            
-            try: cur.execute("ALTER TABLE users ADD COLUMN IF NOT EXISTS source TEXT;")
-            except: conn.rollback()
+            # 1. TABLA PRINCIPAL: USERS (Incluye 'source' para campañas)
+            cur.execute("""
+                CREATE TABLE IF NOT EXISTS users (
+                    user_id BIGINT PRIMARY KEY,
+                    joined_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                    first_name TEXT,
+                    referral_count INTEGER DEFAULT 0,
+                    referred_by BIGINT,
+                    last_active TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                    status TEXT DEFAULT 'active',
+                    source TEXT DEFAULT 'organico',
+                    premium_until TIMESTAMP
+                )
+            """)
 
-            # Arbitrage
-            try: cur.execute("ALTER TABLE arbitrage_data ADD COLUMN IF NOT EXISTS sell_pm FLOAT;")
-            except: conn.rollback()
-            
+            # 2. COLA DE MENSAJES (Para el Worker de 19k usuarios)
+            cur.execute("""
+                CREATE TABLE IF NOT EXISTS broadcast_queue (
+                    id SERIAL PRIMARY KEY,
+                    message TEXT,
+                    status TEXT DEFAULT 'pending',
+                    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+                )
+            """)
+
+            # 3. TABLA EXCHANGE (Pares y Órdenes)
+            cur.execute("""
+                CREATE TABLE IF NOT EXISTS exchange_pairs (
+                    id SERIAL PRIMARY KEY,
+                    name VARCHAR(50) UNIQUE NOT NULL,
+                    type VARCHAR(20) DEFAULT 'FIAT',
+                    is_active BOOLEAN DEFAULT TRUE,
+                    min_amount DECIMAL(10, 2) DEFAULT 10
+                )
+            """)
+
+            cur.execute("""
+                CREATE TABLE IF NOT EXISTS exchange_orders (
+                    id SERIAL PRIMARY KEY,
+                    user_id BIGINT NOT NULL,
+                    user_username TEXT,
+                    pair_name VARCHAR(50) NOT NULL,
+                    initial_amount DECIMAL(10, 2) NOT NULL,
+                    final_amount DECIMAL(10, 2),
+                    status VARCHAR(20) DEFAULT 'PENDING',
+                    cashier_id BIGINT,
+                    created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
+                    taken_at TIMESTAMP WITH TIME ZONE,
+                    closed_at TIMESTAMP WITH TIME ZONE
+                )
+            """)
+
+            # 4. TABLAS DE INTELIGENCIA Y LOGS
+            cur.execute("CREATE TABLE IF NOT EXISTS alerts (id SERIAL PRIMARY KEY, user_id BIGINT, target_price FLOAT, condition TEXT, created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP)")
+            cur.execute("CREATE TABLE IF NOT EXISTS activity_logs (id SERIAL PRIMARY KEY, user_id BIGINT, command TEXT, created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP)")
+            cur.execute("CREATE TABLE IF NOT EXISTS daily_stats (date DATE PRIMARY KEY, price_sum FLOAT DEFAULT 0, count INTEGER DEFAULT 0, bcv_price FLOAT DEFAULT 0)")
+            cur.execute("CREATE TABLE IF NOT EXISTS arbitrage_data (id SERIAL PRIMARY KEY, recorded_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP, buy_pm FLOAT, sell_pm FLOAT, buy_banesco FLOAT, buy_mercantil FLOAT, buy_provincial FLOAT, spread_pct FLOAT)")
+            cur.execute("CREATE TABLE IF NOT EXISTS market_memory (key_name TEXT PRIMARY KEY, value_json TEXT, updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP)")
+            cur.execute("CREATE TABLE IF NOT EXISTS referral_history (id SERIAL PRIMARY KEY, user_id BIGINT, period VARCHAR(20), count INTEGER, archived_at TIMESTAMP DEFAULT NOW())")
+
+            # 5. INYECCIÓN DE MONEDAS (Seed Data)
+            target_pairs = [
+                ('USDT', 'CRYPTO', 10), ('PayPal', 'FIAT', 20), ('Zelle', 'FIAT', 20),
+                ('Zinli', 'FIAT', 15), ('Revolut', 'FIAT', 20), ('Wise', 'FIAT', 20),
+                ('Bolívares', 'FIAT', 500)
+            ]
+            for name, p_type, min_amt in target_pairs:
+                cur.execute("INSERT INTO exchange_pairs (name, type, is_active, min_amount) VALUES (%s, %s, TRUE, %s) ON CONFLICT (name) DO NOTHING", (name, p_type, min_amt))
+
+            # 6. MIGRACIONES (Asegura columnas en DBs viejas)
+            cur.execute("ALTER TABLE users ADD COLUMN IF NOT EXISTS source TEXT DEFAULT 'organico'")
+            cur.execute("ALTER TABLE users ADD COLUMN IF NOT EXISTS premium_until TIMESTAMP")
+            cur.execute("ALTER TABLE users ADD COLUMN IF NOT EXISTS referral_count INTEGER DEFAULT 0")
+
+            # 7. ÍNDICES DE VELOCIDAD (Críticos para 19k+ usuarios)
+            cur.execute("CREATE INDEX IF NOT EXISTS idx_users_user_id ON users (user_id)")
+            cur.execute("CREATE INDEX IF NOT EXISTS idx_users_source ON users (source)")
+            cur.execute("CREATE INDEX IF NOT EXISTS idx_activity_logs_user_id ON activity_logs (user_id)")
+            cur.execute("CREATE INDEX IF NOT EXISTS idx_queue_status ON broadcast_queue (status)")
+
             conn.commit()
-    except Exception:
-        pass
-def init_db():
-    conn = get_conn()
-    with conn.cursor() as cur:
-        # ... (tus otras tablas) ...
-        
-        # TABLA NUEVA: HISTORIAL DE REFERIDOS
-        cur.execute("""
-            CREATE TABLE IF NOT EXISTS referral_history (
-                id SERIAL PRIMARY KEY,
-                user_id BIGINT,
-                period VARCHAR(20),  -- Ej: "2026-01"
-                count INTEGER,
-                archived_at TIMESTAMP DEFAULT NOW()
-            );
-        """)
-        conn.commit()
-    put_conn(conn)
+            logging.info("✅ Base de Datos V51 Sincronizada y Optimizada.")
 
-def init_db():
-    conn = get_conn()
-    with conn.cursor() as cur:
-        # ... (tus cur.execute de las tablas) ...
-
-        # 🔥 Agrega esto al final:
-        cur.execute("CREATE INDEX IF NOT EXISTS idx_users_user_id ON users (user_id);")
-        cur.execute("CREATE INDEX IF NOT EXISTS idx_activity_logs_user_id ON activity_logs (user_id);")
-        
-        conn.commit()
-    put_conn(conn)
+    except Exception as e:
+        logging.error(f"⚠️ Error crítico en init_db: {e}")
+        conn.rollback()
+    finally:
+        put_conn(conn)
