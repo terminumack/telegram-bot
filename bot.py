@@ -8,6 +8,7 @@ import pytz
 from handlers.exchange_admin import admin_actions, ganadores_mes, reiniciar_mes, confirmar_reset # <--- Agrega ganadores_mes
 from telegram.ext import ConversationHandler, CommandHandler, MessageHandler, CallbackQueryHandler, filters
 from handlers.calc import start_p2p, get_buy_price, get_sell_price, finish_p2p, cancel_p2p, COMPRA, VENTA, COMISION
+from handlers.exchange_admin import campaign_stats
 
 # --- 1. CONFIGURACIÓN DE ZONA HORARIA ---
 TIMEZONE = pytz.timezone('America/Caracas')
@@ -305,6 +306,7 @@ if __name__ == "__main__":
     app.add_handler(CommandHandler("confirmar_reset", confirmar_reset))
     app.add_handler(CommandHandler("db_test", db_diagnostic))
     app.add_handler(p2p_conv)
+    app.add_handler(CommandHandler('stats_mkt', campaign_stats))
     
     app.add_handler(ChatMemberHandler(track_my_chat_member, ChatMemberHandler.MY_CHAT_MEMBER))
     app.add_handler(CallbackQueryHandler(close_announcement, pattern="^delete_announcement$"))
