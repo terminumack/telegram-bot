@@ -372,3 +372,30 @@ async def db_diagnostic(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     except Exception as e:
         await status_msg.edit_text(f"❌ Fallo en el test: {e}")
+
+async def campaign_stats(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    # SEGURIDAD: Solo tu ID
+    if update.effective_user.id != 533888411: return
+
+    query = """
+        SELECT source, COUNT(*) as total 
+        FROM users 
+        GROUP BY source 
+        ORDER BY total DESC;
+    """
+    results = exec_query(query, fetch=True)
+
+    text = "📊 <b>REPORTE DE CRECIMIENTO</b>\n"
+    text += "----------------------------------\n"
+    
+    total_general = 0
+    if results:
+        for source, count in results:
+            src_name = source.upper() if source else "DESCONOCIDO"
+            text += f"🔹 <b>{src_name}</b>: <code>{count:,}</code> usuarios\n"
+            total_general += count
+    
+    text += "----------------------------------\n"
+    text += f"📈 <b>Total registrado:</b> <code>{total_general:,}</code>"
+
+    await update.message.reply_html(text)
