@@ -395,25 +395,38 @@ async def campaign_stats(update: Update, context: ContextTypes.DEFAULT_TYPE):
     # SEGURIDAD: Solo tu ID
     if update.effective_user.id != 533888411: return
 
+    # Consulta que clasifica a los 19,105 usuarios según su origen real
     query = """
-        SELECT source, COUNT(*) as total 
+        SELECT 
+            CASE 
+                WHEN referred_by IS NOT NULL THEN 'Sistema de Referidos 👥'
+                WHEN source IS NOT NULL AND source != 'organico' THEN UPPER(source) || ' 📢'
+                ELSE 'Búsqueda Orgánica 🏠'
+            END as canal,
+            COUNT(*) as total 
         FROM users 
-        GROUP BY source 
+        GROUP BY canal 
         ORDER BY total DESC;
     """
+    
     results = exec_query(query, fetch=True)
 
-    text = "📊 <b>REPORTE DE CRECIMIENTO</b>\n"
+    # Consulta extra para los nuevos de hoy (Opcional, pero muy útil)
+    query_today = "SELECT COUNT(*) FROM users WHERE joined_at >= CURRENT_DATE;"
+    res_today = exec_query(query_today, fetch=True)
+    hoy = res_today[0][0] if res_today else 0
+
+    text = "📊 <b>REPORTE ESTRATÉGICO DE CRECIMIENTO</b>\n"
     text += "----------------------------------\n"
     
     total_general = 0
     if results:
-        for source, count in results:
-            src_name = source.upper() if source else "DESCONOCIDO"
-            text += f"🔹 <b>{src_name}</b>: <code>{count:,}</code> usuarios\n"
+        for canal, count in results:
+            text += f"🔹 <b>{canal}</b>: <code>{count:,}</code>\n"
             total_general += count
     
     text += "----------------------------------\n"
+    text += f"✨ <b>Nuevos hoy:</b> <code>+{hoy} usuarios</code>\n"
     text += f"📈 <b>Total registrado:</b> <code>{total_general:,}</code>"
 
     await update.message.reply_html(text)
