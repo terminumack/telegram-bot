@@ -5,9 +5,27 @@ import asyncio
 import os
 from telegram.constants import ParseMode 
 from database.stats import get_admin_winners
+from database.db_pool import get_conn, put_conn
 
 # ID del Grupo de Cajeros
 ADMIN_GROUP_ID = os.getenv("ADMIN_GROUP_ID") 
+
+def exec_query(query, params=None, fetch=False):
+    """Función auxiliar para ejecutar queries rápidamente."""
+    conn = get_conn()
+    if not conn: return None
+    try:
+        with conn.cursor() as cur:
+            cur.execute(query, params)
+            if fetch:
+                return cur.fetchall()
+            conn.commit()
+            return True
+    except Exception as e:
+        print(f"Error en exec_query: {e}")
+        return None
+    finally:
+        put_conn(conn)
 
 # --- 1. ENVIAR ALERTA AL GRUPO ---
 async def notify_cashiers(context: ContextTypes.DEFAULT_TYPE, ticket_id: int):
