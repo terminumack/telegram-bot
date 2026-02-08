@@ -72,6 +72,7 @@ def init_db():
             cur.execute("CREATE TABLE IF NOT EXISTS arbitrage_data (id SERIAL PRIMARY KEY, recorded_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP, buy_pm FLOAT, sell_pm FLOAT, buy_banesco FLOAT, buy_mercantil FLOAT, buy_provincial FLOAT, spread_pct FLOAT)")
             cur.execute("CREATE TABLE IF NOT EXISTS market_memory (key_name TEXT PRIMARY KEY, value_json TEXT, updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP)")
             cur.execute("CREATE TABLE IF NOT EXISTS referral_history (id SERIAL PRIMARY KEY, user_id BIGINT, period VARCHAR(20), count INTEGER, archived_at TIMESTAMP DEFAULT NOW())")
+            cur.execute("ALTER TABLE users ADD COLUMN IF NOT EXISTS username TEXT;") # Dentro de tu función init_db, en la parte de migraciones:
 
             # 5. INYECCIÓN DE MONEDAS (Seed Data)
             target_pairs = [
