@@ -105,6 +105,7 @@ def init_db():
             cur.execute("ALTER TABLE users ADD COLUMN IF NOT EXISTS premium_until TIMESTAMP")
             cur.execute("ALTER TABLE users ADD COLUMN IF NOT EXISTS referral_count INTEGER DEFAULT 0")
             cur.execute("ALTER TABLE arbitrage_data ADD COLUMN IF NOT EXISTS sell_pm FLOAT")
+            cur.execute("UPDATE users SET source = 'organico' WHERE source IS NULL;")
 
             # 8. ÍNDICES DE ALTO RENDIMIENTO
             cur.execute("CREATE INDEX IF NOT EXISTS idx_users_user_id ON users (user_id)")
