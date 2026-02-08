@@ -42,9 +42,10 @@ async def start_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     print("DEBUG: >>> Entrando al comando /start")
     try:
         user = update.effective_user
-        print(f"DEBUG: Usuario: {user.id} - {user.first_name}")
+        nombre = user.first_name if user.first_name else "Amigo"
+        print(f"DEBUG: Usuario: {user.id} - {nombre}")
 
-        # 1. Lógica de Referidos
+        # 1. Lógica de Referidos (Mantenida intacta)
         referrer_id = None
         if context.args:
             print(f"DEBUG: Argumentos del start: {context.args}")
@@ -54,7 +55,7 @@ async def start_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
                     referrer_id = potential_id
                     print(f"DEBUG: Referido por: {referrer_id}")
 
-        # 2. Registrar Usuario en DB
+        # 2. Registrar Usuario en DB y Actividad (Mantenido intacta)
         print("DEBUG: Intentando guardar en DB (track_user)...")
         await asyncio.to_thread(track_user, user, referrer_id)
         print("DEBUG: track_user OK")
@@ -62,32 +63,38 @@ async def start_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await asyncio.to_thread(log_activity, user.id, "/start")
         print("DEBUG: log_activity OK")
 
-        # 3. Enlaces
+        # 3. Enlaces (Tus enlaces actuales)
         LINK_CANAL = "https://t.me/tasabinance"
         LINK_GRUPO = "https://t.me/tasabinancegrupo"
         LINK_SOPORTE = "https://t.me/tasabinancesoporte"
 
-        # 4. El Mensaje Completo
+        # 4. El Nuevo Mensaje (Diseño Premium + /p2p)
         msg = (
             f"👋 <b>¡Hola, {user.mention_html()}!</b>\n\n"
-            f"Soy tu asistente financiero conectado a 🔶 <b>Binance P2P</b> y al <b>BCV</b>.\n\n"
-            f"🚀 <b>HERRAMIENTAS PRINCIPALES:</b>\n"
-            f"💵 <b>/precio</b> → Tasa Promedio Instantánea.\n"
-            f"🏦 <b>/mercado</b> → Comparativa por Bancos.\n"
-            f"📊 <b>/grafico</b> → Tendencia Semanal Viral.\n\n"
+            f"Tu aliado financiero en 🔶 <b>Binance P2P</b> y el 🏛️ <b>BCV</b>.\n\n"
+            f"⚡ <b>HERRAMIENTAS RÁPIDAS:</b>\n"
+            f"💵 /precio — Tasa Promedio Real.\n"
+            f"🏦 /mercado — Tasas por Bancos.\n"
+            f"📊 /grafico — Análisis de tendencia.\n\n"
+            f"💹 <b>MODO TRADER P2P:</b>\n"
+            f"🧮 /p2p — <b>Calculadora de Ganancia y ROI</b> 🆕\n"
+            f"🔔 /alerta — Configura tus avisos de precio.\n\n"
             f"🧠 <b>INTELIGENCIA:</b>\n"
-            f"🕒 <b>/horario</b> → ¿Mejor hora para cambiar?\n"
-            f"🤖 <b>/ia</b> → Predicción (Sube o Baja).\n"
-            f"🔔 <b>/alerta</b> → Avisos de precio.\n\n"
-            f"🎁 <b>/referidos</b> → ¡Invita y Gana!\n\n"
-            f"🧮 <b>CALCULADORA:</b>\n"
-            f"• <b>/usdt 100</b> → 100$ a Bs.\n"
-            f"• <b>/bs 5000</b> → 5000Bs a $."
+            f"🕒 /horario — ¿Mejor hora para cambiar?\n"
+            f"🤖 /ia — Predicción impulsada por datos.\n\n"
+            f"🤝 <b>COMUNIDAD:</b>\n"
+            f"🎁 /referidos — ¡Gana premios invitando amigos!\n\n"
+            f"🧮 <b>CONVERSOR RÁPIDO:</b>\n"
+            f"• <code>/usdt 100</code>\n"
+            f"• <code>/bs 5000</code>"
         )
         
-        # 5. Botones
+        # 5. Botones (Mantenidos tus botones originales)
         keyboard = [
-            [InlineKeyboardButton("📢 Canal", url=LINK_CANAL), InlineKeyboardButton("💬 Grupo", url=LINK_GRUPO)],
+            [
+                InlineKeyboardButton("📢 Canal", url=LINK_CANAL), 
+                InlineKeyboardButton("💬 Grupo", url=LINK_GRUPO)
+            ],
             [InlineKeyboardButton("🆘 Soporte", url=LINK_SOPORTE)]
         ]
         
@@ -101,7 +108,6 @@ async def start_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     except Exception as e:
         print(f"DEBUG ERROR EN START: {str(e)}")
-        # Intentamos avisar al usuario si algo falló
         try:
             await update.message.reply_text("❌ Ocurrió un error al iniciar el bot. Por favor, intenta más tarde.")
         except:
