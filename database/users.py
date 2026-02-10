@@ -5,14 +5,15 @@ from database.stats import get_conn, put_conn
 
 def track_user(user, referrer_id=None, source=None):
     """
-    Registra o actualiza al usuario, guardando Nombre y Username.
+    Registra o actualiza al usuario.
+    Lógica blindada: Verifica existencia antes de insertar para asegurar referidos.
     """
     user_id = user.id
     first_name = user.first_name[:50] if user.first_name else "Usuario"
-    # 🔥 Capturamos el username (si no tiene, guardamos None/NULL)
     username = user.username if user.username else None
-    
     now = datetime.now()
+    
+    # Si no hay campaña, es organico
     final_source = source if source else "organico"
     
     conn = get_conn()
@@ -20,37 +21,63 @@ def track_user(user, referrer_id=None, source=None):
 
     try:
         with conn.cursor() as cur:
-            # UPSERT: Insertamos o actualizamos
-            cur.execute("""
-                INSERT INTO users (
-                    user_id, first_name, username, referred_by, last_active, 
-                    joined_at, status, source, referral_count
-                ) 
-                VALUES (%s, %s, %s, %s, %s, %s, 'active', %s, 0)
-                ON CONFLICT (user_id) 
-                DO UPDATE SET 
-                    first_name = EXCLUDED.first_name,
-                    username = EXCLUDED.username, -- 🔥 Se actualiza si el usuario lo cambia
-                    last_active = EXCLUDED.last_active,
-                    status = 'active',
-                    source = CASE 
-                        WHEN users.source = 'organico' OR users.source IS NULL THEN EXCLUDED.source 
-                        ELSE users.source 
-                    END
-                RETURNING (xmax = 0) AS inserted;
-            """, (user_id, first_name, username, referrer_id, now, now, final_source))
-            
-            # (Resto de la lógica de referidos igual que antes...)
-            result = cur.fetchone()
-            was_inserted = result[0] if result else False
+            # 1. VERIFICAMOS SI EL USUARIO YA EXISTE
+            cur.execute("SELECT user_id, source FROM users WHERE user_id = %s", (user_id,))
+            existing_user = cur.fetchone()
 
-            if was_inserted and referrer_id:
-                # ... lógica de sumar puntos al padrino ...
-                pass
+            if not existing_user:
+                # --- CASO: USUARIO NUEVO (Aquí es donde se cuentan los referidos) ---
+                final_referrer = None
+                valid_referrer = False
+
+                # Validamos el padrino
+                if referrer_id:
+                    try:
+                        ref_id = int(referrer_id)
+                        if ref_id != user_id:
+                            cur.execute("SELECT user_id FROM users WHERE user_id = %s", (ref_id,))
+                            if cur.fetchone():
+                                final_referrer = ref_id
+                                valid_referrer = True
+                    except:
+                        pass
+
+                # Insertamos al nuevo usuario
+                cur.execute("""
+                    INSERT INTO users (
+                        user_id, first_name, username, referred_by, 
+                        last_active, joined_at, status, source, referral_count
+                    ) 
+                    VALUES (%s, %s, %s, %s, %s, %s, 'active', %s, 0)
+                """, (user_id, first_name, username, final_referrer, now, now, final_source))
+                
+                # 🔥 SUMAMOS EL PUNTO AL PADRINO (Solo si el usuario es nuevo)
+                if valid_referrer:
+                    cur.execute("UPDATE users SET referral_count = referral_count + 1 WHERE user_id = %s", (final_referrer,))
+                    logging.info(f"➕ Referido sumado con éxito al padrino: {final_referrer}")
+                
+                logging.info(f"🆕 Nuevo usuario registrado: {user_id} ({final_source})")
+
+            else:
+                # --- CASO: USUARIO EXISTENTE (Actualización de actividad) ---
+                old_source = existing_user[1]
+                
+                # Solo actualizamos el origen si antes era organico/vacio
+                new_source = final_source if (not old_source or old_source == 'organico') else old_source
+                
+                cur.execute("""
+                    UPDATE users 
+                    SET first_name = %s, username = %s, last_active = %s, 
+                        status = 'active', source = %s
+                    WHERE user_id = %s
+                """, (first_name, username, now, new_source, user_id))
+                
+                #logging.info(f"🔄 Actividad actualizada para: {user_id}")
 
             conn.commit()
+
     except Exception as e:
-        logging.error(f"❌ Error en track_user: {e}")
+        logging.error(f"❌ Error crítico en track_user: {e}")
         if conn: conn.rollback()
     finally:
         put_conn(conn)
