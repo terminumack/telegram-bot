@@ -45,23 +45,34 @@ async def start_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
         nombre = user.first_name if user.first_name else "Amigo"
         print(f"DEBUG: Usuario: {user.id} - {nombre}")
 
-        # 1. Lógica de Referidos (Mantenida intacta)
+        # --- 1. PROCESAR ARGUMENTOS (/start XXX) ---
         referrer_id = None
+        source = "organico" # Por defecto
+
         if context.args:
-            print(f"DEBUG: Argumentos del start: {context.args}")
-            if context.args[0].isdigit():
-                potential_id = int(context.args[0])
+            arg = context.args[0]
+            print(f"DEBUG: Argumento recibido: {arg}")
+            
+            if arg.isdigit():
+                # Si es un número, es un REFERIDO
+                potential_id = int(arg)
                 if potential_id != user.id:
                     referrer_id = potential_id
-                    print(f"DEBUG: Referido por: {referrer_id}")
+                    source = "referido" # Marcamos que viene por invitación
+                    print(f"DEBUG: Referido detectado por ID: {referrer_id}")
+            else:
+                # Si es texto, es una CAMPAÑA (ig, tw, tiktok, etc)
+                source = arg.lower()
+                print(f"DEBUG: Campaña detectada: {source}")
 
-        # 2. Registrar Usuario en DB y Actividad (Mantenido intacta)
-        print("DEBUG: Intentando guardar en DB (track_user)...")
-        await asyncio.to_thread(track_user, user, referrer_id)
-        print("DEBUG: track_user OK")
+        # --- 2. REGISTRAR EN BASE DE DATOS ---
+        # Pasamos: objeto usuario, ID del padrino y la fuente
+        print(f"DEBUG: Llamando a track_user(user, {referrer_id}, {source})...")
+        await asyncio.to_thread(track_user, user, referrer_id, source)
         
+        # --- 2.5 LOG DE ACTIVIDAD ---
         await asyncio.to_thread(log_activity, user.id, "/start")
-        print("DEBUG: log_activity OK")
+        print("DEBUG: track_user y log_activity OK")
 
         # 3. Enlaces (Tus enlaces actuales)
         LINK_CANAL = "https://t.me/tasabinance"
