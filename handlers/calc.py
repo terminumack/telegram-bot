@@ -111,30 +111,27 @@ COMPRA, VENTA, COMISION = range(3)
 
 async def start_p2p(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Inicia el proceso pidiendo el precio de compra."""
-    # Limpiamos datos previos del usuario
     context.user_data.clear()
     
-    await update.message.reply_text(
-        "📊 <b>CALCULADORA P2P PRO</b>\n\n"
-        "1️⃣ ¿A qué precio <b>COMPRASTE</b> los USDT? (en Bs)\n"
-        "<i>Ejemplo: 54.50</i>",
-        parse_mode=ParseMode.HTML
+    await update.message.reply_html(
+        "📊 <b>CALCULADORA DE GANANCIAS P2P</b>\n\n"
+        "Esta herramienta calcula cuánto dinero real queda en tu bolsillo después de las comisiones de Binance.\n\n"
+        "1️⃣ ¿A qué precio <b>COMPRASTE</b> los USDT?\n"
+        "<i>Ejemplo: 54.50</i>"
     )
     return COMPRA
 
 async def get_buy_price(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Procesa el precio de compra."""
     try:
-        # Limpieza de entrada (acepta comas y puntos)
         val = update.message.text.replace(',', '.')
         buy_p = float(val)
         context.user_data['buy_p'] = buy_p
         
-        await update.message.reply_text(
-            f"✅ Compra: <b>{buy_p:,.2f} Bs</b>\n\n"
-            "2️⃣ ¿A qué precio vas a <b>VENDER</b>? (en Bs)\n"
-            "<i>Ejemplo: 55.80</i>",
-            parse_mode=ParseMode.HTML
+        await update.message.reply_html(
+            f"✅ Compraste a: <b>{buy_p:,.2f} Bs</b>\n\n"
+            "2️⃣ ¿A qué precio vas a <b>VENDER</b>?\n"
+            "<i>Ejemplo: 55.80</i>"
         )
         return VENTA
     except ValueError:
@@ -156,11 +153,11 @@ async def get_sell_price(update: Update, context: ContextTypes.DEFAULT_TYPE):
             [InlineKeyboardButton("❌ Cancelar", callback_data="p2p_cancel")]
         ]
         
-        await update.message.reply_text(
-            f"✅ Venta: <b>{sell_p:,.2f} Bs</b>\n\n"
-            "3️⃣ <b>Selecciona tu comisión de Binance:</b>",
-            reply_markup=InlineKeyboardMarkup(keyboard),
-            parse_mode=ParseMode.HTML
+        await update.message.reply_html(
+            f"✅ Vas a vender a: <b>{sell_p:,.2f} Bs</b>\n\n"
+            "3️⃣ <b>¿Qué tipo de anuncio vas a usar?</b>\n"
+            "Selecciona tu comisión de Binance para finalizar:"
+            , reply_markup=InlineKeyboardMarkup(keyboard)
         )
         return COMISION
     except ValueError:
@@ -168,7 +165,7 @@ async def get_sell_price(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return VENTA
 
 async def finish_p2p(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Calcula el ROI final con lógica de alertas."""
+    """Calcula el resultado final con el nuevo diseño limpio."""
     query = update.callback_query
     await query.answer()
 
@@ -176,46 +173,48 @@ async def finish_p2p(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await query.message.edit_text("❌ Operación cancelada.")
         return ConversationHandler.END
 
-    # Datos
+    # Datos base
     fee_rate = float(query.data.split('_')[1])
     buy_p = context.user_data['buy_p']
     sell_p = context.user_data['sell_p']
 
-    # Lógica financiera en Bolívares
+    # Cálculos financieros
     comision_bs = sell_p * fee_rate
-    venta_neta = sell_p - comision_bs
-    ganancia_bs = venta_neta - buy_p
-    roi = (ganancia_bs / buy_p) * 100
+    ganancia_neta = sell_p - comision_bs - buy_p
+    roi = (ganancia_neta / buy_p) * 100
+    ganancia_1000 = ganancia_neta * 1000
 
     # Determinar salud de la operación
     if roi <= 0:
-        status = "⚠️ <b>ALERTA: OPERACIÓN EN PÉRDIDA</b>"
+        status_text = "¡OPERACIÓN EN PÉRDIDA!"
         emoji = "🔴"
-        nota = "No es recomendable vender a este precio, pierdes dinero tras comisiones."
-    elif roi < 0.4:
-        status = "⚠️ <b>RENTABILIDAD BAJA</b>"
+        nota = "No vendas a este precio, estarías perdiendo dinero."
+    elif roi < 0.5:
+        status_text = "RENTABILIDAD BAJA"
         emoji = "🟡"
-        nota = "El margen es muy estrecho. Considera subir el precio de venta."
+        nota = "El margen es muy pequeño. Considera subir el precio."
     else:
-        status = "✅ <b>OPERACIÓN RENTABLE</b>"
+        status_text = "¡OPERACIÓN EXITOSA!"
         emoji = "🟢"
-        nota = "Buen margen de ganancia para P2P."
+        nota = "Tienes un excelente margen de ganancia."
 
+    # --- NUEVO DISEÑO LIMPIO Y ENTENDIBLE ---
     res_text = (
-        f"{emoji} {status}\n"
+        f"{emoji} <b>{status_text}</b>\n"
         f"----------------------------------\n"
-        f"📥 <b>Compra:</b> {buy_p:,.2f} Bs\n"
-        f"📤 <b>Venta:</b> {sell_p:,.2f} Bs\n"
-        f"💸 <b>Comisión:</b> -{comision_bs:,.4f} Bs\n"
+        f"📥 <b>Compraste a:</b> <code>{buy_p:,.2f} Bs</code>\n"
+        f"📤 <b>Vendiste a:</b> <code>{sell_p:,.2f} Bs</code>\n"
+        f"💸 <b>Comisión de Binance:</b> <code>-{comision_bs:,.2f} Bs</code>\n"
         f"----------------------------------\n"
-        f"✨ <b>Ganancia:</b> {ganancia_bs:,.4f} Bs/USDT\n"
-        f"📈 <b>ROI Real:</b> {roi:.2f}%\n\n"
-        f"💰 <b>Ganancia en 1.000$:</b> {ganancia_bs * 1000:,.2f} Bs\n"
+        f"💵 <b>TU GANANCIA REAL:</b>\n"
+        f"👉 <b>{ganancia_neta:,.2f} Bs</b> por cada USDT\n\n"
+        f"📈 <b>Rentabilidad:</b> <code>{roi:.2f}%</code>\n"
+        f"💰 <b>Si mueves 1.000 USDT ganas:</b>\n"
+        f"✨ <code>{ganancia_1000:,.2f} Bolívares</code>\n"
         f"----------------------------------\n"
         f"💡 <i>{nota}</i>"
     )
 
-    # Botón para repetir
     kb_final = [[InlineKeyboardButton("🔄 Nuevo Cálculo", callback_data="p2p_retry")]]
     
     await query.message.edit_text(
