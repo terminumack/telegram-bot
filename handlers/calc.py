@@ -398,6 +398,10 @@ meta_conv = ConversationHandler(
     },
     fallbacks=[
         CommandHandler('cancelar', cancel_meta),
-        CallbackQueryHandler(cancel_meta, pattern="meta_cancel")
-    ]
+        CallbackQueryHandler(cancel_meta, pattern="meta_cancel"),
+        # 👇 ESTA ES LA LÍNEA MÁGICA QUE EVITA QUE SE TRANQUE 👇
+        MessageHandler(filters.COMMAND, cancel_meta) 
+    ],
+    # 👇 Y ESTO PERMITE QUE SE REINICIE SI LO VUELVEN A LLAMAR 👇
+    allow_reentry=True 
 )
