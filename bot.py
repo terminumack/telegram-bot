@@ -300,7 +300,6 @@ if __name__ == "__main__":
     app.add_handler(CommandHandler("mercado", mercado))
     app.add_handler(CommandHandler("horario", horario))
     app.add_handler(CommandHandler("stats_full", stats_full))
-    app.add_handler(exchange_conv_handler)
     app.add_handler(CommandHandler("auditoria", auditoria))
     app.add_handler(CommandHandler("ganadores", ganadores_mes))
     app.add_handler(CommandHandler("reset_mes", reiniciar_mes))
@@ -308,7 +307,7 @@ if __name__ == "__main__":
     app.add_handler(CommandHandler("db_test", db_diagnostic))
     app.add_handler(p2p_conv)
     app.add_handler(CommandHandler('stats_mkt', campaign_stats))
-    application.add_handler(meta_conv)
+    app.add_handler(meta_conv)
     
     app.add_handler(ChatMemberHandler(track_my_chat_member, ChatMemberHandler.MY_CHAT_MEMBER))
     app.add_handler(CallbackQueryHandler(close_announcement, pattern="^delete_announcement$"))
