@@ -9,7 +9,7 @@ from handlers.exchange_admin import admin_actions, ganadores_mes, reiniciar_mes,
 from telegram.ext import ConversationHandler, CommandHandler, MessageHandler, CallbackQueryHandler, filters
 from handlers.calc import start_p2p, get_buy_price, get_sell_price, finish_p2p, cancel_p2p, COMPRA, VENTA, COMISION
 from handlers.exchange_admin import campaign_stats
-from handlers.calc_meta import start_meta, get_meta_buy, get_meta_roi, finish_meta, cancel_meta, M_COMPRA, M_ROI, M_COMISION
+from handlers.calc import start_meta, get_meta_buy, get_meta_roi, finish_meta, cancel_meta, M_COMPRA, M_ROI, M_COMISION
 
 # --- 1. CONFIGURACIÓN DE ZONA HORARIA ---
 TIMEZONE = pytz.timezone('America/Caracas')
