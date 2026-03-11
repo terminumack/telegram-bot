@@ -366,3 +366,37 @@ async def cancel_meta(update: Update, context: ContextTypes.DEFAULT_TYPE):
     else:
         await update.message.reply_text("🔄 Calculadora objetivo cerrada.")
     return ConversationHandler.END
+
+# --- DEFINICIÓN DE CONVERSACIONES P2P Y META ---
+
+p2p_conv = ConversationHandler(
+    entry_points=[
+        CommandHandler('p2p', start_p2p),
+        CallbackQueryHandler(start_p2p, pattern="^p2p_retry$")
+    ],
+    states={
+        COMPRA: [MessageHandler(filters.TEXT & ~filters.COMMAND, get_buy_price)],
+        VENTA: [MessageHandler(filters.TEXT & ~filters.COMMAND, get_sell_price)],
+        COMISION: [CallbackQueryHandler(finish_p2p, pattern="^p2pfee_")]
+    },
+    fallbacks=[
+        CommandHandler('cancelar', cancel_p2p),
+        CallbackQueryHandler(cancel_p2p, pattern="p2p_cancel")
+    ]
+)
+
+meta_conv = ConversationHandler(
+    entry_points=[
+        CommandHandler('meta', start_meta),
+        CallbackQueryHandler(start_meta, pattern="^meta_retry$")
+    ],
+    states={
+        M_COMPRA: [MessageHandler(filters.TEXT & ~filters.COMMAND, get_meta_buy)],
+        M_ROI: [MessageHandler(filters.TEXT & ~filters.COMMAND, get_meta_roi)],
+        M_COMISION: [CallbackQueryHandler(finish_meta, pattern="^mfee_")]
+    },
+    fallbacks=[
+        CommandHandler('cancelar', cancel_meta),
+        CallbackQueryHandler(cancel_meta, pattern="meta_cancel")
+    ]
+)
