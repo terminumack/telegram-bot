@@ -110,15 +110,25 @@ import logging
 COMPRA, VENTA, COMISION = range(3)
 
 async def start_p2p(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Inicia el proceso pidiendo el precio de compra."""
+    """Inicia el proceso. Maneja tanto el comando /p2p como el botón de reintento."""
     context.user_data.clear()
     
-    await update.message.reply_html(
+    texto_bienvenida = (
         "📊 <b>CALCULADORA DE GANANCIAS P2P</b>\n\n"
         "Esta herramienta calcula cuánto dinero real queda en tu bolsillo después de las comisiones de Binance.\n\n"
         "1️⃣ ¿A qué precio <b>COMPRASTE</b> los USDT?\n"
         "<i>Ejemplo: 54.50</i>"
     )
+
+    # Si viene del botón "Nuevo Cálculo"
+    if update.callback_query:
+        query = update.callback_query
+        await query.answer()
+        await query.message.edit_text(texto_bienvenida, parse_mode=ParseMode.HTML)
+    else:
+        # Si viene del comando /p2p escrito
+        await update.message.reply_html(texto_bienvenida)
+        
     return COMPRA
 
 async def get_buy_price(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -226,5 +236,10 @@ async def finish_p2p(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 async def cancel_p2p(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Cancela la conversación."""
-    await update.message.reply_text("🔄 Calculadora cerrada.")
+    # Como cancel_p2p puede venir del botón (CallbackQuery), lo validamos:
+    if update.callback_query:
+        await update.callback_query.answer()
+        await update.callback_query.message.edit_text("🔄 Calculadora cerrada.")
+    else:
+        await update.message.reply_text("🔄 Calculadora cerrada.")
     return ConversationHandler.END
