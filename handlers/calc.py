@@ -243,3 +243,126 @@ async def cancel_p2p(update: Update, context: ContextTypes.DEFAULT_TYPE):
     else:
         await update.message.reply_text("🔄 Calculadora cerrada.")
     return ConversationHandler.END
+
+M_COMPRA, M_ROI, M_COMISION = range(10, 13)
+
+async def start_meta(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Inicia el proceso. Maneja tanto el comando /meta como el botón de reintento."""
+    context.user_data.clear()
+    
+    texto_bienvenida = (
+        "🎯 <b>CALCULADORA DE PRECIO OBJETIVO</b>\n\n"
+        "Dime cuánto quieres ganar y te diré a qué precio exacto debes publicar tu anuncio en Binance para lograrlo.\n\n"
+        "1️⃣ ¿A qué precio <b>COMPRASTE</b> los USDT?\n"
+        "<i>Ejemplo: 54.50</i>"
+    )
+
+    if update.callback_query:
+        query = update.callback_query
+        await query.answer()
+        await query.message.edit_text(texto_bienvenida, parse_mode=ParseMode.HTML)
+    else:
+        await update.message.reply_html(texto_bienvenida)
+        
+    return M_COMPRA
+
+async def get_meta_buy(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Procesa el precio de compra."""
+    try:
+        val = update.message.text.replace(',', '.')
+        buy_p = float(val)
+        context.user_data['m_buy'] = buy_p
+        
+        await update.message.reply_html(
+            f"✅ Compraste a: <b>{buy_p:,.2f} Bs</b>\n\n"
+            "2️⃣ ¿Qué <b>% DE GANANCIA</b> quieres sacar limpio?\n"
+            "<i>Ejemplo: Escribe 1.5 si quieres ganar el 1.5%</i>"
+        )
+        return M_ROI
+    except ValueError:
+        await update.message.reply_text("❌ Envía un número válido. Ejemplo: 54.50")
+        return M_COMPRA
+
+async def get_meta_roi(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Procesa el porcentaje de ganancia deseado."""
+    try:
+        val = update.message.text.replace(',', '.')
+        roi_target = float(val) / 100  # Lo convertimos a porcentaje matemático
+        context.user_data['m_roi'] = roi_target
+        
+        keyboard = [
+            [
+                InlineKeyboardButton("👤 0.10% (Normal)", callback_data="mfee_0.001"),
+                InlineKeyboardButton("💎 0.35% (Verificado)", callback_data="mfee_0.0035")
+            ],
+            [InlineKeyboardButton("❌ Cancelar", callback_data="meta_cancel")]
+        ]
+        
+        await update.message.reply_html(
+            f"✅ Quieres ganar un: <b>{roi_target*100:,.2f}%</b> limpio\n\n"
+            "3️⃣ <b>¿Qué tipo de anuncio vas a usar?</b>\n"
+            "Selecciona tu comisión de Binance para calcular tu precio final:"
+            , reply_markup=InlineKeyboardMarkup(keyboard)
+        )
+        return M_COMISION
+    except ValueError:
+        await update.message.reply_text("❌ Envía un porcentaje válido. Ejemplo: 1.5")
+        return M_ROI
+
+async def finish_meta(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Calcula a qué precio debe vender usando la fórmula inversa."""
+    query = update.callback_query
+    await query.answer()
+
+    if query.data == "meta_cancel":
+        await query.message.edit_text("❌ Operación cancelada.")
+        return ConversationHandler.END
+
+    # Datos base
+    fee_rate = float(query.data.split('_')[1])
+    buy_p = context.user_data['m_buy']
+    roi_target = context.user_data['m_roi']
+
+    # FÓRMULA INVERSA: Precio Venta = (Compra * (1 + ROI)) / (1 - Fee)
+    target_sell = (buy_p * (1 + roi_target)) / (1 - fee_rate)
+    
+    # Cálculos para mostrarle cuánto dinero va a ganar en físico
+    comision_bs = target_sell * fee_rate
+    ganancia_neta = target_sell - comision_bs - buy_p
+    ganancia_1000 = ganancia_neta * 1000
+
+    # --- DISEÑO LIMPIO Y ENTENDIBLE ---
+    res_text = (
+        f"🎯 <b>ESTRATEGIA DE VENTA LISTA</b>\n"
+        f"----------------------------------\n"
+        f"📥 <b>Compraste a:</b> <code>{buy_p:,.2f} Bs</code>\n"
+        f"📈 <b>Ganancia deseada:</b> <code>{roi_target*100:.2f}%</code>\n"
+        f"💸 <b>Comisión de Binance:</b> <code>{fee_rate*100:.2f}%</code>\n"
+        f"----------------------------------\n"
+        f"📢 <b>DEBES PUBLICAR TU VENTA A:</b>\n"
+        f"👉 <code>{target_sell:,.2f} Bs</code>\n\n"
+        f"💵 <b>TU GANANCIA SERÁ DE:</b>\n"
+        f"✨ <b>{ganancia_neta:,.2f} Bs</b> por cada USDT\n"
+        f"💰 <b>Si mueves 1.000 USDT ganarás:</b>\n"
+        f"✨ <code>{ganancia_1000:,.2f} Bolívares</code>\n"
+        f"----------------------------------\n"
+        f"💡 <i>Toca el precio de venta (👉) para copiarlo y pégalo en Binance.</i>"
+    )
+
+    kb_final = [[InlineKeyboardButton("🔄 Nuevo Cálculo", callback_data="meta_retry")]]
+    
+    await query.message.edit_text(
+        res_text, 
+        parse_mode=ParseMode.HTML, 
+        reply_markup=InlineKeyboardMarkup(kb_final)
+    )
+    return ConversationHandler.END
+
+async def cancel_meta(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Cancela la conversación."""
+    if update.callback_query:
+        await update.callback_query.answer()
+        await update.callback_query.message.edit_text("🔄 Calculadora objetivo cerrada.")
+    else:
+        await update.message.reply_text("🔄 Calculadora objetivo cerrada.")
+    return ConversationHandler.END
