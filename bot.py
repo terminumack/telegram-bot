@@ -308,7 +308,7 @@ if __name__ == "__main__":
     app.add_handler(CommandHandler("db_test", db_diagnostic))
     app.add_handler(p2p_conv)
     app.add_handler(CommandHandler('stats_mkt', campaign_stats))
-    app.add_handler(meta_conv)
+    application.add_handler(meta_conv)
     
     app.add_handler(ChatMemberHandler(track_my_chat_member, ChatMemberHandler.MY_CHAT_MEMBER))
     app.add_handler(CallbackQueryHandler(close_announcement, pattern="^delete_announcement$"))
