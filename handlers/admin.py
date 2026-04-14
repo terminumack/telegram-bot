@@ -8,7 +8,7 @@ from database.stats import get_uso_diario_preciso
 
 # 🔒 SEGURIDAD: Pon tu ID de Telegram aquí (puedes poner varios si tienes socios)
 # Si no sabes tu ID, háblale a @userinfobot en Telegram
-ADMIN_IDS = [123456789] # <--- REEMPLAZA ESTO CON TU ID REAL
+ADMIN_IDS = [533888411] # <--- REEMPLAZA ESTO CON TU ID REAL
 
 async def comando_uso(update: Update, context: ContextTypes.DEFAULT_TYPE):
     # 1. Filtro de Seguridad (Si no eres tú, el bot te ignora silenciosamente)
