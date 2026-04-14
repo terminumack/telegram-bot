@@ -91,10 +91,10 @@ def get_sentiment_keyboard(user_id, current_price):
         
     else:
         # CASO 2: NO VOTÓ
-        # Botones de votación - AZUL (primary)
+        # Botones de votación con colores de Trading (Verde y Rojo)
         keyboard.append([
-            InlineKeyboardButton("🚀 Subirá", callback_data='vote_UP', api_kwargs={"style": "primary"}), 
-            InlineKeyboardButton("📉 Bajará", callback_data='vote_DOWN', api_kwargs={"style": "primary"})
+            InlineKeyboardButton("🚀 Subirá", callback_data='vote_UP', api_kwargs={"style": "success"}), 
+            InlineKeyboardButton("📉 Bajará", callback_data='vote_DOWN', api_kwargs={"style": "danger"})
         ])
         keyboard.append(btn_refresh)
     
