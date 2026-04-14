@@ -1,8 +1,7 @@
 import asyncio
-from telegram import Update
+from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.ext import ContextTypes, ConversationHandler, CommandHandler, MessageHandler, filters, CallbackQueryHandler
 from telegram.constants import ParseMode
-
 
 # Imports de base de datos
 from database.users import track_user
@@ -102,10 +101,10 @@ conv_bs = ConversationHandler(
     states={ESPERANDO_INPUT_BS: [MessageHandler(filters.TEXT & ~filters.COMMAND, process_bs_input)]},
     fallbacks=[CommandHandler("cancel", cancel)]
 )
-from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
-from telegram.ext import ContextTypes, ConversationHandler
-from telegram.constants import ParseMode
-import logging
+
+# ==========================================
+# CALCULADORAS P2P Y META
+# ==========================================
 
 # Estados de la conversación
 COMPRA, VENTA, COMISION = range(3)
@@ -121,13 +120,11 @@ async def start_p2p(update: Update, context: ContextTypes.DEFAULT_TYPE):
         "<i>Ejemplo: 54.50</i>"
     )
 
-    # Si viene del botón "Nuevo Cálculo"
     if update.callback_query:
         query = update.callback_query
         await query.answer()
         await query.message.edit_text(texto_bienvenida, parse_mode=ParseMode.HTML)
     else:
-        # Si viene del comando /p2p escrito
         await update.message.reply_html(texto_bienvenida)
         
     return COMPRA
@@ -156,12 +153,13 @@ async def get_sell_price(update: Update, context: ContextTypes.DEFAULT_TYPE):
         sell_p = float(val)
         context.user_data['sell_p'] = sell_p
         
+        # 🔥 APLICANDO COLORES HACKERS: Azul (primary) y Rojo (danger)
         keyboard = [
             [
-                InlineKeyboardButton("👤 0.10% (Normal)", callback_data="p2pfee_0.001"),
-                InlineKeyboardButton("💎 0.35% (Verificado)", callback_data="p2pfee_0.0035")
+                InlineKeyboardButton("👤 0.10% (Normal)", callback_data="p2pfee_0.001", api_kwargs={"style": "primary"}),
+                InlineKeyboardButton("💎 0.35% (Verificado)", callback_data="p2pfee_0.0035", api_kwargs={"style": "primary"})
             ],
-            [InlineKeyboardButton("❌ Cancelar", callback_data="p2p_cancel")]
+            [InlineKeyboardButton("❌ Cancelar", callback_data="p2p_cancel", api_kwargs={"style": "danger"})]
         ]
         
         await update.message.reply_html(
@@ -209,7 +207,6 @@ async def finish_p2p(update: Update, context: ContextTypes.DEFAULT_TYPE):
         emoji = "🟢"
         nota = "Tienes un excelente margen de ganancia."
 
-    # --- NUEVO DISEÑO LIMPIO Y ENTENDIBLE ---
     res_text = (
         f"{emoji} <b>{status_text}</b>\n"
         f"----------------------------------\n"
@@ -226,7 +223,8 @@ async def finish_p2p(update: Update, context: ContextTypes.DEFAULT_TYPE):
         f"💡 <i>{nota}</i>"
     )
 
-    kb_final = [[InlineKeyboardButton("🔄 Nuevo Cálculo", callback_data="meta_retry")]]
+    # 🔥 APLICANDO COLOR: Verde (success)
+    kb_final = [[InlineKeyboardButton("🔄 Nuevo Cálculo", callback_data="p2p_retry", api_kwargs={"style": "success"})]]
     
     await query.message.edit_text(
         res_text, 
@@ -237,7 +235,6 @@ async def finish_p2p(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 async def cancel_p2p(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Cancela la conversación."""
-    # Como cancel_p2p puede venir del botón (CallbackQuery), lo validamos:
     if update.callback_query:
         await update.callback_query.answer()
         await update.callback_query.message.edit_text("🔄 Calculadora cerrada.")
@@ -245,10 +242,15 @@ async def cancel_p2p(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await update.message.reply_text("🔄 Calculadora cerrada.")
     return ConversationHandler.END
 
+
+# ==========================================
+# CALCULADORA META
+# ==========================================
+
 M_COMPRA, M_ROI, M_COMISION = range(10, 13)
 
 async def start_meta(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Inicia el proceso. Maneja tanto el comando /meta como el botón de reintento."""
+    """Inicia el proceso."""
     context.user_data.clear()
     
     texto_bienvenida = (
@@ -268,7 +270,6 @@ async def start_meta(update: Update, context: ContextTypes.DEFAULT_TYPE):
     return M_COMPRA
 
 async def get_meta_buy(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Procesa el precio de compra."""
     try:
         val = update.message.text.replace(',', '.')
         buy_p = float(val)
@@ -285,18 +286,19 @@ async def get_meta_buy(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return M_COMPRA
 
 async def get_meta_roi(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Procesa el porcentaje de ganancia deseado."""
     try:
         val = update.message.text.replace(',', '.')
-        roi_target = float(val) / 100  # Lo convertimos a porcentaje matemático
+        roi_target = float(val) / 100 
         context.user_data['m_roi'] = roi_target
         
+        # 🔥 APLICANDO COLORES Y CORRIGIENDO BUG DE CALLBACK DATA: 
+        # mfee_ en lugar de p2pfee_ para que funcione correctamente
         keyboard = [
             [
-                InlineKeyboardButton("👤 0.10% (Normal)", callback_data="p2pfee_0.001"),
-                InlineKeyboardButton("💎 0.35% (Verificado)", callback_data="p2pfee_0.0035")
+                InlineKeyboardButton("👤 0.10% (Normal)", callback_data="mfee_0.001", api_kwargs={"style": "primary"}),
+                InlineKeyboardButton("💎 0.35% (Verificado)", callback_data="mfee_0.0035", api_kwargs={"style": "primary"})
             ],
-            [InlineKeyboardButton("❌ Cancelar", callback_data="p2p_cancel")]
+            [InlineKeyboardButton("❌ Cancelar", callback_data="meta_cancel", api_kwargs={"style": "danger"})]
         ]
         
         await update.message.reply_html(
@@ -311,7 +313,6 @@ async def get_meta_roi(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return M_ROI
 
 async def finish_meta(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Calcula a qué precio debe vender usando la fórmula inversa."""
     query = update.callback_query
     await query.answer()
 
@@ -319,20 +320,16 @@ async def finish_meta(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await query.message.edit_text("❌ Operación cancelada.")
         return ConversationHandler.END
 
-    # Datos base
     fee_rate = float(query.data.split('_')[1])
     buy_p = context.user_data['m_buy']
     roi_target = context.user_data['m_roi']
 
-    # FÓRMULA INVERSA: Precio Venta = (Compra * (1 + ROI)) / (1 - Fee)
     target_sell = (buy_p * (1 + roi_target)) / (1 - fee_rate)
     
-    # Cálculos para mostrarle cuánto dinero va a ganar en físico
     comision_bs = target_sell * fee_rate
     ganancia_neta = target_sell - comision_bs - buy_p
     ganancia_1000 = ganancia_neta * 1000
 
-    # --- DISEÑO LIMPIO Y ENTENDIBLE ---
     res_text = (
         f"🎯 <b>ESTRATEGIA DE VENTA LISTA</b>\n"
         f"----------------------------------\n"
@@ -350,7 +347,8 @@ async def finish_meta(update: Update, context: ContextTypes.DEFAULT_TYPE):
         f"💡 <i>Toca el precio de venta (👉) para copiarlo y pégalo en Binance.</i>"
     )
 
-    kb_final = [[InlineKeyboardButton("🔄 Nuevo Cálculo", callback_data="meta_retry")]]
+    # 🔥 APLICANDO COLOR: Verde (success)
+    kb_final = [[InlineKeyboardButton("🔄 Nuevo Cálculo", callback_data="meta_retry", api_kwargs={"style": "success"})]]
     
     await query.message.edit_text(
         res_text, 
@@ -360,7 +358,6 @@ async def finish_meta(update: Update, context: ContextTypes.DEFAULT_TYPE):
     return ConversationHandler.END
 
 async def cancel_meta(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Cancela la conversación."""
     if update.callback_query:
         await update.callback_query.answer()
         await update.callback_query.message.edit_text("🔄 Calculadora objetivo cerrada.")
@@ -382,8 +379,11 @@ p2p_conv = ConversationHandler(
     },
     fallbacks=[
         CommandHandler('cancelar', cancel_p2p),
-        CallbackQueryHandler(cancel_p2p, pattern="p2p_cancel")
-    ]
+        CallbackQueryHandler(cancel_p2p, pattern="p2p_cancel"),
+        # 🔥 Añadido para que NO SE TRANQUE TAMPOCO
+        MessageHandler(filters.COMMAND, cancel_p2p) 
+    ],
+    allow_reentry=True 
 )
 
 meta_conv = ConversationHandler(
@@ -399,9 +399,7 @@ meta_conv = ConversationHandler(
     fallbacks=[
         CommandHandler('cancelar', cancel_meta),
         CallbackQueryHandler(cancel_meta, pattern="meta_cancel"),
-        # 👇 ESTA ES LA LÍNEA MÁGICA QUE EVITA QUE SE TRANQUE 👇
         MessageHandler(filters.COMMAND, cancel_meta) 
     ],
-    # 👇 Y ESTO PERMITE QUE SE REINICIE SI LO VUELVEN A LLAMAR 👇
     allow_reentry=True 
 )
