@@ -87,3 +87,14 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     # ==================================================================
     elif data == "ignore":
         await safe_answer()
+
+# ==================================================================
+    # CASO: VER HORARIO (CMD_HORARIO)
+    # ==================================================================
+    elif data == "cmd_horario":
+        # Importamos la función horario (asegúrate de poner la ruta correcta si está en otra carpeta)
+        from handlers.analytics import horario 
+        
+        await asyncio.to_thread(log_activity, user_id, "horario_btn")
+        await horario(update, context)
+        await safe_answer()
