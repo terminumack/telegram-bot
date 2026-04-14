@@ -395,8 +395,18 @@ async def prediccion(update: Update, context: ContextTypes.DEFAULT_TYPE):
     except Exception: pass
     finally: put_conn(conn)
 
+    # 🔥 AÑADIMOS EL BOTÓN DE VOLVER (Azul)
+    kb = [
+        [InlineKeyboardButton("⬅️ Volver al Promedio", callback_data="refresh_price", api_kwargs={"style": "primary"})]
+    ]
+    markup = InlineKeyboardMarkup(kb)
+
     if len(history) < 2:
-        await update.message.reply_text("🧠 <b>Recopilando datos para IA...</b>", parse_mode=ParseMode.HTML)
+        error_msg = "🧠 <b>Recopilando datos para IA...</b>"
+        if update.callback_query:
+            await update.callback_query.message.edit_text(error_msg, parse_mode=ParseMode.HTML, reply_markup=markup)
+        else:
+            await update.message.reply_text(error_msg, parse_mode=ParseMode.HTML, reply_markup=markup)
         return
 
     start_p, end_p = history[0], history[-1]
@@ -408,12 +418,18 @@ async def prediccion(update: Update, context: ContextTypes.DEFAULT_TYPE):
     elif percent < 0: emoji, status = EMOJI_BAJADA, "LIGERAMENTE BAJISTA"
     else: emoji, status = "⚖️", "LATERAL / ESTABLE"
     
-    await update.message.reply_html(
+    text = (
         f"🧠 <b>ANÁLISIS IA (Corto Plazo)</b>\n\n"
         f"{emoji} <b>Tendencia:</b> {status}\n"
         f"📊 <b>Variación (últimos mins):</b> {percent:.2f}%\n"
         f"⚠️ <i>No es consejo financiero.</i>"
     )
+
+    # Lógica inteligente: Editar vs Enviar nuevo
+    if update.callback_query:
+        await update.callback_query.message.edit_text(text, parse_mode=ParseMode.HTML, reply_markup=markup)
+    else:
+        await update.message.reply_html(text, reply_markup=markup)
 
 # --- COMANDOS ADMIN (Sin límites) ---
 async def stats(update: Update, context: ContextTypes.DEFAULT_TYPE):
