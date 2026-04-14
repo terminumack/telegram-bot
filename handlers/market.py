@@ -53,10 +53,13 @@ async def mercado_text_logic():
 🕐 <i>{last_update}</i>
 """
 
-    # --- AGREGAMOS LOS BOTONES ---
+# Definición de botones con colores (API 9.4)
     kb = [
-        [InlineKeyboardButton("🔄 Actualizar", callback_data="cmd_mercado")],
-        [InlineKeyboardButton("⬅️ Volver al Promedio", callback_data="refresh_price")]
+        # 🟢 Verde para la acción de refrescar datos
+        [InlineKeyboardButton("🔄 Actualizar", callback_data="cmd_mercado", api_kwargs={"style": "success"})],
+        
+        # 🔵 Azul para volver al menú anterior
+        [InlineKeyboardButton("⬅️ Volver al Promedio", callback_data="refresh_price", api_kwargs={"style": "primary"})]
     ]
     
     return table, InlineKeyboardMarkup(kb)
