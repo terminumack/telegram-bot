@@ -226,7 +226,7 @@ async def finish_p2p(update: Update, context: ContextTypes.DEFAULT_TYPE):
         f"💡 <i>{nota}</i>"
     )
 
-    kb_final = [[InlineKeyboardButton("🔄 Nuevo Cálculo", callback_data="meta_retry", style="success")]]
+    kb_final = [[InlineKeyboardButton("🔄 Nuevo Cálculo", callback_data="meta_retry")]]
     
     await query.message.edit_text(
         res_text, 
@@ -293,10 +293,10 @@ async def get_meta_roi(update: Update, context: ContextTypes.DEFAULT_TYPE):
         
         keyboard = [
             [
-                InlineKeyboardButton("👤 0.10% (Normal)", callback_data="p2pfee_0.001", style="primary"),
-                InlineKeyboardButton("💎 0.35% (Verificado)", callback_data="p2pfee_0.0035", style="primary")
+                InlineKeyboardButton("👤 0.10% (Normal)", callback_data="p2pfee_0.001"),
+                InlineKeyboardButton("💎 0.35% (Verificado)", callback_data="p2pfee_0.0035"")
             ],
-            [InlineKeyboardButton("❌ Cancelar", callback_data="p2p_cancel", style="danger")]
+            [InlineKeyboardButton("❌ Cancelar", callback_data="p2p_cancel")]
         ]
         
         await update.message.reply_html(
