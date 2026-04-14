@@ -112,3 +112,7 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await asyncio.to_thread(log_activity, user_id, "horario_btn")
         await horario(update, context)
         await safe_answer()
+
+elif data == "refresh_uso":
+        from handlers.admin import comando_uso
+        await comando_uso(update, context)
