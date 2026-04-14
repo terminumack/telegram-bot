@@ -97,17 +97,30 @@ async def cancel(update: Update, context: ContextTypes.DEFAULT_TYPE):
     return ConversationHandler.END
 
 # --- DEFINICIÓN DE CONVERSACIONES ---
+# --- DEFINICIÓN DE CONVERSACIONES ---
 
 conv_usdt = ConversationHandler(
-    entry_points=[CommandHandler("usdt", start_usdt_calc), CommandHandler("calc", start_usdt_calc)], # Alias /calc
-    states={ESPERANDO_INPUT_USDT: [MessageHandler(filters.TEXT & ~filters.COMMAND, process_usdt_input)]},
-    fallbacks=[CommandHandler("cancel", cancel)]
+    entry_points=[CommandHandler("usdt", start_usdt_calc), CommandHandler("calc", start_usdt_calc)],
+    states={
+        ESPERANDO_INPUT_USDT: [MessageHandler(filters.TEXT & ~filters.COMMAND, process_usdt_input)]
+    },
+    fallbacks=[
+        CommandHandler("cancel", cancel),
+        MessageHandler(filters.COMMAND, cancel) # 👈 Si escriben otro comando, cancela y sale
+    ],
+    allow_reentry=True # 👈 Permite reiniciar la calculadora si escriben /usdt de nuevo
 )
 
 conv_bs = ConversationHandler(
     entry_points=[CommandHandler("bs", start_bs_calc)],
-    states={ESPERANDO_INPUT_BS: [MessageHandler(filters.TEXT & ~filters.COMMAND, process_bs_input)]},
-    fallbacks=[CommandHandler("cancel", cancel)]
+    states={
+        ESPERANDO_INPUT_BS: [MessageHandler(filters.TEXT & ~filters.COMMAND, process_bs_input)]
+    },
+    fallbacks=[
+        CommandHandler("cancel", cancel),
+        MessageHandler(filters.COMMAND, cancel) # 👈 Si escriben otro comando, cancela y sale
+    ],
+    allow_reentry=True # 👈 Permite reiniciar la calculadora si escriben /bs de nuevo
 )
 
 # ==========================================
