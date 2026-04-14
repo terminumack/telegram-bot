@@ -248,6 +248,9 @@ async def precio(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await update.message.reply_html(msg, reply_markup=InlineKeyboardMarkup(kb))
 
 # --- COMANDO /GRAFICO (Blindado) ---
+# Asegúrate de tener estas importaciones si no están arriba:
+# from telegram import InlineKeyboardButton, InlineKeyboardMarkup
+
 @rate_limited(5) # Más tiempo porque consume CPU
 async def grafico(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id = update.effective_user.id
@@ -257,13 +260,20 @@ async def grafico(update: Update, context: ContextTypes.DEFAULT_TYPE):
     global GRAPH_CACHE
     today_str = datetime.now(TIMEZONE).date().isoformat()
     
+    # 🔥 CREAMOS EL TECLADO CON EL BOTÓN AZUL
+    kb = [
+        [InlineKeyboardButton("⬅️ Volver al Promedio", callback_data="refresh_price", api_kwargs={"style": "primary"})]
+    ]
+    grafico_markup = InlineKeyboardMarkup(kb)
+    
     # 1. RUTA RÁPIDA (Lectura Caché)
     if GRAPH_CACHE["date"] == today_str and GRAPH_CACHE["photo_id"]:
         try:
             await update.message.reply_photo(
                 photo=GRAPH_CACHE["photo_id"], 
                 caption="📉 <b>Promedio Diario (Semanal)</b>\n\n📲 @tasabinance_bot", 
-                parse_mode=ParseMode.HTML
+                parse_mode=ParseMode.HTML,
+                reply_markup=grafico_markup  # 👈 Añadido aquí
             )
             return
         except Exception:
@@ -276,7 +286,8 @@ async def grafico(update: Update, context: ContextTypes.DEFAULT_TYPE):
             await update.message.reply_photo(
                 photo=GRAPH_CACHE["photo_id"], 
                 caption="📉 <b>Promedio Diario (Semanal)</b>\n\n📲 @tasabinance_bot", 
-                parse_mode=ParseMode.HTML
+                parse_mode=ParseMode.HTML,
+                reply_markup=grafico_markup  # 👈 Añadido aquí
             )
             return
 
@@ -288,7 +299,8 @@ async def grafico(update: Update, context: ContextTypes.DEFAULT_TYPE):
             sent_msg = await update.message.reply_photo(
                 photo=img_buf, 
                 caption="📉 <b>Promedio Diario (Semanal)</b>\n\n📲 ¡Compártelo en tus estados!\n\n@tasabinance_bot", 
-                parse_mode=ParseMode.HTML
+                parse_mode=ParseMode.HTML,
+                reply_markup=grafico_markup  # 👈 Añadido aquí
             )
             
             if sent_msg.photo:
