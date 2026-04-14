@@ -294,7 +294,7 @@ async def get_meta_roi(update: Update, context: ContextTypes.DEFAULT_TYPE):
         keyboard = [
             [
                 InlineKeyboardButton("👤 0.10% (Normal)", callback_data="p2pfee_0.001"),
-                InlineKeyboardButton("💎 0.35% (Verificado)", callback_data="p2pfee_0.0035"")
+                InlineKeyboardButton("💎 0.35% (Verificado)", callback_data="p2pfee_0.0035")
             ],
             [InlineKeyboardButton("❌ Cancelar", callback_data="p2p_cancel")]
         ]
