@@ -1,5 +1,5 @@
 import asyncio
-from telegram import Update
+from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup # 🔥 Importaciones de botones añadidas
 from telegram.ext import ContextTypes, ConversationHandler, CommandHandler, MessageHandler, filters
 from telegram.constants import ParseMode
 
@@ -47,8 +47,14 @@ async def check_alerts_async(context: ContextTypes.DEFAULT_TYPE, current_price):
             )
             
             try:
-                # A. Enviar mensaje al usuario
-                await context.bot.send_message(chat_id=user_id, text=msg, parse_mode=ParseMode.HTML)
+                # A. Enviar mensaje al usuario (con el botón para revisar el precio fresco)
+                kb = [[InlineKeyboardButton("🔎 Ver Mercado", callback_data="refresh_price", api_kwargs={"style": "primary"})]]
+                await context.bot.send_message(
+                    chat_id=user_id, 
+                    text=msg, 
+                    parse_mode=ParseMode.HTML,
+                    reply_markup=InlineKeyboardMarkup(kb)
+                )
                 
                 # B. Borrar alerta (Para que no suene infinitamente)
                 await asyncio.to_thread(delete_alert, alert_id)
@@ -88,11 +94,15 @@ async def process_alert_logic(update: Update, target):
         await update.message.reply_text(f"⚠️ El precio actual ya es {current_price:,.2f} Bs. Define un valor distinto.")
         return ConversationHandler.END
 
+    # 🔥 PREPARAMOS EL BOTÓN DE VOLVER 🔥
+    kb_final = [[InlineKeyboardButton("⬅️ Volver al Promedio", callback_data="refresh_price", api_kwargs={"style": "primary"})]]
+    markup = InlineKeyboardMarkup(kb_final)
+
     # 3. Guardar en DB (Manejo de estados)
     result = await asyncio.to_thread(add_alert, update.effective_user.id, target, condition)
     
     if result == "SUCCESS":
-        await update.message.reply_text(f"✅ {msg}", parse_mode=ParseMode.HTML)
+        await update.message.reply_text(f"✅ {msg}", parse_mode=ParseMode.HTML, reply_markup=markup)
 
     elif result == "LIMIT_REACHED":
         # --- AQUÍ ESTÁ EL MENSAJE DE VENTA PREMIUM ---
@@ -105,10 +115,10 @@ async def process_alert_logic(update: Update, target):
             "• ⚡ Soporte Prioritario.\n\n"
             "🔜 <i>Suscripción automática con Binance Pay próximamente.</i>"
         )
-        await update.message.reply_html(text)
+        await update.message.reply_html(text, reply_markup=markup)
 
     else:
-        await update.message.reply_text("⚠️ Error de base de datos. Intenta más tarde.")
+        await update.message.reply_text("⚠️ Error de base de datos. Intenta más tarde.", reply_markup=markup)
     
     return ConversationHandler.END
 
@@ -145,7 +155,7 @@ async def process_alert_input(update: Update, context: ContextTypes.DEFAULT_TYPE
         return ConversationHandler.END
 
 async def cancel(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    await update.message.reply_text("Cancelado.")
+    await update.message.reply_text("🔄 Configuración de alerta cancelada.")
     return ConversationHandler.END
 
 # --- EXPORTAR ---
@@ -153,5 +163,9 @@ async def cancel(update: Update, context: ContextTypes.DEFAULT_TYPE):
 conv_alert = ConversationHandler(
     entry_points=[CommandHandler("alerta", start_alert)],
     states={ESPERANDO_PRECIO_ALERTA: [MessageHandler(filters.TEXT & ~filters.COMMAND, process_alert_input)]},
-    fallbacks=[CommandHandler("cancel", cancel)]
+    fallbacks=[
+        CommandHandler("cancel", cancel),
+        MessageHandler(filters.COMMAND, cancel) # Anti-traba
+    ],
+    allow_reentry=True # Anti-traba
 )
