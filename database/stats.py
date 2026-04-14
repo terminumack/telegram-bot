@@ -441,3 +441,44 @@ def reset_referral_counts(period_name):
         return False, f"❌ Error crítico en base de datos: {e}"
     finally:
         put_conn(conn)
+        
+def get_uso_diario_preciso():
+    """
+    Obtiene el DAU y el uso exacto de comandos del día actual de forma ultra rápida.
+    """
+    conn = get_conn() # Asegúrate de que este get_conn() viene de tu db_pool
+    if not conn: return 0, 0, []
+    
+    try:
+        with conn.cursor() as cur:
+            # 1. Obtenemos el DAU y el total de consultas de HOY en un solo viaje rápido
+            cur.execute("""
+                WITH hoy AS (
+                    SELECT user_id, command 
+                    FROM activity_logs 
+                    WHERE created_at >= (NOW() AT TIME ZONE 'America/Caracas')::date
+                )
+                SELECT 
+                    (SELECT COUNT(DISTINCT user_id) FROM hoy) AS dau,
+                    (SELECT COUNT(*) FROM hoy) AS total_queries;
+            """)
+            dau, total_queries = cur.fetchone()
+
+            # 2. Obtenemos el desglose exacto de comandos de HOY
+            cur.execute("""
+                SELECT command, COUNT(*) as usos 
+                FROM activity_logs 
+                WHERE created_at >= (NOW() AT TIME ZONE 'America/Caracas')::date
+                GROUP BY command 
+                ORDER BY usos DESC
+                LIMIT 15;
+            """)
+            comandos_hoy = cur.fetchall()
+
+            return dau, total_queries, comandos_hoy
+            
+    except Exception as e:
+        print(f"❌ Error en get_uso_diario_preciso: {e}")
+        return 0, 0, []
+    finally:
+        put_conn(conn)
