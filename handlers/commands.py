@@ -76,7 +76,7 @@ async def start_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
         # 3. Enlaces (Tus enlaces actuales)
         LINK_CANAL = "https://t.me/tasabinance"
-        LINK_GRUPO = "https://t.me/tasabinancegrupo"
+        LINK_GRUPO = "https://t.me/"
         LINK_SOPORTE = "https://t.me/tasabinancesoporte"
 
         # 4. El Nuevo Mensaje (Diseño Premium + /p2p)
