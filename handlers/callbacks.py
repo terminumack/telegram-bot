@@ -31,6 +31,7 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await safe_answer("✅ ¡Voto registrado!")
 
     # ==================================================================
+   # ==================================================================
     # CASO 2: ACTUALIZAR (Refresh)
     # ==================================================================
     if data in ["refresh", "refresh_price"] or data.startswith("vote_"):
@@ -55,15 +56,28 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         reply_markup = await asyncio.to_thread(get_sentiment_keyboard, user_id, current_price)
 
         try:
-            await query.edit_message_text(
-                text=text,
-                parse_mode="HTML",
-                reply_markup=reply_markup,
-                disable_web_page_preview=True
-            )
+            # 🔥 LA MAGIA: ¿Es texto o es una foto?
+            if query.message.text:
+                # Si es un mensaje de texto normal, lo editamos
+                await query.edit_message_text(
+                    text=text,
+                    parse_mode="HTML",
+                    reply_markup=reply_markup,
+                    disable_web_page_preview=True
+                )
+            else:
+                # Si no hay texto (es la imagen de /grafico), la borramos y mandamos el menú
+                await query.message.delete()
+                await context.bot.send_message(
+                    chat_id=query.message.chat_id,
+                    text=text,
+                    parse_mode="HTML",
+                    reply_markup=reply_markup,
+                    disable_web_page_preview=True
+                )
         except BadRequest as e:
             if "Message is not modified" not in str(e):
-                print(f"⚠️ Error editando mensaje: {e}")
+                print(f"⚠️ Error actualizando mensaje: {e}")
 
     # ==================================================================
     # CASO 3: VER MERCADO (CMD_MERCADO)
