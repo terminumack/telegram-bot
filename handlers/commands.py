@@ -198,14 +198,11 @@ async def precio(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return
 
     # 3. FORMATEO DE HORA (El "Maquillaje")
-    # Si last_upd es un objeto datetime, lo convertimos a string bonito.
-    # Si es un string ISO (con la T), lo transformamos.
     ve_tz = pytz.timezone('America/Caracas')
     try:
         if isinstance(last_upd, datetime):
             pretty_time = last_upd.astimezone(ve_tz).strftime("%d/%m/%Y %I:%M:%S %p")
         else:
-            # Fallback por si last_upd ya es un texto o viene de otra forma
             pretty_time = datetime.now(ve_tz).strftime("%d/%m/%Y %I:%M:%S %p")
     except Exception:
         pretty_time = str(last_upd)
@@ -226,9 +223,29 @@ async def precio(update: Update, context: ContextTypes.DEFAULT_TYPE):
         f"👁 {consultas_hoy:,} consultas hoy"
     )
     
-    # Botón para ir al detalle de mercado
-    kb = [[InlineKeyboardButton("🏦 Ver Bancos (/mercado)", callback_data="cmd_mercado")]]
-    await update.message.reply_html(msg, reply_markup=InlineKeyboardMarkup(kb))
+    # 6. TECLADO CON COLORES (API 9.4)
+    # Si viene de un botón (ej: presionaron "Actualizar"), evitamos reenviar si es igual
+    if update.callback_query:
+        query = update.callback_query
+        await query.answer()
+        # Creamos los botones
+        kb = [
+            [InlineKeyboardButton("🔄 Actualizar", callback_data="refresh_precio", api_kwargs={"style": "success"})],
+            [InlineKeyboardButton("🏦 Ver Bancos", callback_data="cmd_mercado", api_kwargs={"style": "primary"})]
+        ]
+        
+        # Intentamos editar el mensaje actual. Si los datos son idénticos, Telegram da error, así que lo atrapamos.
+        try:
+            await query.message.edit_text(msg, parse_mode=ParseMode.HTML, reply_markup=InlineKeyboardMarkup(kb))
+        except Exception:
+            pass # Si el precio no ha cambiado, no hace nada visualmente
+    else:
+        # Si escribió el comando /precio, enviamos un mensaje nuevo
+        kb = [
+            [InlineKeyboardButton("🔄 Actualizar", callback_data="refresh_precio", api_kwargs={"style": "success"})],
+            [InlineKeyboardButton("🏦 Ver Bancos (/mercado)", callback_data="cmd_mercado", api_kwargs={"style": "primary"})]
+        ]
+        await update.message.reply_html(msg, reply_markup=InlineKeyboardMarkup(kb))
 
 # --- COMANDO /GRAFICO (Blindado) ---
 @rate_limited(5) # Más tiempo porque consume CPU
