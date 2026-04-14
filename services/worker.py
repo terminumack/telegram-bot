@@ -73,7 +73,7 @@ async def background_worker():
                 # Preparar teclado
                 reply_markup = None
                 if any(k in text.lower() for k in ["binance", "bcv", "mercado", "apertura"]):
-                    kb = [[InlineKeyboardButton("🔎 Ver Precio en Vivo", callback_data="refresh_price")]]
+                    kb = [[InlineKeyboardButton("🔎 Ver Precio en Vivo", callback_data="refresh_price", api_kwargs={"style": "success"})]]
                     reply_markup = InlineKeyboardMarkup(kb)
 
                 success, blocked_count, total = 0, 0, len(users)
