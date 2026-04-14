@@ -30,7 +30,6 @@ async def calculate_conversion(update: Update, text_amount, currency_type):
         
         # Normalizar coma a punto para Python
         if ',' in clean_text and '.' in clean_text:
-            # Caso complejo: 1.500,50 -> Quitamos punto, cambiamos coma
             clean_text = clean_text.replace('.', '').replace(',', '.')
         elif ',' in clean_text:
             clean_text = clean_text.replace(',', '.')
@@ -47,7 +46,16 @@ async def calculate_conversion(update: Update, text_amount, currency_type):
             total = amount / rate
             msg = f"🇻🇪 {amount:,.2f} Bs son:\n🇺🇸 <b>{total:,.2f} USDT</b>\n<i>(Tasa: {rate:,.2f})</i>"
             
-        await update.message.reply_text(msg, parse_mode=ParseMode.HTML)
+        # 🔥 AÑADIMOS EL BOTÓN DE VOLVER (Azul) 🔥
+        kb_final = [
+            [InlineKeyboardButton("⬅️ Volver al Promedio", callback_data="refresh_price", api_kwargs={"style": "primary"})]
+        ]
+            
+        await update.message.reply_text(
+            msg, 
+            parse_mode=ParseMode.HTML,
+            reply_markup=InlineKeyboardMarkup(kb_final)
+        )
         
     except ValueError:
         await update.message.reply_text("🔢 Número inválido. Usa solo números (ej: 100 o 50.5)")
@@ -85,7 +93,7 @@ async def process_bs_input(update: Update, context: ContextTypes.DEFAULT_TYPE):
     return await calculate_conversion(update, update.message.text, "BS")
 
 async def cancel(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    await update.message.reply_text("Cancelado.")
+    await update.message.reply_text("🔄 Calculadora cerrada.")
     return ConversationHandler.END
 
 # --- DEFINICIÓN DE CONVERSACIONES ---
