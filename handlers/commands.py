@@ -306,7 +306,7 @@ async def referidos(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await asyncio.to_thread(track_user, update.effective_user)
     await asyncio.to_thread(log_activity, user_id, "/referidos")
     
-    # 2. Obtener datos (Nuestra función en stats.py ya devuelve count, rank y top_3)
+    # 2. Obtener datos
     count, rank, top_3 = await asyncio.to_thread(get_referral_stats, user_id)
     
     # 3. Construir el Ranking Visual
@@ -314,7 +314,6 @@ async def referidos(update: Update, context: ContextTypes.DEFAULT_TYPE):
     medals = ["🥇", "🥈", "🥉"]
     for i, (name, score) in enumerate(top_3):
         medal = medals[i] if i < 3 else f"#{i+1}"
-        # Limpiamos el nombre para que no sea muy largo
         clean_name = name.split()[0] if name else "Usuario"
         ranking_text += f"{medal} <b>{clean_name}</b> — {score} refs\n"
 
@@ -322,12 +321,16 @@ async def referidos(update: Update, context: ContextTypes.DEFAULT_TYPE):
     bot_username = context.bot.username
     invite_link = f"https://t.me/{bot_username}?start={user_id}"
     
-    # Mensaje que se pre-escribe al darle al botón de compartir
     share_text = f"🎁 ¡Gana 10 USDT con este bot! Entra aquí y participa:\n\n{invite_link}"
     share_url = f"https://t.me/share/url?url={quote(share_text)}"
     
-    # 5. Teclado y Mensaje Final (Tu diseño original)
-    keyboard = [[InlineKeyboardButton("📤 Comparte y Gana $10", url=share_url)]]
+    # 🔥 5. TECLADO CON COLORES Y BOTÓN DE RETORNO
+    keyboard = [
+        # Botón VERDE (success) para incentivar la acción de ganar
+        [InlineKeyboardButton("📤 Comparte y Gana $10", url=share_url, api_kwargs={"style": "success"})],
+        # Botón AZUL (primary) para volver
+        [InlineKeyboardButton("⬅️ Volver al Promedio", callback_data="refresh_price", api_kwargs={"style": "primary"})]
+    ]
     
     text = (
         f"🎁 <b>PROGRAMA DE REFERIDOS (PREMIOS USDT)</b>\n\n"
@@ -348,13 +351,22 @@ async def referidos(update: Update, context: ContextTypes.DEFAULT_TYPE):
         f"👇 <b>¡Compártelo ahora!</b>"
     )
 
-    await update.message.reply_text(
-        text, 
-        parse_mode=ParseMode.HTML, 
-        disable_web_page_preview=True, 
-        reply_markup=InlineKeyboardMarkup(keyboard)
-    )
-
+    # Si viene de un botón (CallbackQuery), editamos el mensaje
+    if update.callback_query:
+        await update.callback_query.answer()
+        await update.callback_query.message.edit_text(
+            text,
+            parse_mode=ParseMode.HTML,
+            disable_web_page_preview=True,
+            reply_markup=InlineKeyboardMarkup(keyboard)
+        )
+    else:
+        await update.message.reply_text(
+            text, 
+            parse_mode=ParseMode.HTML, 
+            disable_web_page_preview=True, 
+            reply_markup=InlineKeyboardMarkup(keyboard)
+        )
 # --- COMANDO /IA ---
 @rate_limited(3)
 async def prediccion(update: Update, context: ContextTypes.DEFAULT_TYPE):
