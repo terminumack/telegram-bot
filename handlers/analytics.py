@@ -1,6 +1,6 @@
 import asyncio
 import statistics
-from telegram import Update
+from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup # 🔥 Agregamos los botones aquí
 from telegram.constants import ParseMode
 from telegram.ext import ContextTypes
 from database.stats import get_conn, put_conn, log_activity
@@ -16,12 +16,16 @@ async def horario(update: Update, context: ContextTypes.DEFAULT_TYPE):
     conn = get_conn()
     if not conn: return
 
-    try:
+    # 🔥 Pequeño ajuste: Si viene de un botón, editamos en lugar de enviar un mensaje nuevo
+    if update.callback_query:
+        msg = update.callback_query.message
+        await msg.edit_text("⏳ <i>Calculando ventajas porcentuales...</i>", parse_mode=ParseMode.HTML)
+    else:
         msg = await update.message.reply_text("⏳ <i>Calculando ventajas porcentuales...</i>", parse_mode=ParseMode.HTML)
         
+    try:
         with conn.cursor() as cur:
-            # La consulta SQL sigue igual (trae promedios absolutos)
-            # La magia porcentual la haremos en Python
+            # La consulta SQL sigue igual
             query = """
                 WITH combined_data AS (
                     SELECT recorded_at, buy_pm as precio 
@@ -56,31 +60,23 @@ async def horario(update: Update, context: ContextTypes.DEFAULT_TYPE):
             if count >= 5: # Filtro de fiabilidad
                 data_by_hour[hora] = precio
 
-        valid_hours = {k:v for k,v in data_by_hour.items() if 7 <= k <= 23 or k == 0} # Incluimos hasta media noche
+        valid_hours = {k:v for k,v in data_by_hour.items() if 7 <= k <= 23 or k == 0}
         
         if not valid_hours:
             await msg.edit_text("⚠️ Data insuficiente. Intenta más tarde.")
             return
 
-        # 1. Calcular la Media Global del día (El "Cero" relativo)
         all_prices = list(valid_hours.values())
         daily_mean = sum(all_prices) / len(all_prices)
 
-        # 2. Encontrar Picos y Valles
-        best_buy_hour = min(valid_hours, key=valid_hours.get) # Hora más barata
-        best_sell_hour = max(valid_hours, key=valid_hours.get) # Hora más cara
+        best_buy_hour = min(valid_hours, key=valid_hours.get) 
+        best_sell_hour = max(valid_hours, key=valid_hours.get) 
         
         min_price = valid_hours[best_buy_hour]
         max_price = valid_hours[best_sell_hour]
 
-        # 3. CONVERTIR A PORCENTAJES (La clave)
-        # Cuánto te ahorras comprando a la hora baja vs la media del día
         ahorro_pct = ((min_price - daily_mean) / daily_mean) * 100
-        
-        # Cuánto ganas extra vendiendo a la hora alta vs la media del día
         ganancia_pct = ((max_price - daily_mean) / daily_mean) * 100
-        
-        # El GAP Total (Diferencia entre comprar barato y vender caro)
         total_gap = ((max_price - min_price) / min_price) * 100
 
         # --- GENERADOR GRÁFICO ---
@@ -115,14 +111,19 @@ async def horario(update: Update, context: ContextTypes.DEFAULT_TYPE):
             if h in data_by_hour:
                 price = data_by_hour[h]
                 bar = get_bar(price, min_price, max_price)
-                # Calculamos % relativo de esa hora específica
                 diff = ((price - daily_mean) / daily_mean) * 100
                 sign = "+" if diff > 0 else ""
                 text += f"<code>{h:02d}:00 {bar*4} {sign}{diff:.1f}%</code>\n"
 
         text += "\n🧠 <i>Tip: % negativo es bueno para comprar.</i>"
 
-        await msg.edit_text(text, parse_mode=ParseMode.HTML)
+        # 🔥 AÑADIMOS LOS BOTONES DE COLORES AQUÍ 🔥
+        kb = [
+            [InlineKeyboardButton("🔄 Actualizar Horario", callback_data="cmd_horario", api_kwargs={"style": "success"})],
+            [InlineKeyboardButton("⬅️ Volver al Promedio", callback_data="refresh_price", api_kwargs={"style": "primary"})]
+        ]
+
+        await msg.edit_text(text, parse_mode=ParseMode.HTML, reply_markup=InlineKeyboardMarkup(kb))
 
     except Exception as e:
         print(f"Error horario: {e}")
