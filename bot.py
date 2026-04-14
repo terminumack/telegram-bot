@@ -10,6 +10,7 @@ from telegram.ext import ConversationHandler, CommandHandler, MessageHandler, Ca
 from handlers.calc import start_p2p, get_buy_price, get_sell_price, finish_p2p, cancel_p2p, COMPRA, VENTA, COMISION
 from handlers.exchange_admin import campaign_stats
 from handlers.calc import p2p_conv, meta_conv
+from handlers.admin import comando_uso
 
 # --- 1. CONFIGURACIÓN DE ZONA HORARIA ---
 TIMEZONE = pytz.timezone('America/Caracas')
