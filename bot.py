@@ -11,6 +11,7 @@ from handlers.calc import start_p2p, get_buy_price, get_sell_price, finish_p2p, 
 from handlers.exchange_admin import campaign_stats
 from handlers.calc import p2p_conv, meta_conv
 from handlers.admin import comando_uso
+from services.bcv_intervention import get_bcv_intervention
 
 # --- 1. CONFIGURACIÓN DE ZONA HORARIA ---
 TIMEZONE = pytz.timezone('America/Caracas')
@@ -90,15 +91,17 @@ async def error_handler(update: object, context: ContextTypes.DEFAULT_TYPE) -> N
 # ==============================================================================
 async def update_price_task(context: ContextTypes.DEFAULT_TYPE):
     try:
-        # 1. ESCANEO MASIVO (Binance Multi-banco + BCV)
+        # 1. ESCANEO MASIVO (Binance Multi-banco + BCV + Intervención)
         results = await asyncio.gather(
             get_market_snapshot(), 
             get_bcv_rates(),        
+            get_bcv_intervention(), # 🔥 NUEVO: Escaneamos la intervención al mismo tiempo
             return_exceptions=True
         )
         
         market_data = results[0]
         bcv_data = results[1]
+        interv_data = results[2] # 🔥 NUEVO: Atrapamos el resultado
 
         # 2. PROCESAR BINANCE
         if isinstance(market_data, dict):
@@ -144,6 +147,18 @@ async def update_price_task(context: ContextTypes.DEFAULT_TYPE):
                 val_bcv_usd = MARKET_DATA["bcv"].get("dolar", 0)
                 val_bcv_eur = MARKET_DATA["bcv"].get("euro", 0)
 
+            # 🔥 NUEVO: CÁLCULO DE INTERVENCIÓN IMPLÍCITA 🔥
+            # Calculamos la matemática solo si el BCV y la intervención respondieron bien
+            if isinstance(interv_data, dict) and interv_data.get("tasa_eur", 0) > 0:
+                if val_bcv_usd > 0 and val_bcv_eur > 0:
+                    paridad_interna = val_bcv_eur / val_bcv_usd
+                    tasa_implicita_usd = interv_data["tasa_eur"] / paridad_interna
+                    
+                    MARKET_DATA["intervencion"] = {
+                        "fecha": interv_data["fecha"],
+                        "tasa_usd": round(tasa_implicita_usd, 2)
+                    }
+
             # Guardamos Minería y Persistencia
             if pm_buy > 0:
                 await asyncio.to_thread(save_mining_data, pm_buy, val_bcv_usd, pm_sell)
@@ -163,7 +178,6 @@ async def update_price_task(context: ContextTypes.DEFAULT_TYPE):
 
     except Exception as e:
         logging.error(f"❌ Error Update Task: {e}")
-
 # ==============================================================================
 #  TAREA DE FONDO: REPORTE DIARIO AUTOMÁTICO
 # ==============================================================================
