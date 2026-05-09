@@ -41,6 +41,11 @@ def build_price_message(market_data, user_id=None, requests_count=0):
         text += "\n"
     else: 
         text += "🏛️ <b>BCV:</b> <i>No disponible</i>\n\n"
+        
+        interv_data = market_data.get("intervencion")
+        if interv_data and interv_data.get("tasa_usd"):
+            # Cambiamos "Intervención Implícita" por "Intervención BCV"
+            text += f"💵 <b>Intervención BCV:</b> {interv_data['tasa_usd']:,.2f} Bs\n"
     
     # 3. Otros Mercados y Footer
     text += (f"{EMOJI_PAYPAL} <b>Tasa PayPal:</b> {paypal:,.2f} Bs\n"
