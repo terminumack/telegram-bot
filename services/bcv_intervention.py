@@ -20,7 +20,7 @@ async def get_bcv_intervention():
     }
 
     try:
-        response = await asyncio.to_thread(requests.get, url, headers=headers, timeout=5, verify=False)
+        response = await asyncio.to_thread(requests.get, url, headers=headers, timeout=15, verify=False)
         response.raise_for_status()
         
         soup = BeautifulSoup(response.content, "html.parser")
