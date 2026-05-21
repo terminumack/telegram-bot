@@ -98,11 +98,12 @@ async def update_price_task(context: ContextTypes.DEFAULT_TYPE):
             get_bcv_intervention(), # 🔥 NUEVO: Escaneamos la intervención al mismo tiempo
             return_exceptions=True
         )
-        logging.info(f"🛑 RESULTADO CRUDO DE INTERVENCIÓN: {interv_data}")
+        
         
         market_data = results[0]
         bcv_data = results[1]
         interv_data = results[2] # 🔥 NUEVO: Atrapamos el resultado
+        logging.info(f"🛑 RESULTADO CRUDO DE INTERVENCIÓN: {interv_data}")
 
         # 2. PROCESAR BINANCE
         if isinstance(market_data, dict):
