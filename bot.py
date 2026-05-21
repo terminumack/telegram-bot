@@ -92,6 +92,7 @@ async def error_handler(update: object, context: ContextTypes.DEFAULT_TYPE) -> N
 async def update_price_task(context: ContextTypes.DEFAULT_TYPE):
     logging.warning("🚀 ¡ARRANCANDO WORKER! El bot se despertó para buscar precios...")
     try:
+        logging.warning("⏳ 1. Entrando al escáner masivo (Esperando a Binance y BCV)...")
         # 1. ESCANEO MASIVO (Binance Multi-banco + BCV + Intervención)
         results = await asyncio.gather(
             get_market_snapshot(), 
@@ -99,12 +100,13 @@ async def update_price_task(context: ContextTypes.DEFAULT_TYPE):
             get_bcv_intervention(), # 🔥 NUEVO: Escaneamos la intervención al mismo tiempo
             return_exceptions=True
         )
+        logging.warning("✅ 2. ¡Salió del escáner masivo! Descargas terminadas.")
         
         
         market_data = results[0]
         bcv_data = results[1]
         interv_data = results[2] # 🔥 NUEVO: Atrapamos el resultado
-        logging.info(f"🛑 RESULTADO CRUDO DE INTERVENCIÓN: {interv_data}")
+        logging.warning(f"🚨 3. RADAR CHISMOSO: La caja interv_data trajo -> {interv_data}")
 
         # 2. PROCESAR BINANCE
         if isinstance(market_data, dict):
