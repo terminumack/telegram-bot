@@ -90,6 +90,7 @@ async def error_handler(update: object, context: ContextTypes.DEFAULT_TYPE) -> N
 #  TAREA DE FONDO: ACTUALIZADOR DE PRECIOS
 # ==============================================================================
 async def update_price_task(context: ContextTypes.DEFAULT_TYPE):
+    logging.warning("🚀 ¡ARRANCANDO WORKER! El bot se despertó para buscar precios...")
     try:
         # 1. ESCANEO MASIVO (Binance Multi-banco + BCV + Intervención)
         results = await asyncio.gather(
