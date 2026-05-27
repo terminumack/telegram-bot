@@ -42,7 +42,9 @@ def build_price_message(market_data, user_id=None, requests_count=0):
         # 🔥 AHORA SÍ: Lo ponemos aquí, en el bloque de éxito
         interv_data = market_data.get("intervencion")
         if interv_data and interv_data.get("tasa_usd"):
-            text += f"💵 <b>Intervención BCV:</b> {interv_data['tasa_usd']:,.2f} Bs\n"
+            text += f"💵 <b>Intervención (USD):</b> {interv_data['tasa_usd']:,.2f} Bs\n"
+            if interv_data.get("tasa_eur"):
+                text += f"💶 <b>Intervención (Euro):</b> {interv_data['tasa_eur']:,.2f} Bs\n"
             
         text += "\n"
     else: 
