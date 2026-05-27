@@ -161,8 +161,8 @@ async def update_price_task(context: ContextTypes.DEFAULT_TYPE):
                     
                     MARKET_DATA["intervencion"] = {
                         "fecha": interv_data["fecha"],
-                        "tasa_usd": round(tasa_implicita_usd, 2)
-                        "tasa_eur": interv_data["tasa_eur"]
+                        "tasa_usd": round(tasa_implicita_usd, 2)  # <--- FALTA LA COMA AQUÍ
+                        "tasa_eur": interv_data["tasa_eur"] 
                     }
 
             # Guardamos Minería y Persistencia
