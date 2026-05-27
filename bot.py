@@ -97,7 +97,7 @@ async def update_price_task(context: ContextTypes.DEFAULT_TYPE):
         results = await asyncio.gather(
             get_market_snapshot(), 
             get_bcv_rates(),        
-            #get_bcv_intervention(), # 🔥 NUEVO: Escaneamos la intervención al mismo tiempo
+            get_bcv_intervention(), # 🔥 NUEVO: Escaneamos la intervención al mismo tiempo
             return_exceptions=True
         )
         logging.warning("✅ 2. ¡Salió del escáner masivo! Descargas terminadas.")
