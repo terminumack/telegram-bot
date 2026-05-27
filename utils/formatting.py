@@ -47,6 +47,17 @@ def build_price_message(market_data, user_id=None, requests_count=0):
         text += "\n"
     else: 
         text += "🏛️ <b>BCV:</b> <i>No disponible</i>\n\n"
+
+     # 3. Otros Mercados y Footer
+    text += (f"{EMOJI_PAYPAL} <b>Tasa PayPal:</b> {paypal:,.2f} Bs\n"
+             f"{EMOJI_AMAZON} <b>Giftcard Amazon:</b> {amazon:,.2f} Bs\n\n"
+             f"{EMOJI_STORE} <i>Actualizado: {last_update}</i>\n")
+    
+    if requests_count > 100: 
+        text += f"👁 <b>{requests_count:,}</b> consultas hoy\n\n"
+    else: 
+        text += "\n"
+        
     # --- 4. INTEGRACIÓN DE TU ENCUESTA ---
     if user_id and has_user_voted(user_id):
         # Si YA votó: Mostramos resultados en el texto
