@@ -10,25 +10,21 @@ urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
 async def get_bcv_rates():
     """
     Obtiene las tasas del BCV (Dólar y Euro) haciendo Web Scraping.
-    Si falla, retorna None rápidamente para no colgar al bot.
+    Protegido con el Perro Guardián Absoluto.
     """
     url = "https://www.bcv.org.ve"
     
     headers = {
-        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36",
+        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36",
         "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8",
         "Accept-Language": "es-ES,es;q=0.9,en;q=0.8"
     }
 
     try:
-        # Ejecutamos la petición en un hilo aparte para no bloquear al bot
-        # Timeout reducido a 5 segundos (Si en 5s no responde, abortamos)
-        response = await asyncio.to_thread(
-            requests.get, 
-            url, 
-            headers=headers, 
-            timeout=5, 
-            verify=False 
+        # 🔥 EL PERRO GUARDIÁN: Corta la conexión a los 10 segundos pase lo que pase
+        response = await asyncio.wait_for(
+            asyncio.to_thread(requests.get, url, headers=headers, timeout=5, verify=False),
+            timeout=10.0
         )
         
         response.raise_for_status()
@@ -53,11 +49,14 @@ async def get_bcv_rates():
 
         return rates
 
+    except asyncio.TimeoutError:
+        logging.warning("⚠️ BCV Principal se congeló. El perro guardián lo canceló.")
+        return None
     except requests.exceptions.Timeout:
-        logging.warning("⚠️ Timeout conectando con BCV (La página está lenta).")
+        logging.warning("⚠️ Timeout conectando con BCV Principal (La página está lenta).")
         return None
     except Exception as e:
-        logging.error(f"❌ Error obteniendo BCV: {e}")
+        logging.error(f"❌ Error obteniendo BCV Principal: {e}")
         return None
 
 def _parse_value(tag):
