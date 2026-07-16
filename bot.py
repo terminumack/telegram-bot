@@ -379,7 +379,7 @@ if __name__ == "__main__":
     print(f"🚀 Tasabinance Bot V51 (RESTAURADO + ASÍNCRONO) INICIADO")
 
     # --- MODO DE EJECUCIÓN ---
-  WEBHOOK_URL = os.getenv("WEBHOOK_URL")
+    WEBHOOK_URL = os.getenv("WEBHOOK_URL")
     
     if WEBHOOK_URL:
         PORT = int(os.environ.get("PORT", "8080"))
@@ -389,8 +389,8 @@ if __name__ == "__main__":
             port=PORT, 
             url_path=TOKEN, 
             webhook_url=f"{WEBHOOK_URL}/{TOKEN}",
-            drop_pending_updates=True # 🔥 ESCUDO ACTIVADO PARA WEBHOOK
+            drop_pending_updates=True
         )
     else:
         print("📡 Iniciando modo POLLING...")
-        app.run_polling(drop_pending_updates=True) # 🔥 ESCUDO ACTIVADO PARA POLLING
+        app.run_polling(drop_pending_updates=True)
