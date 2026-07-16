@@ -113,31 +113,40 @@ async def update_price_task(context: ContextTypes.DEFAULT_TYPE):
             pm_buy = market_data.get("pm_buy", 0)
             pm_sell = market_data.get("pm_sell", 0)
             
-            # Actualizamos RAM Bancos
-            MARKET_DATA["banks"]["pm"]["buy"] = pm_buy
-            MARKET_DATA["banks"]["pm"]["sell"] = pm_sell
-            MARKET_DATA["banks"]["banesco"]["buy"] = market_data.get("ban_buy", 0)
-            MARKET_DATA["banks"]["banesco"]["sell"] = market_data.get("ban_sell", 0)
-            MARKET_DATA["banks"]["mercantil"]["buy"] = market_data.get("mer_buy", 0)
-            MARKET_DATA["banks"]["mercantil"]["sell"] = market_data.get("mer_sell", 0)
-            MARKET_DATA["banks"]["provincial"]["buy"] = market_data.get("pro_buy", 0)
-            MARKET_DATA["banks"]["provincial"]["sell"] = market_data.get("pro_sell", 0)
-
-            # Actualizamos RAM Principal
+            # 🔥 LA BÓVEDA: Solo actualizamos la memoria si Binance trajo oro (mayor a 0)
             if pm_buy > 0:
+                # Actualizamos RAM Bancos
+                MARKET_DATA["banks"]["pm"]["buy"] = pm_buy
+                MARKET_DATA["banks"]["pm"]["sell"] = pm_sell
+                MARKET_DATA["banks"]["banesco"]["buy"] = market_data.get("ban_buy", 0)
+                MARKET_DATA["banks"]["banesco"]["sell"] = market_data.get("ban_sell", 0)
+                MARKET_DATA["banks"]["mercantil"]["buy"] = market_data.get("mer_buy", 0)
+                MARKET_DATA["banks"]["mercantil"]["sell"] = market_data.get("mer_sell", 0)
+                MARKET_DATA["banks"]["provincial"]["buy"] = market_data.get("pro_buy", 0)
+                MARKET_DATA["banks"]["provincial"]["sell"] = market_data.get("pro_sell", 0)
+
+                # Actualizamos RAM Principal
                 MARKET_DATA["price"] = pm_buy
                 MARKET_DATA["history"].append(pm_buy)
+                
                 # Alertas
                 asyncio.create_task(check_alerts_async(context, pm_buy))
             
-            # Guardar Snapshot Completo
-            await asyncio.to_thread(
-                save_arbitrage_snapshot,
-                pm_buy, pm_sell,
-                market_data.get("ban_buy", 0),
-                market_data.get("mer_buy", 0),
-                market_data.get("pro_buy", 0)
-            )
+            else:
+                logging.warning("🛡️ Binance trajo ceros. Usando precios de la Bóveda Segura.")
+                # Rescatamos el precio principal de la bóveda por si lo necesita la Base de Datos
+                pm_buy = MARKET_DATA.get("price", 0)
+            
+            # Guardar Snapshot Completo en la DB usando los precios protegidos
+            if pm_buy > 0:
+                await asyncio.to_thread(
+                    save_arbitrage_snapshot,
+                    pm_buy, 
+                    MARKET_DATA["banks"]["pm"]["sell"],
+                    MARKET_DATA["banks"]["banesco"]["buy"],
+                    MARKET_DATA["banks"]["mercantil"]["buy"],
+                    MARKET_DATA["banks"]["provincial"]["buy"]
+                )
 
             # --- LÓGICA DE PROTECCIÓN BCV ---
             val_bcv_usd = 0
