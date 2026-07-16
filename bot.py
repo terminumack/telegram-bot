@@ -253,24 +253,30 @@ p2p_conv = ConversationHandler(
 async def precio(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id = update.effective_user.id
     
-    await asyncio.to_thread(track_user, update.effective_user)
-    await asyncio.to_thread(log_activity, user_id, "/precio")
+    # 🚀 VELOCIDAD 1: "Dispara y olvida" (Background tasks)
+    # Mandamos a registrar al usuario y su actividad en segundo plano.
+    # Al NO poner 'await' aquí, el bot NO se detiene a esperar a la base de datos.
+    asyncio.create_task(asyncio.to_thread(track_user, update.effective_user))
+    asyncio.create_task(asyncio.to_thread(log_activity, user_id, "/precio"))
     
     binance = MARKET_DATA["price"]
     if not binance:
         await update.message.reply_text("🔄 Iniciando sistema... intenta en unos segundos.")
         return
 
-    req_count = await asyncio.to_thread(get_daily_requests_count)
+    # 🚀 VELOCIDAD 2: Paralelismo real
+    # Mandamos a buscar los datos que sí necesitamos para armar el mensaje AL MISMO TIEMPO.
+    req_count, markup = await asyncio.gather(
+        asyncio.to_thread(get_daily_requests_count),
+        asyncio.to_thread(get_sentiment_keyboard, user_id, binance)
+    )
     
-    # Texto
+    # Texto (Asegúrate de que esta función no esconda peticiones a la DB por dentro)
     msg = build_price_message(MARKET_DATA, user_id=user_id, requests_count=req_count)
-    
-    # Botones
-    markup = await asyncio.to_thread(get_sentiment_keyboard, user_id, binance)
     
     # Growth Hacking
     if random.random() < 0.2:
+        # Esto queda igual, se ejecuta rápido solo el 20% de las veces
         days, refs = await asyncio.to_thread(get_user_loyalty, user_id)
         if days > 3 and refs == 0:
             msg += "\n\n🎁 <i>¡Gana premios invitando amigos! Toca /referidos</i>"
