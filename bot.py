@@ -13,7 +13,6 @@ from handlers.calc import p2p_conv, meta_conv
 from handlers.admin import comando_uso
 from services.bcv_intervention import get_bcv_intervention
 
-application.run_polling(drop_pending_updates=True)
 
 # --- 1. CONFIGURACIÓN DE ZONA HORARIA ---
 TIMEZONE = pytz.timezone('America/Caracas')
@@ -380,12 +379,18 @@ if __name__ == "__main__":
     print(f"🚀 Tasabinance Bot V51 (RESTAURADO + ASÍNCRONO) INICIADO")
 
     # --- MODO DE EJECUCIÓN ---
-    WEBHOOK_URL = os.getenv("WEBHOOK_URL")
+  WEBHOOK_URL = os.getenv("WEBHOOK_URL")
     
     if WEBHOOK_URL:
         PORT = int(os.environ.get("PORT", "8080"))
         print(f"🌐 Iniciando modo WEBHOOK en puerto {PORT}")
-        app.run_webhook(listen="0.0.0.0", port=PORT, url_path=TOKEN, webhook_url=f"{WEBHOOK_URL}/{TOKEN}")
+        app.run_webhook(
+            listen="0.0.0.0", 
+            port=PORT, 
+            url_path=TOKEN, 
+            webhook_url=f"{WEBHOOK_URL}/{TOKEN}",
+            drop_pending_updates=True # 🔥 ESCUDO ACTIVADO PARA WEBHOOK
+        )
     else:
         print("📡 Iniciando modo POLLING...")
-        app.run_polling()
+        app.run_polling(drop_pending_updates=True) # 🔥 ESCUDO ACTIVADO PARA POLLING
