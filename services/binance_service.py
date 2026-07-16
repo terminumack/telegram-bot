@@ -50,35 +50,33 @@ def fetch_binance_specific(trade_type, bank_input, amount):
 
 async def get_market_snapshot():
     """
-    EL SUPER-SCANNER DINÁMICO:
-    Calcula el filtro basado en $20 USD al precio actual.
+    EL SUPER-SCANNER DINÁMICO: Protegido contra bloqueos de hilos (Thread Pool Exhaustion)
     """
-    # 1. CALCULO DINÁMICO DEL FILTRO
-    # Obtenemos el precio actual de la memoria. Si no existe (arranque), usamos 65.0
     current_price = MARKET_DATA["price"] if MARKET_DATA["price"] else 65.0
-    
-    # Regla de los $20 USD (Monto estándar de transacción)
-    # Ejemplo: 65 Bs * 20 = 1300 Bs
     dynamic_amount = int(current_price * 20)
     
-    # 2. LANZAMOS PETICIONES CON EL MONTO AJUSTADO
     tasks = [
-        # PagoMóvil
         asyncio.to_thread(fetch_binance_specific, "BUY", "PagoMovil", dynamic_amount),
         asyncio.to_thread(fetch_binance_specific, "SELL", "PagoMovil", dynamic_amount),
-        # Banesco
         asyncio.to_thread(fetch_binance_specific, "BUY", "Banesco", dynamic_amount),
         asyncio.to_thread(fetch_binance_specific, "SELL", "Banesco", dynamic_amount),
-        # Mercantil
         asyncio.to_thread(fetch_binance_specific, "BUY", "Mercantil", dynamic_amount),
         asyncio.to_thread(fetch_binance_specific, "SELL", "Mercantil", dynamic_amount),
-        # Provincial
         asyncio.to_thread(fetch_binance_specific, "BUY", "Provincial", dynamic_amount),
         asyncio.to_thread(fetch_binance_specific, "SELL", "Provincial", dynamic_amount)
     ]
     
-    results = await asyncio.gather(*tasks)
-    
+    try:
+        # 🔥 EL PERRO GUARDIÁN DE BINANCE: 15 Segundos máximo para liberar los hilos
+        results = await asyncio.wait_for(asyncio.gather(*tasks), timeout=15.0)
+    except asyncio.TimeoutError:
+        logging.warning("⚠️ Binance se congeló. El perro guardián liberó los hilos.")
+        # Si falla, devolvemos ceros para que la "Bóveda" use los precios guardados
+        results = [0.0] * 8
+    except Exception as e:
+        logging.error(f"❌ Error en Binance Snapshot: {e}")
+        results = [0.0] * 8
+        
     return {
         "pm_buy": results[0],  "pm_sell": results[1],
         "ban_buy": results[2], "ban_sell": results[3],
