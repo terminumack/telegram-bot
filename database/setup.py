@@ -85,6 +85,8 @@ def init_db():
                     closed_at TIMESTAMP WITH TIME ZONE
                 )
             """)
+            # 🔥 LA LÍNEA MÁGICA QUE REPARA EL ERROR 🔥
+            cur.execute("CREATE UNIQUE INDEX IF NOT EXISTS idx_exchange_pairs_name ON exchange_pairs (name);")
 
             # 6. SEED DATA (Inyección de Monedas)
             target_pairs = [
