@@ -13,6 +13,8 @@ from handlers.calc import p2p_conv, meta_conv
 from handlers.admin import comando_uso
 from services.bcv_intervention import get_bcv_intervention
 
+application.run_polling(drop_pending_updates=True)
+
 # --- 1. CONFIGURACIÓN DE ZONA HORARIA ---
 TIMEZONE = pytz.timezone('America/Caracas')
 
