@@ -1,7 +1,8 @@
 import logging
 from datetime import datetime
-# Importamos la conexión del nuevo sistema modular
-from database.stats import get_conn, put_conn
+
+# 🔥 CAMBIO CRÍTICO: Ahora apuntamos al Pool blindado real, no a stats.py
+from database.db_pool import get_conn, put_conn
 
 def track_user(user, referrer_id=None, source=None):
     """
@@ -80,7 +81,7 @@ def track_user(user, referrer_id=None, source=None):
         logging.error(f"❌ Error crítico en track_user: {e}")
         if conn: conn.rollback()
     finally:
-        put_conn(conn)
+        if conn: put_conn(conn)
 
 def get_user_loyalty(user_id):
     """Devuelve antiguedad y referidos usando tus columnas originales."""
