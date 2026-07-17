@@ -6,7 +6,7 @@ from datetime import datetime
 import pytz
 
 # 🔥 CONECTAMOS EL POOL DE ALTA VELOCIDAD
-from db_pool import get_conn, put_conn
+from database.db_pool import get_conn, put_conn
 
 # Configuración
 DATABASE_URL = os.getenv("DATABASE_URL")
