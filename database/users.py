@@ -97,9 +97,12 @@ def get_user_loyalty(user_id):
                 return days, refs
             return 0, 0
     except Exception:
+        # 🔥 EL ANTÍDOTO APLICADO
+        if conn: conn.rollback()
         return 0, 0
     finally:
-        put_conn(conn)
+        if conn: put_conn(conn)
+
 def get_all_user_ids():
     """Obtiene todos los IDs de la base de datos para envíos globales."""
     conn = get_conn()
@@ -109,7 +112,9 @@ def get_all_user_ids():
             cur.execute("SELECT user_id FROM users WHERE status = 'active'")
             return [row[0] for row in cur.fetchall()]
     except Exception as e:
+        # 🔥 EL ANTÍDOTO APLICADO
+        if conn: conn.rollback()
         print(f"Error obteniendo IDs: {e}")
         return []
     finally:
-        put_conn(conn)
+        if conn: put_conn(conn)
