@@ -5,27 +5,13 @@ import os
 from datetime import datetime
 import pytz
 
+# 🔥 CONECTAMOS EL POOL DE ALTA VELOCIDAD
+from db_pool import get_conn, put_conn
+
 # Configuración
 DATABASE_URL = os.getenv("DATABASE_URL")
 
 # --- GESTIÓN DE CONEXIÓN ---
-def get_conn():
-    if not DATABASE_URL:
-        return None
-    try:
-        conn = psycopg2.connect(DATABASE_URL)
-        return conn
-    except Exception as e:
-        logging.error(f"❌ Error conectando a DB: {e}")
-        return None
-
-def put_conn(conn):
-    if conn:
-        try:
-            conn.close()
-        except Exception:
-            pass
-
 # --- PERSISTENCIA DE MERCADO ---
 def save_market_state(price, bcv_usd, bcv_eur):
     conn = get_conn()
