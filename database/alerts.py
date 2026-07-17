@@ -1,7 +1,8 @@
 import logging
 from datetime import datetime
-# Asumo que tu conexión viene de database.stats como en el resto de archivos
-from database.stats import get_conn, put_conn 
+
+# 🔥 CAMBIO 1: Apuntamos directamente al Pool blindado
+from database.db_pool import get_conn, put_conn 
 
 def add_alert(user_id, target_price, condition):
     """
@@ -42,11 +43,12 @@ def add_alert(user_id, target_price, condition):
             return "SUCCESS"
 
     except Exception as e:
+        # 🔥 CAMBIO 2: Antídoto protegido
+        if conn: conn.rollback()
         logging.error(f"Error creando alerta: {e}")
-        conn.rollback()
         return "ERROR"
     finally:
-        put_conn(conn)
+        if conn: put_conn(conn)
 
 def get_triggered_alerts(current_price):
     """
@@ -84,10 +86,12 @@ def get_triggered_alerts(current_price):
         return triggered
 
     except Exception as e:
+        # 🔥 CAMBIO 3: Antídoto agregado a la lectura
+        if conn: conn.rollback()
         logging.error(f"Error buscando alertas disparadas: {e}")
         return []
     finally:
-        put_conn(conn)
+        if conn: put_conn(conn)
 
 def delete_alert(alert_id):
     """
@@ -102,6 +106,8 @@ def delete_alert(alert_id):
             cur.execute("DELETE FROM alerts WHERE id = %s", (alert_id,))
             conn.commit()
     except Exception as e:
+        # 🔥 CAMBIO 4: Antídoto agregado al borrado
+        if conn: conn.rollback()
         logging.error(f"Error borrando alerta {alert_id}: {e}")
     finally:
-        put_conn(conn)
+        if conn: put_conn(conn)
