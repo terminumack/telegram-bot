@@ -130,33 +130,25 @@ async def global_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     ADMIN_ID = 533888411 
     if update.effective_user.id != ADMIN_ID: return
 
-    msg_to_send = ""
-
-    # OPCIÓN 1 (El truco pro): Si respondes a un mensaje con /global, clona el mensaje original
-    if update.message.reply_to_message:
-        msg_to_send = update.message.reply_to_message.text_html
-    
-    # OPCIÓN 2 (El método clásico): Escribes /global Hola <b>Mundo</b> en un solo mensaje
-    elif update.message.text_html:
-        # Extraemos el HTML pero le borramos la palabra del comando
-        msg_to_send = update.message.text_html.replace('/global', '').strip()
+    # Extraemos el mensaje
+    msg_to_send = update.message.text.replace('/global', '').strip()
     
     if not msg_to_send:
-        await update.message.reply_text("❌ Formato: /global [mensaje] o responde a un mensaje con /global")
+        await update.message.reply_text("❌ Formato: /global [mensaje]")
         return
 
-    # 🔥 LA MAGIA: Mandamos a la cola guardando todas las etiquetas HTML
+    # 🔥 LA MAGIA: En lugar de un bucle for, lo mandamos a la cola
     try:
+        # Insertamos en la tabla que lee tu worker.py
         exec_query(
             "INSERT INTO broadcast_queue (message, status) VALUES (%s, 'pending')",
             (msg_to_send,)
         )
         
         await update.message.reply_text(
-            f"📥 <b>MENSAJE ENCOLADO CON FORMATO</b>\n\n"
-            f"El Worker procesará el envío a los usuarios en segundo plano con todas sus negritas y enlaces.\n"
-            f"Puedes seguir usando el bot normalmente. ✅",
-            parse_mode="HTML"
+            f"📥 **MENSAJE ENCOLADO**\n\n"
+            f"El Worker procesará el envío a los 19.000 usuarios en segundo plano.\n"
+            f"Puedes seguir usando el bot normalmente. ✅"
         )
     except Exception as e:
         await update.message.reply_text(f"❌ Error al encolar: {e}")
