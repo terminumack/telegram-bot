@@ -58,6 +58,27 @@ def track_user(user, referrer_id=None, source=None):
     finally:
         if conn: put_conn(conn)
 
+def get_user_loyalty(user_id):
+    """Devuelve antiguedad y referidos usando tus columnas originales."""
+    conn = get_conn()
+    if not conn: return 0, 0
+    try:
+        from datetime import datetime
+        with conn.cursor() as cur:
+            cur.execute("SELECT joined_at, referral_count FROM users WHERE user_id = %s", (user_id,))
+            res = cur.fetchone()
+            if res:
+                joined = res[0]
+                days = (datetime.now() - joined).days if joined else 0
+                refs = res[1] if res[1] else 0
+                return days, refs
+            return 0, 0
+    except Exception:
+        if conn: conn.rollback()
+        return 0, 0
+    finally:
+        if conn: put_conn(conn)
+
 def process_core_interaction(user, command, referrer_id=None, source=None):
     """
     Súper-función 4 en 1 para alto tráfico.
