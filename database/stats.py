@@ -133,18 +133,28 @@ def log_calc(user_id, amount, currency, result):
         if conn: put_conn(conn)
 
 def log_activity(user_id, command):
-    """Registra el clic o comando para las estadísticas."""
     conn = get_conn()
     if not conn: return
     try:
         with conn.cursor() as cur:
+            # 1. Sumamos al contador rápido
             cur.execute("""
-                INSERT INTO activity_logs (user_id, command, created_at) 
-                VALUES (%s, %s, NOW())
-            """, (user_id, command))
+                INSERT INTO daily_command_counts (stat_date, command, uses)
+                VALUES ((NOW() AT TIME ZONE 'America/Caracas')::date, %s, 1)
+                ON CONFLICT (stat_date, command) 
+                DO UPDATE SET uses = daily_command_counts.uses + 1
+            """, (command,))
+
+            # 2. Solo registramos en el diario si no es un refresh
+            if command not in ['refresh_btn', 'btn_refresh']:
+                cur.execute("""
+                    INSERT INTO activity_logs (user_id, command, created_at) 
+                    VALUES (%s, %s, NOW())
+                """, (user_id, command))
+                
             conn.commit()
     except Exception as e:
-        if conn: conn.rollback() # 🔥 ANTÍDOTO
+        if conn: conn.rollback()
         print(f"❌ Error log_activity: {e}") 
     finally:
         if conn: put_conn(conn)
@@ -155,13 +165,13 @@ def get_daily_requests_count():
     try:
         with conn.cursor() as cur:
             cur.execute("""
-                SELECT COUNT(*) 
-                FROM activity_logs 
-                WHERE created_at >= (NOW() AT TIME ZONE 'America/Caracas')::date
+                SELECT SUM(uses) FROM daily_command_counts 
+                WHERE stat_date = (NOW() AT TIME ZONE 'America/Caracas')::date
             """)
-            return cur.fetchone()[0]
+            res = cur.fetchone()[0]
+            return int(res) if res else 0
     except Exception: 
-        if conn: conn.rollback() # 🔥 ANTÍDOTO
+        if conn: conn.rollback()
         return 0
     finally: 
         if conn: put_conn(conn)
