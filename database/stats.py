@@ -270,8 +270,8 @@ def get_detailed_report_text():
 
             # 4. Top 5 Comandos (Dinámico)
             cur.execute("""
-                SELECT command, COUNT(*) 
-                FROM activity_logs 
+                SELECT command, SUM(uses) 
+                FROM daily_command_counts 
                 GROUP BY command 
                 ORDER BY 2 DESC 
                 LIMIT 5
@@ -324,15 +324,16 @@ def get_stats_full_text():
 
             # 2. Total de Consultas Hoy
             cur.execute("""
-                SELECT COUNT(*) FROM activity_logs 
-                WHERE created_at >= (NOW() AT TIME ZONE 'America/Caracas')::date
+                SELECT SUM(uses) FROM daily_command_counts 
+                WHERE stat_date = (NOW() AT TIME ZONE 'America/Caracas')::date
             """)
-            queries_today = cur.fetchone()[0]
+            res_queries = cur.fetchone()[0]
+            queries_today = int(res_queries) if res_queries else 0
 
             # 3. Top 15 Comandos/Botones
             cur.execute("""
-                SELECT command, COUNT(*) FROM activity_logs 
-                GROUP BY 1 ORDER BY 2 DESC LIMIT 15
+                SELECT command, SUM(uses) FROM daily_command_counts 
+                GROUP BY command ORDER BY 2 DESC LIMIT 15
             """)
             top_cmds = cur.fetchall()
 
