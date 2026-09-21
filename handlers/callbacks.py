@@ -38,22 +38,22 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     # ==================================================================
     # CASO 2: ACTUALIZAR (Refresh o post-voto)
     # ==================================================================
-    if data in ["refresh", "refresh_price"] or data.startswith("vote_"):
-        
-        if data in ["refresh", "refresh_price"]:
+    if data in ["refresh", "refresh_price"]:
             await safe_answer("🔄 Consultando mercado...")
             
-            # 🔥 VELOCIDAD: Anotamos el log en segundo plano (Dispara y olvida)
-            asyncio.create_task(asyncio.to_thread(log_activity, user_id, "refresh_btn"))
+            # 🔥 LA SÚPER-CONEXIÓN (Tracking, contador, lealtad y métricas en 1 solo viaje)
+            # Reemplaza los 'asyncio.create_task' y 'gather' que tenías antes.
+            req_count, _, _ = await asyncio.to_thread(
+                process_core_interaction, 
+                update.effective_user, 
+                "refresh_btn"
+            )
+            
+            # Traemos el precio actual y generamos el teclado (1 conexión limpia solo para el teclado)
+            current_price = MARKET_DATA.get("price", 0)
+            reply_markup = await asyncio.to_thread(get_sentiment_keyboard, user_id, current_price)
 
-        # 🔥 VELOCIDAD: Pedimos el contador y el teclado AL MISMO TIEMPO (Paralelismo)
-        current_price = MARKET_DATA.get("price", 0)
-        req_count, reply_markup = await asyncio.gather(
-            asyncio.to_thread(get_daily_requests_count),
-            asyncio.to_thread(get_sentiment_keyboard, user_id, current_price)
-        )
-        
-        # 2. Generamos el TEXTO NUEVO
+        # 2. Generamos el TEXTO NUEVO usando req_count (que ahora viene súper rápido de la DB)
         text = build_price_message(MARKET_DATA, user_id=user_id, requests_count=req_count)
 
         try:
