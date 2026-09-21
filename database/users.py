@@ -4,6 +4,60 @@ from datetime import datetime
 # 🔥 CAMBIO CRÍTICO: Ahora apuntamos al Pool blindado real, no a stats.py
 from database.db_pool import get_conn, put_conn
 
+def track_user(user, referrer_id=None, source=None):
+    """
+    Registra o actualiza al usuario. (Versión estándar para comandos secundarios)
+    """
+    user_id = user.id
+    first_name = user.first_name[:50] if user.first_name else "Usuario"
+    username = user.username if user.username else None
+    now = datetime.now()
+    final_source = source if source else "organico"
+    
+    conn = get_conn()
+    if not conn: return
+
+    try:
+        with conn.cursor() as cur:
+            cur.execute("SELECT user_id, source FROM users WHERE user_id = %s", (user_id,))
+            existing_user = cur.fetchone()
+
+            if not existing_user:
+                final_referrer = None
+                valid_referrer = False
+                if referrer_id:
+                    try:
+                        ref_id = int(referrer_id)
+                        if ref_id != user_id:
+                            cur.execute("SELECT user_id FROM users WHERE user_id = %s", (ref_id,))
+                            if cur.fetchone():
+                                final_referrer = ref_id
+                                valid_referrer = True
+                    except:
+                        pass
+
+                cur.execute("""
+                    INSERT INTO users (user_id, first_name, username, referred_by, last_active, joined_at, status, source, referral_count) 
+                    VALUES (%s, %s, %s, %s, %s, %s, 'active', %s, 0)
+                """, (user_id, first_name, username, final_referrer, now, now, final_source))
+                
+                if valid_referrer:
+                    cur.execute("UPDATE users SET referral_count = referral_count + 1 WHERE user_id = %s", (final_referrer,))
+            else:
+                old_source = existing_user[1]
+                new_source = final_source if (not old_source or old_source == 'organico') else old_source
+                cur.execute("""
+                    UPDATE users SET first_name = %s, username = %s, last_active = %s, status = 'active', source = %s
+                    WHERE user_id = %s
+                """, (first_name, username, now, new_source, user_id))
+            conn.commit()
+    except Exception as e:
+        if conn: conn.rollback()
+        import logging
+        logging.error(f"❌ Error en track_user: {e}")
+    finally:
+        if conn: put_conn(conn)
+
 def process_core_interaction(user, command, referrer_id=None, source=None):
     """
     Súper-función 4 en 1 para alto tráfico.
