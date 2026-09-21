@@ -133,28 +133,18 @@ def log_calc(user_id, amount, currency, result):
         if conn: put_conn(conn)
 
 def log_activity(user_id, command):
+    """Registra el clic o comando para las estadísticas."""
     conn = get_conn()
     if not conn: return
     try:
         with conn.cursor() as cur:
-            # 1. Sumamos al contador rápido
             cur.execute("""
-                INSERT INTO daily_command_counts (stat_date, command, uses)
-                VALUES ((NOW() AT TIME ZONE 'America/Caracas')::date, %s, 1)
-                ON CONFLICT (stat_date, command) 
-                DO UPDATE SET uses = daily_command_counts.uses + 1
-            """, (command,))
-
-            # 2. Solo registramos en el diario si no es un refresh
-            if command not in ['refresh_btn', 'btn_refresh']:
-                cur.execute("""
-                    INSERT INTO activity_logs (user_id, command, created_at) 
-                    VALUES (%s, %s, NOW())
-                """, (user_id, command))
-                
+                INSERT INTO activity_logs (user_id, command, created_at) 
+                VALUES (%s, %s, NOW())
+            """, (user_id, command))
             conn.commit()
     except Exception as e:
-        if conn: conn.rollback()
+        if conn: conn.rollback() # 🔥 ANTÍDOTO
         print(f"❌ Error log_activity: {e}") 
     finally:
         if conn: put_conn(conn)
@@ -165,13 +155,13 @@ def get_daily_requests_count():
     try:
         with conn.cursor() as cur:
             cur.execute("""
-                SELECT SUM(uses) FROM daily_command_counts 
-                WHERE stat_date = (NOW() AT TIME ZONE 'America/Caracas')::date
+                SELECT COUNT(*) 
+                FROM activity_logs 
+                WHERE created_at >= (NOW() AT TIME ZONE 'America/Caracas')::date
             """)
-            res = cur.fetchone()[0]
-            return int(res) if res else 0
+            return cur.fetchone()[0]
     except Exception: 
-        if conn: conn.rollback()
+        if conn: conn.rollback() # 🔥 ANTÍDOTO
         return 0
     finally: 
         if conn: put_conn(conn)
@@ -270,8 +260,8 @@ def get_detailed_report_text():
 
             # 4. Top 5 Comandos (Dinámico)
             cur.execute("""
-                SELECT command, SUM(uses) 
-                FROM daily_command_counts 
+                SELECT command, COUNT(*) 
+                FROM activity_logs 
                 GROUP BY command 
                 ORDER BY 2 DESC 
                 LIMIT 5
@@ -324,16 +314,15 @@ def get_stats_full_text():
 
             # 2. Total de Consultas Hoy
             cur.execute("""
-                SELECT SUM(uses) FROM daily_command_counts 
-                WHERE stat_date = (NOW() AT TIME ZONE 'America/Caracas')::date
+                SELECT COUNT(*) FROM activity_logs 
+                WHERE created_at >= (NOW() AT TIME ZONE 'America/Caracas')::date
             """)
-            res_queries = cur.fetchone()[0]
-            queries_today = int(res_queries) if res_queries else 0
+            queries_today = cur.fetchone()[0]
 
             # 3. Top 15 Comandos/Botones
             cur.execute("""
-                SELECT command, SUM(uses) FROM daily_command_counts 
-                GROUP BY command ORDER BY 2 DESC LIMIT 15
+                SELECT command, COUNT(*) FROM activity_logs 
+                GROUP BY 1 ORDER BY 2 DESC LIMIT 15
             """)
             top_cmds = cur.fetchall()
 
