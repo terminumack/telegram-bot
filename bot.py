@@ -19,7 +19,7 @@ TIMEZONE = pytz.timezone('America/Caracas')
 
 # --- 2. IMPORTS DE MEMORIA Y BASE DE DATOS ---
 from shared import MARKET_DATA
-from database.users import track_user, get_user_loyalty
+from database.users import track_user, get_user_loyalty, process_core_interaction
 from database.setup import init_db
 from database.stats import (
     get_daily_requests_count, 
