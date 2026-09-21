@@ -254,11 +254,13 @@ p2p_conv = ConversationHandler(
 async def precio(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id = update.effective_user.id
     
-    # 🚀 VELOCIDAD 1: "Dispara y olvida" (Background tasks)
-    # Mandamos a registrar al usuario y su actividad en segundo plano.
-    # Al NO poner 'await' aquí, el bot NO se detiene a esperar a la base de datos.
-    asyncio.create_task(asyncio.to_thread(track_user, update.effective_user))
-    asyncio.create_task(asyncio.to_thread(log_activity, user_id, "/precio"))
+    # 🔥 LA SÚPER-CONEXIÓN (Tracking, contador, lealtad y métricas en 1 solo viaje)
+    # Al usar 'await to_thread', no bloqueamos el bot, pero obtenemos los datos al instante.
+    consultas_hoy, dias, referidos = await asyncio.to_thread(
+        process_core_interaction, 
+        update.effective_user, 
+        "/precio"
+    )
     
     binance = MARKET_DATA["price"]
     if not binance:
