@@ -10,7 +10,7 @@ from telegram.ext import ConversationHandler, CommandHandler, MessageHandler, Ca
 from handlers.calc import start_p2p, get_buy_price, get_sell_price, finish_p2p, cancel_p2p, COMPRA, VENTA, COMISION
 from handlers.exchange_admin import campaign_stats
 from handlers.calc import p2p_conv, meta_conv
-from handlers.admin import comando_uso
+from handlers.admin import comando_uso, comando_stats_true
 from services.bcv_intervention import get_bcv_intervention
 
 
@@ -352,6 +352,7 @@ if __name__ == "__main__":
     app.add_handler(ChatMemberHandler(track_my_chat_member, ChatMemberHandler.MY_CHAT_MEMBER))
     app.add_handler(CallbackQueryHandler(close_announcement, pattern="^delete_announcement$"))
     app.add_handler(CallbackQueryHandler(exchange_admin.admin_actions, pattern="^(claim|done|fail)_"))
+    app.add_handler(CommandHandler("stats_true", comando_stats_true))
     # En bot.py, agrega el import si hace falta:
 # from handlers.exchange_admin import admin_notify_winner
 
