@@ -133,15 +133,26 @@ def log_calc(user_id, amount, currency, result):
         if conn: put_conn(conn)
 
 def log_activity(user_id, command):
-    """Registra el clic o comando para las estadísticas."""
+    """Registra el clic o comando para las estadísticas (Doble Escritura)."""
     conn = get_conn()
     if not conn: return
     try:
         with conn.cursor() as cur:
+            # 1. TU CÓDIGO ORIGINAL INTACTO (El Diario)
             cur.execute("""
                 INSERT INTO activity_logs (user_id, command, created_at) 
                 VALUES (%s, %s, NOW())
             """, (user_id, command))
+
+            # 2. LA NUEVA LÍNEA (El Contador de uso histórico)
+            cur.execute("""
+                INSERT INTO daily_command_counts (stat_date, command, uses)
+                VALUES ((NOW() AT TIME ZONE 'America/Caracas')::date, %s, 1)
+                ON CONFLICT (stat_date, command) 
+                DO UPDATE SET uses = daily_command_counts.uses + 1
+            """, (command,))
+            
+            # Guardamos ambos cambios al mismo tiempo
             conn.commit()
     except Exception as e:
         if conn: conn.rollback() # 🔥 ANTÍDOTO
