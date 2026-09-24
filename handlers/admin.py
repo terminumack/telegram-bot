@@ -4,7 +4,7 @@ from telegram.ext import ContextTypes
 from telegram.constants import ParseMode
 
 # Importamos el motor optimizado
-from database.stats import get_uso_diario_preciso
+from database.stats import get_uso_diario_preciso, get_stats_true_text
 
 # 🔒 SEGURIDAD: Pon tu ID de Telegram aquí (puedes poner varios si tienes socios)
 # Si no sabes tu ID, háblale a @userinfobot en Telegram
@@ -64,3 +64,20 @@ async def comando_uso(update: Update, context: ContextTypes.DEFAULT_TYPE):
             await msg.edit_text(text, parse_mode=ParseMode.HTML, reply_markup=markup)
     except Exception:
         pass # Ignorar si Telegram dice "El mensaje es igual" al refrescar rápido
+
+async def comando_stats_true(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Comando admin para ver las estadísticas de ultra-alta velocidad"""
+    user_id = update.effective_user.id
+    
+    # OPCIONAL: Si tienes una lista de ADMINS, puedes poner tu validación aquí
+    # if user_id not in ADMIN_LIST: return 
+
+    # Ponemos a "pensar" al bot (el relojito)
+    await update.message.reply_chat_action("typing")
+    
+    # Llamamos a la base de datos en segundo plano
+    import asyncio
+    text = await asyncio.to_thread(get_stats_true_text)
+    
+    # Enviamos el reporte
+    await update.message.reply_text(text, parse_mode="HTML")
