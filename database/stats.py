@@ -390,36 +390,50 @@ def get_stats_true_text():
     if not conn: return "⚠️ Error de conexión"
     try:
         with conn.cursor() as cur:
-            # 1. DAU (Usuarios Únicos Hoy). Esto SE MANTIENE leyendo del diario 
-            # porque necesitamos saber "quién" es quién (user_id).
+            # --- 1. MÉTRICAS DE HOY ---
+            # DAU (Usuarios Únicos Hoy)
             cur.execute("""
                 SELECT COUNT(DISTINCT user_id) FROM activity_logs 
                 WHERE created_at >= (NOW() AT TIME ZONE 'America/Caracas')::date
             """)
             dau = cur.fetchone()[0] or 0
 
-            # 2. Consultas Totales Hoy (🔥 SÚPER RÁPIDO: Lee del nuevo contador)
+            # Consultas Totales Hoy 
             cur.execute("""
                 SELECT SUM(uses) FROM daily_command_counts 
                 WHERE stat_date = (NOW() AT TIME ZONE 'America/Caracas')::date
             """)
             queries_today = cur.fetchone()[0] or 0
 
-            # 3. Top 15 Comandos de HOY (🔥 SÚPER RÁPIDO: Lee del nuevo contador)
+            # Top 15 Comandos de HOY 
             cur.execute("""
                 SELECT command, uses FROM daily_command_counts 
                 WHERE stat_date = (NOW() AT TIME ZONE 'America/Caracas')::date
                 ORDER BY uses DESC LIMIT 15
             """)
-            top_cmds = cur.fetchall()
+            top_cmds_today = cur.fetchall()
 
-            # 4. Heavy Users Hoy (Lee del diario, ya que necesitamos los user_id)
+            # Heavy Users Hoy
             cur.execute("""
                 SELECT user_id, COUNT(*) FROM activity_logs 
                 WHERE created_at >= (NOW() AT TIME ZONE 'America/Caracas')::date
                 GROUP BY 1 ORDER BY 2 DESC LIMIT 5
             """)
             heavy_users = cur.fetchall()
+
+            # --- 2. MÉTRICAS HISTÓRICAS (NUEVO) ---
+            # Consultas Totales Históricas
+            cur.execute("SELECT SUM(uses) FROM daily_command_counts")
+            total_historical_queries = cur.fetchone()[0] or 0
+
+            # Top 15 Comandos Históricos (Suma de todos los días)
+            cur.execute("""
+                SELECT command, SUM(uses) as total_uses 
+                FROM daily_command_counts 
+                GROUP BY command 
+                ORDER BY total_uses DESC LIMIT 15
+            """)
+            top_cmds_historical = cur.fetchall()
 
         # Cálculos
         avg_queries = (int(queries_today) / dau) if dau > 0 else 0
@@ -428,25 +442,33 @@ def get_stats_true_text():
         report = (
             f"⚡️ <b>ESTADÍSTICAS TRUE (CONTADOR)</b>\n"
             f"<i>Alta velocidad (Sin sobrecargar DB)</i>\n\n"
+            
             f"📈 <b>ACTIVIDAD HOY (Caracas)</b>\n"
             f"• Usuarios Únicos (DAU): {dau:,}\n"
             f"• Consultas Totales: {int(queries_today):,}\n"
-            f"• Promedio consultas/frecuencia: {avg_queries:.1f}\n\n"
+            f"• Promedio interacciones/usuario: {avg_queries:.1f}\n\n"
+            
             f"🏆 <b>HEAVY USERS (Hoy)</b>\n"
         )
-
         for uid, cnt in heavy_users:
             report += f"• <code>{uid}</code>: {cnt} interacciones\n"
 
-        report += "\n🤖 <b>TOP 15 COMANDOS (Hoy)</b>\n"
-        for cmd, cnt in top_cmds:
+        report += "\n🤖 <b>TOP COMANDOS (Hoy)</b>\n"
+        for cmd, cnt in top_cmds_today:
             report += f"• <code>{cmd}</code>: {cnt:,}\n"
 
-        report += f"\n<i>Modo: Contador Optimizado</i> ⚡️"
+        report += (
+            f"\n\n🌎 <b>HISTÓRICO GLOBAL</b>\n"
+            f"• Total Acumulado: {int(total_historical_queries):,}\n\n"
+            f"<b>TOP COMANDOS (Histórico)</b>\n"
+        )
+        for cmd, cnt in top_cmds_historical:
+            report += f"• <code>{cmd}</code>: {cnt:,}\n"
+
         return report
 
     except Exception as e:
-        if conn: conn.rollback() # 🔥 ANTÍDOTO
+        if conn: conn.rollback()
         return f"❌ Error en Stats True: {e}"
     finally:
         if conn: put_conn(conn)
